@@ -50,3 +50,4 @@ El nivel se controla vía `log_level` en la config (dev=INFO, test=WARNING).
 ### Dependencias y Docker
 - Tras añadir dependencias en `pyproject.toml`, reconstruye la imagen: `make docker-build` (copia `pyproject.toml` y `poetry.lock` para cache).
 - Ejecutar tests en contenedor con deps nuevas: `make docker-test` (incluye `poetry install` dentro).
+- Si usas Python 3.13 local, instala/ejecuta via Docker (la resolución de `pyarrow` se bloquea en 3.13; la imagen usa Python 3.11).

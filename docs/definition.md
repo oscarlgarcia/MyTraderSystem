@@ -41,6 +41,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - Sin dependencias externas para DTOs (solo stdlib).
 - Configs en YAML compatible con JSON para evitar dependencias; validación mínima de claves requeridas.
 - Docker: la imagen copia `pyproject.toml` y `poetry.lock` y ejecuta `poetry install`; el código se monta por volumen para pruebas rápidas.
+- Nota de versiones: el lock se genera con Python 3.11; para hosts con Python 3.13 usar Docker o un venv 3.11/3.12.
 
 ## Pruebas mínimas
 - Import de paquetes y `python -m app` sale con código 0.
