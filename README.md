@@ -46,3 +46,7 @@ Ejemplo de salida:
 {"ts": "...Z", "level": "INFO", "logger": "app", "module": "main", "message": "pipeline stub ok", "trace_id": "<uuid>", "env": "dev", "data_dir": "data/dev", "steps": ["ingestion","features","strategy","risk","execution","portfolio"]}
 ```
 El nivel se controla vía `log_level` en la config (dev=INFO, test=WARNING).
+
+### Dependencias y Docker
+- Tras añadir dependencias en `pyproject.toml`, reconstruye la imagen: `make docker-build` (copia `pyproject.toml` y `poetry.lock` para cache).
+- Ejecutar tests en contenedor con deps nuevas: `make docker-test` (incluye `poetry install` dentro).

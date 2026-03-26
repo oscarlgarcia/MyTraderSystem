@@ -17,7 +17,7 @@ RUN curl -sSL https://install.python-poetry.org | python3 - \
 WORKDIR /workspace
 
 # Only copy lock/pyproject for dependency layer; repo is bind-mounted in compose.
-COPY pyproject.toml README.md ./
+COPY pyproject.toml poetry.lock README.md ./
 
 RUN poetry install --no-root
 
