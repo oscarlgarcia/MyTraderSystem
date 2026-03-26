@@ -23,7 +23,7 @@ def test_reconnect_after_drop(monkeypatch):
 
     sleeps = []
     runner = ResilientRunner(stream_fn=stream, sleeper=lambda s: sleeps.append(s), backoff_base=0.1, backoff_max=0.2)
-    runner.run(handler, max_retries=2)
+    runner.run(handler, max_retries=2, stop_on_complete=True)
     assert runner.metrics.reconnects >= 1
     assert calls, "handler should be called after reconnection"
     assert all(s <= 0.2 for s in sleeps)
@@ -57,7 +57,7 @@ def test_resync_adds_snapshot_without_duplicates():
         handled.append(ev.event_ts)
 
     try:
-        runner.run(handler)
+        runner.run(handler, stop_on_complete=True)
     except StopIteration:
         pass
 
@@ -75,7 +75,7 @@ def test_backoff_capped():
 
     runner = ResilientRunner(stream_fn=stream, sleeper=lambda s: sleeps.append(s), backoff_base=5, backoff_max=8)
     try:
-        runner.run(lambda ev: None, max_retries=2)
+        runner.run(lambda ev: None, max_retries=2, stop_on_complete=True)
     except RuntimeError:
         pass
     assert sleeps
