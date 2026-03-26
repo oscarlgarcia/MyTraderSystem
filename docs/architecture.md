@@ -7,10 +7,12 @@ flowchart LR
   Config["config loader"]
   Logger["observability.logger"]
   Stdout["stdout"]
+  Pipeline["run_cycle (stub)"]
 
   Dev -->|"make run-dev"| Main --> Stdout
   Main -->|"load_config"| Config
   Main -->|"get_logger"| Logger
+  Main -->|"run_cycle"| Pipeline
 
 subgraph Packages
   common
@@ -128,13 +130,16 @@ sequenceDiagram
   participant Config as config loader
   participant Logger as logger
   participant Common as common/DTOs
+  participant Cycle as run_cycle
 
   Dev->>Main: python -m app
   Main->>Config: load_config(env=dev|test)
   Config-->>Main: AppConfig(env,data_dir,log_level)
   Main->>Logger: get_logger(level=log_level)
   Main->>Common: crea TraceContext(trace_id="bootstrap")
-  Main->>Logger: info("pipeline stub ok", env, data_dir, trace_id)
+  Main->>Cycle: run_cycle() (ingestion→features→strategy→risk→execution→portfolio)
+  Cycle-->>Main: steps list
+  Main->>Logger: info("pipeline stub ok", env, data_dir, trace_id, steps)
   Logger-->>Dev: línea JSON estructurada
 ```
 

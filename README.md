@@ -43,6 +43,6 @@ Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app
 ### Logging estructurado
 Ejemplo de salida:
 ```
-{"ts": "...Z", "level": "INFO", "logger": "app", "module": "main", "message": "pipeline stub ok", "trace_id": "bootstrap", "env": "dev", "data_dir": "data/dev"}
+{"ts": "...Z", "level": "INFO", "logger": "app", "module": "main", "message": "pipeline stub ok", "trace_id": "<uuid>", "env": "dev", "data_dir": "data/dev", "steps": ["ingestion","features","strategy","risk","execution","portfolio"]}
 ```
 El nivel se controla vía `log_level` en la config (dev=INFO, test=WARNING).

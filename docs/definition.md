@@ -13,6 +13,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - **portfolio**: mantiene `PortfolioState`, P&L y reconciliación.
 - **observability**: logging/metrics/tracing; usa `TraceContext`.
 - **observability.logger**: formateo JSON, `trace_id` por contexto, niveles configurables y handler stdout/archivo opcional.
+- **main.run / run_cycle**: arranque end-to-end (stub) que carga config, crea trace_id y recorre orden fijo de pasos (ingestion→features→strategy→risk→execution→portfolio) sin I/O real.
 - **ops**: orquestación, configuración, CLI.
 - **config**: carga de configuración por entorno (dev/test), validación mínima y overrides por env vars.
 
@@ -29,6 +30,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - `TraceContext`: trace_id (+ span_id opcional) para correlación.
 - `AppConfig`: env, data_dir, log_level; se carga desde `config.<env>.yaml` con override por env vars.
 - Log records: JSON con `ts`, `level`, `logger`, `module`, `message`, `trace_id` opcional y extras seguros.
+- `run_cycle`: orden de pasos y recorder para pruebas; ningún efecto externo.
 
 ## Supuestos actuales
 - Todos los timestamps deben ser timezone-aware en UTC.
