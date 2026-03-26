@@ -49,7 +49,9 @@ def test_formatter_excludes_sensitive_keys():
 
 
 def test_trace_id_absent_when_not_set():
-    logger = get_logger(name="notrace", level="INFO", stream=io.StringIO())
+    buffer = io.StringIO()
+    logger = get_logger(name="notrace", level="INFO", stream=buffer)
+    # Ensure ContextVar is default (None).
     logger.info("msg")
-    payload = json.loads(logger.handlers[0].stream.getvalue().strip())
+    payload = json.loads(buffer.getvalue().strip())
     assert "trace_id" not in payload
