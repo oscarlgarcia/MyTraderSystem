@@ -75,5 +75,5 @@ def _to_table(events: List[MarketEvent]) -> pa.Table:
 
 
 def read_parquet(path: Path) -> pa.Table:
-    # Avoid merging hive partition columns to prevent schema conflicts.
-    return pq.read_table(path, partitioning="none")
+    # Read single file without inferring partition directories.
+    return pq.ParquetFile(path).read()
