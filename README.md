@@ -16,3 +16,9 @@ make run-dev
 
 `run-dev` imprime un stub de pipeline para validar que el entorno arranca.
 
+## Sandbox Docker
+- Construir imagen: `make docker-build`
+- Shell interactiva con código bind-mount: `make docker-shell`
+- Ejecutar tests dentro del contenedor: `make docker-test`
+
+El `docker-compose.yml` monta el repo en `/workspace`, por lo que cualquier cambio local se refleja inmediatamente dentro del contenedor para ejecutar pruebas.

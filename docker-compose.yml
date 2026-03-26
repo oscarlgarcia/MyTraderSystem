@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    command: bash
+    environment:
+      - POETRY_VIRTUALENVS_IN_PROJECT=true
+      - POETRY_NO_INTERACTION=1
+    tty: true

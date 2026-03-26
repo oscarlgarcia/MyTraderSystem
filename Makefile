@@ -14,3 +14,14 @@ test:
 run-dev:
 	poetry run python -m app.main
 
+# Docker helpers
+.PHONY: docker-build docker-shell docker-test
+
+docker-build:
+	docker compose build
+
+docker-shell:
+	docker compose run --rm app bash
+
+docker-test:
+	docker compose run --rm app poetry run pytest
