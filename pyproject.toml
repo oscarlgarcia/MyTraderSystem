@@ -1,0 +1,27 @@
+[build-system]
+requires = ["poetry-core>=1.7.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "mytradersystem"
+version = "0.1.0"
+description = "Personal trading platform - toolchain bootstrap"
+authors = ["Oscar Garcia <oscarlgarcia@example.com>"]
+readme = "README.md"
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F"]
+
