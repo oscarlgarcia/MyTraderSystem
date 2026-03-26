@@ -38,5 +38,7 @@ def test_formatter_excludes_sensitive_keys():
         exc_info=None,
     )
     record.password = "SECRET"
+    record.api_key = "HIDDEN"
     formatted = formatter.format(record)
     assert "password" not in formatted
+    assert "api_key" not in formatted

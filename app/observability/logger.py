@@ -28,7 +28,7 @@ def get_trace_id() -> Optional[str]:
 class JsonFormatter(logging.Formatter):
     """Minimal JSON formatter."""
 
-    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
         payload: Dict[str, Any] = {
             "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
@@ -40,10 +40,14 @@ class JsonFormatter(logging.Formatter):
         if trace_id:
             payload["trace_id"] = trace_id
         # Attach extras excluding built-ins
+        forbidden = {"password", "secret", "token", "api_key"}
+        builtin_keys = logging.LogRecord(None, None, "", 0, "", (), None).__dict__.keys()
         for key, value in record.__dict__.items():
-            if key.startswith("_") or key in logging.LogRecord(None, None, "", 0, "", (), None).__dict__:
+            if key.startswith("_") or key in builtin_keys:
                 continue
             if key in payload:
+                continue
+            if key.lower() in forbidden:
                 continue
             payload[key] = value
         return json.dumps(payload, ensure_ascii=False)
