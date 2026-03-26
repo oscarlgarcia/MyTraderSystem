@@ -7,3 +7,5 @@
 - Validar config contra esquema (p.ej. `jsonschema`) cuando se permita dependencia externa ligera.
 - Completar ingestión en vivo: conectar WS testnet real, manejo de reconexión y flush a Parquet (Fase 2.2/2.3).
 - Añadir pruebas de integración usando websockets/httpx mockeados para asegurar compatibilidad con endpoints Binance.
+- Evaluar compresión snappy y optimizar tamaño/velocidad en Parquet una vez establecida la ingesta.
+- Añadir tool de lectura rápida (CLI) para inspeccionar particiones y conteos.

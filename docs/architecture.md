@@ -51,6 +51,14 @@ end
 common --> DTOs
 Config --> common
 Logger --> Stdout
+Ingest --> DTOs
+Pipeline --> Ingest
+
+subgraph Storage
+  ParquetWriter
+end
+
+Pipeline --> ParquetWriter
 ```
 
 ## Componentes principales (snapshot fase 1.3)

@@ -1,0 +1,52 @@
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pyarrow.parquet as pq
+
+from app.common.dto import MarketEvent
+from app.ingestion.storage import ParquetWriter, read_parquet
+
+
+def make_event(symbol: str, ts: datetime, price: float = 1.0, size: float = 1.0, source: str = "trade"):
+    return MarketEvent(symbol=symbol, event_ts=ts, price=price, size=size, source=source)
+
+
+def test_flush_writes_partition_and_preserves_order(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=3)
+    ts = datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    events = [
+        make_event("BTCUSDT", ts),
+        make_event("BTCUSDT", ts.replace(hour=1)),
+        make_event("BTCUSDT", ts.replace(hour=2)),
+    ]
+    for ev in events:
+        writer.add(ev)
+    out = tmp_path / "dev" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
+    assert out.exists()
+    table = read_parquet(out)
+    assert table.num_rows == 3
+    # order preserved
+    prices = table.column("price").to_pylist()
+    assert prices == [1.0, 1.0, 1.0]
+
+
+def test_partition_by_date(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10)
+    ts1 = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    ts2 = datetime(2024, 1, 2, tzinfo=timezone.utc)
+    writer.add(make_event("ETHUSDT", ts1))
+    writer.add(make_event("ETHUSDT", ts2))
+    writer.flush()
+    p1 = tmp_path / "dev" / "symbol=ETHUSDT" / "date=2024-01-01" / "data.parquet"
+    p2 = tmp_path / "dev" / "symbol=ETHUSDT" / "date=2024-01-02" / "data.parquet"
+    assert p1.exists() and p2.exists()
+
+
+def test_flush_threshold(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=2)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    writer.add(make_event("BTCUSDT", ts))
+    assert not (tmp_path / "dev").exists()
+    writer.add(make_event("BTCUSDT", ts))
+    out = tmp_path / "dev" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
+    assert out.exists()
