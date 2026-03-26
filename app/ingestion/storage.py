@@ -75,4 +75,4 @@ def _to_table(events: List[MarketEvent]) -> pa.Table:
 
 
 def read_parquet(path: Path) -> pa.Table:
-    return pq.read_table(path)
+    return pq.read_table(path, use_legacy_dataset=True)
