@@ -21,6 +21,10 @@ def set_trace_id(trace_id: str) -> None:
     TRACE_ID.set(trace_id)
 
 
+def clear_trace_id() -> None:
+    TRACE_ID.set(None)
+
+
 def get_trace_id() -> Optional[str]:
     return TRACE_ID.get()
 

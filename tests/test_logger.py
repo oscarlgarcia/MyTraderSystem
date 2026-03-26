@@ -2,7 +2,7 @@ import json
 import logging
 import io
 
-from app.observability.logger import JsonFormatter, get_logger, set_trace_id
+from app.observability.logger import JsonFormatter, get_logger, set_trace_id, clear_trace_id
 
 
 def test_json_formatter_includes_trace_id(monkeypatch, capsys):
@@ -52,6 +52,7 @@ def test_trace_id_absent_when_not_set():
     buffer = io.StringIO()
     logger = get_logger(name="notrace", level="INFO", stream=buffer)
     # Ensure ContextVar is default (None).
+    clear_trace_id()
     logger.info("msg")
     payload = json.loads(buffer.getvalue().strip())
     assert "trace_id" not in payload
