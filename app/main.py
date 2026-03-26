@@ -14,6 +14,8 @@ from app import common, execution, features, ingestion, observability, ops, port
 
 def run() -> int:
     """Basic bootstrap stub returning zero for success."""
+    # Demonstrate DTO usage in a minimal, non-I/O way.
+    _ = common.TraceContext(trace_id="bootstrap")
     print("pipeline stub ok")
     return 0
 

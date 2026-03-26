@@ -29,6 +29,18 @@ Main -. imports .-> execution
 Main -. imports .-> portfolio
 Main -. imports .-> observability
 Main -. imports .-> ops
+
+subgraph DTOs
+  MarketEvent
+  FeatureVector
+  Signal
+  OrderIntent
+  ExecutionReport
+  PortfolioState
+  TraceContext
+end
+
+common --> DTOs
 ```
 
 Alcance actual: validar toolchain y entrada al proceso. No hay lógica de dominio ni integraciones externas.
