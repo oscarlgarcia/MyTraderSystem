@@ -1,15 +1,16 @@
 import json
 import logging
+import io
 
 from app.observability.logger import JsonFormatter, get_logger, set_trace_id
 
 
 def test_json_formatter_includes_trace_id(monkeypatch, capsys):
     set_trace_id("trace-123")
-    logger = get_logger(name="testlogger", level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="testlogger", level="INFO", stream=buffer)
     logger.info("hello", extra={"env": "dev"})
-    out = capsys.readouterr().out.strip()
-    payload = json.loads(out)
+    payload = json.loads(buffer.getvalue().strip())
     assert payload["trace_id"] == "trace-123"
     assert payload["env"] == "dev"
     assert payload["level"] == "INFO"
@@ -17,10 +18,11 @@ def test_json_formatter_includes_trace_id(monkeypatch, capsys):
 
 
 def test_log_level_toggle(capsys):
-    logger = get_logger(name="leveltest", level="ERROR")
+    buffer = io.StringIO()
+    logger = get_logger(name="leveltest", level="ERROR", stream=buffer)
     logger.info("should not appear")
     logger.error("will appear")
-    out = [line for line in capsys.readouterr().out.splitlines() if line]
+    out = [line for line in buffer.getvalue().splitlines() if line]
     assert len(out) == 1
     payload = json.loads(out[0])
     assert payload["level"] == "ERROR"

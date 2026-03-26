@@ -12,7 +12,7 @@ import sys
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from logging import Logger
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TextIO
 
 TRACE_ID: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
 
@@ -53,18 +53,23 @@ def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
         return json.dumps(payload, ensure_ascii=False)
 
 
-def _base_handler() -> logging.Handler:
-    handler = logging.StreamHandler(sys.stdout)
+def _base_handler(stream: Optional[TextIO] = None) -> logging.Handler:
+    handler = logging.StreamHandler(stream or sys.stdout)
     handler.setFormatter(JsonFormatter())
     return handler
 
 
-def get_logger(name: str = "app", level: str = "INFO", log_file: Optional[str] = None) -> Logger:
+def get_logger(
+    name: str = "app",
+    level: str = "INFO",
+    log_file: Optional[str] = None,
+    stream: Optional[TextIO] = None,
+) -> Logger:
     logger = logging.getLogger(name)
     logger.setLevel(level.upper())
     # Reset handlers to ensure consistent JSON formatting across repeated calls/tests.
     logger.handlers = []
-    logger.addHandler(_base_handler())
+    logger.addHandler(_base_handler(stream=stream))
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(JsonFormatter())
