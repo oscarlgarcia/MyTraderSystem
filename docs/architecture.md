@@ -5,10 +5,12 @@ flowchart LR
   Dev["Dev CLI (make/poetry)"]
   Main["app.main.run()"]
   Config["config loader"]
+  Logger["observability.logger"]
   Stdout["stdout"]
 
   Dev -->|"make run-dev"| Main --> Stdout
   Main -->|"load_config"| Config
+  Main -->|"get_logger"| Logger
 
 subgraph Packages
   common
@@ -44,6 +46,7 @@ end
 
 common --> DTOs
 Config --> common
+Logger --> Stdout
 ```
 
 ## Componentes principales (snapshot fase 1.3)
@@ -123,13 +126,16 @@ sequenceDiagram
   participant Dev as Developer
   participant Main as app.main
   participant Config as config loader
+  participant Logger as logger
   participant Common as common/DTOs
 
   Dev->>Main: python -m app
   Main->>Config: load_config(env=dev|test)
   Config-->>Main: AppConfig(env,data_dir,log_level)
+  Main->>Logger: get_logger(level=log_level)
   Main->>Common: crea TraceContext(trace_id="bootstrap")
-  Main-->>Dev: imprime "pipeline stub ok"
+  Main->>Logger: info("pipeline stub ok", env, data_dir, trace_id)
+  Logger-->>Dev: línea JSON estructurada
 ```
 
 Alcance actual: validar toolchain y entrada al proceso. Aún sin lógica de dominio ni integraciones externas.

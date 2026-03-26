@@ -39,3 +39,10 @@ python -m app --env dev   # usa config.dev.yaml
 python -m app --env test  # usa config.test.yaml
 ```
 Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.
+
+### Logging estructurado
+Ejemplo de salida:
+```
+{"ts": "...Z", "level": "INFO", "logger": "app", "module": "main", "message": "pipeline stub ok", "trace_id": "bootstrap", "env": "dev", "data_dir": "data/dev"}
+```
+El nivel se controla vía `log_level` en la config (dev=INFO, test=WARNING).

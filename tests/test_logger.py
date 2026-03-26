@@ -1,0 +1,42 @@
+import json
+import logging
+
+from app.observability.logger import JsonFormatter, get_logger, set_trace_id
+
+
+def test_json_formatter_includes_trace_id(monkeypatch, capsys):
+    set_trace_id("trace-123")
+    logger = get_logger(name="testlogger", level="INFO")
+    logger.info("hello", extra={"env": "dev"})
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+    assert payload["trace_id"] == "trace-123"
+    assert payload["env"] == "dev"
+    assert payload["level"] == "INFO"
+    assert payload["message"] == "hello"
+
+
+def test_log_level_toggle(capsys):
+    logger = get_logger(name="leveltest", level="ERROR")
+    logger.info("should not appear")
+    logger.error("will appear")
+    out = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert len(out) == 1
+    payload = json.loads(out[0])
+    assert payload["level"] == "ERROR"
+
+
+def test_formatter_excludes_sensitive_keys():
+    formatter = JsonFormatter()
+    record = logging.LogRecord(
+        name="x",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="msg",
+        args=(),
+        exc_info=None,
+    )
+    record.password = "SECRET"
+    formatted = formatter.format(record)
+    assert "password" not in formatted
