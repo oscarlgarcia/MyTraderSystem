@@ -11,9 +11,13 @@ def test_package_imports():
     import app.ops  # noqa: F401
 
 
+import pytest
+
+
 def test_python_m_app_runs():
-    # Ensures `python -m app` executes without ImportError.
+    # Ensures `python -m app` executes without ImportError and exits cleanly.
     import runpy
 
-    result = runpy.run_module("app", run_name="__main__")
-    assert "__name__" in result
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("app", run_name="__main__")
+    assert exc.value.code == 0
