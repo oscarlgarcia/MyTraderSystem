@@ -62,11 +62,12 @@ def _base_handler() -> logging.Handler:
 def get_logger(name: str = "app", level: str = "INFO", log_file: Optional[str] = None) -> Logger:
     logger = logging.getLogger(name)
     logger.setLevel(level.upper())
-    if not logger.handlers:
-        logger.addHandler(_base_handler())
-        if log_file:
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(JsonFormatter())
-            logger.addHandler(file_handler)
+    # Reset handlers to ensure consistent JSON formatting across repeated calls/tests.
+    logger.handlers = []
+    logger.addHandler(_base_handler())
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(JsonFormatter())
+        logger.addHandler(file_handler)
     logger.propagate = False
     return logger
