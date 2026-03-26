@@ -28,13 +28,14 @@ def get_trace_id() -> Optional[str]:
 class JsonFormatter(logging.Formatter):
     """Minimal JSON formatter."""
 
-def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+        message = record.getMessage()
         payload: Dict[str, Any] = {
             "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "module": record.module,
-            "message": record.getMessage(),
+            "message": message,
         }
         trace_id = get_trace_id()
         if trace_id:
