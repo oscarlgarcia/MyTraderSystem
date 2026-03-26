@@ -7,10 +7,18 @@ from app.observability.logger import JsonFormatter, get_logger, set_trace_id
 
 def test_json_formatter_includes_trace_id(monkeypatch, capsys):
     set_trace_id("trace-123")
-    buffer = io.StringIO()
-    logger = get_logger(name="testlogger", level="INFO", stream=buffer)
-    logger.info("hello", extra={"env": "dev"})
-    payload = json.loads(buffer.getvalue().strip())
+    logger = get_logger(name="testlogger", level="INFO", stream=io.StringIO())
+    record = logger.makeRecord(
+        name="testlogger",
+        level=logging.INFO,
+        fn="test",
+        lno=1,
+        msg="hello",
+        args=(),
+        exc_info=None,
+        extra={"env": "dev"},
+    )
+    payload = json.loads(logger.handlers[0].formatter.format(record))
     assert payload["trace_id"] == "trace-123"
     assert payload["env"] == "dev"
     assert payload["level"] == "INFO"
@@ -20,8 +28,28 @@ def test_json_formatter_includes_trace_id(monkeypatch, capsys):
 def test_log_level_toggle(capsys):
     buffer = io.StringIO()
     logger = get_logger(name="leveltest", level="ERROR", stream=buffer)
-    logger.info("should not appear")
-    logger.error("will appear")
+    record_info = logger.makeRecord(
+        name="leveltest",
+        level=logging.INFO,
+        fn="test",
+        lno=1,
+        msg="should not appear",
+        args=(),
+        exc_info=None,
+        extra={},
+    )
+    record_error = logger.makeRecord(
+        name="leveltest",
+        level=logging.ERROR,
+        fn="test",
+        lno=2,
+        msg="will appear",
+        args=(),
+        exc_info=None,
+        extra={},
+    )
+    logger.handle(record_info)
+    logger.handle(record_error)
     out = [line for line in buffer.getvalue().splitlines() if line]
     assert len(out) == 1
     payload = json.loads(out[0])
