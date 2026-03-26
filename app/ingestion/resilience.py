@@ -42,15 +42,19 @@ class ResilientRunner:
     last_event_ts: Optional[datetime] = None
     seen: Set[Tuple[str, datetime, float, float, str]] = field(default_factory=set)
 
-    def run(self, handler: Callable[[MarketEvent], None]) -> None:
+    def run(self, handler: Callable[[MarketEvent], None], max_retries: Optional[int] = None) -> None:
         backoff = self.backoff_base
         while True:
             try:
                 for ev in self.stream_fn():
                     self._process_event(ev, handler)
                     backoff = self.backoff_base  # reset on success
+            except StopIteration:
+                break
             except Exception:
                 self.metrics.reconnects += 1
+                if max_retries is not None and self.metrics.reconnects > max_retries:
+                    raise
                 self.sleeper(min(backoff, self.backoff_max))
                 backoff = min(backoff * 2, self.backoff_max)
                 continue
