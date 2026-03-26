@@ -1,0 +1,5 @@
+{
+  "env": "test",
+  "data_dir": "./data/test",
+  "log_level": "WARNING"
+}

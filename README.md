@@ -30,5 +30,12 @@ El `docker-compose.yml` monta el repo en `/workspace`, por lo que cualquier camb
 
 ## Cómo probar la app (al cierre de cada fase)
 - Local: `make install && make test` y `make run-dev` (debe imprimir "pipeline stub ok").
-- Docker: `make docker-test` o `docker compose run --rm app sh -c "poetry install && poetry run pytest"`; validar `docker compose exec app python -m app`.
+- Docker: `make docker-test` o `docker compose run --rm app sh -c "poetry install && poetry run pytest"`; validar `docker compose exec app python -m app --env dev`.
 Actualiza estas instrucciones al completar cada fase con los comandos vigentes para ejecutar pruebas.
+
+### Ejecutar con configuración
+```bash
+python -m app --env dev   # usa config.dev.yaml
+python -m app --env test  # usa config.test.yaml
+```
+Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.

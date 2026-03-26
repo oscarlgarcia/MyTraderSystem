@@ -13,6 +13,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - **portfolio**: mantiene `PortfolioState`, P&L y reconciliación.
 - **observability**: logging/metrics/tracing; usa `TraceContext`.
 - **ops**: orquestación, configuración, CLI.
+- **config**: carga de configuración por entorno (dev/test), validación mínima y overrides por env vars.
 
 ## Relaciones y flujo (conceptual)
 `MarketEvent` -> `FeatureVector` -> `Signal` -> `OrderIntent` -> `ExecutionReport` -> `PortfolioState`
@@ -25,11 +26,13 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - `ExecutionReport`: estado de orden, filled_qty/avg_price >=0, correlación por client_order_id.
 - `PortfolioState`: posiciones, cash, P&L; método `total_value()`.
 - `TraceContext`: trace_id (+ span_id opcional) para correlación.
+- `AppConfig`: env, data_dir, log_level; se carga desde `config.<env>.yaml` con override por env vars.
 
 ## Supuestos actuales
 - Todos los timestamps deben ser timezone-aware en UTC.
 - Normalización de símbolos a MAYÚSCULAS sin espacios.
 - Sin dependencias externas para DTOs (solo stdlib).
+- Configs en YAML compatible con JSON para evitar dependencias; validación mínima de claves requeridas.
 
 ## Pruebas mínimas
 - Import de paquetes y `python -m app` sale con código 0.
@@ -40,3 +43,4 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - Añadir serialización (p.ej. JSON) manteniendo contratos.
 - Extender `MarketEvent` con profundidad de libro/funding cuando ingestion lo necesite.
 - Añadir campos de riesgo (p.ej. risk_level) y de ejecución (p.ej. slippage estimado) respetando compatibilidad hacia atrás.
+- Añadir soporte a más entornos/config remotas si aparece vault o secret manager.

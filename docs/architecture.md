@@ -4,9 +4,11 @@
 flowchart LR
   Dev["Dev CLI (make/poetry)"]
   Main["app.main.run()"]
+  Config["config loader"]
   Stdout["stdout"]
 
   Dev -->|"make run-dev"| Main --> Stdout
+  Main -->|"load_config"| Config
 
 subgraph Packages
   common
@@ -41,6 +43,7 @@ subgraph DTOs
 end
 
 common --> DTOs
+Config --> common
 ```
 
 ## Componentes principales (snapshot fase 1.3)
@@ -119,9 +122,12 @@ classDiagram
 sequenceDiagram
   participant Dev as Developer
   participant Main as app.main
+  participant Config as config loader
   participant Common as common/DTOs
 
   Dev->>Main: python -m app
+  Main->>Config: load_config(env=dev|test)
+  Config-->>Main: AppConfig(env,data_dir,log_level)
   Main->>Common: crea TraceContext(trace_id="bootstrap")
   Main-->>Dev: imprime "pipeline stub ok"
 ```

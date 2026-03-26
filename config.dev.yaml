@@ -1,0 +1,5 @@
+{
+  "env": "dev",
+  "data_dir": "./data/dev",
+  "log_level": "INFO"
+}
