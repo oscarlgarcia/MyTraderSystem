@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 DEFAULT_ENV = "dev"
-REQUIRED_KEYS = {"env", "data_dir", "log_level"}
+REQUIRED_KEYS = {"env", "data_dir", "log_level", "ws_base", "rest_base", "symbols"}
 ALLOWED_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
 
 
@@ -23,6 +23,9 @@ class AppConfig:
     env: str
     data_dir: Path
     log_level: str
+    ws_base: str
+    rest_base: str
+    symbols: list[str]
 
 
 def _load_file(path: Path) -> Dict[str, Any]:
@@ -49,10 +52,21 @@ def load_config(env: str | None = None) -> AppConfig:
     data_dir_override = os.getenv("APP_DATA_DIR")
     data_dir = Path(data_dir_override) if data_dir_override else Path(raw["data_dir"])
 
+    symbols = [str(sym).upper() for sym in raw.get("symbols", [])]
+    if not symbols:
+        raise ValueError("symbols list cannot be empty")
+
+    for endpoint_key in ("ws_base", "rest_base"):
+        if not str(raw.get(endpoint_key, "")).startswith(("ws://", "wss://", "http://", "https://")):
+            raise ValueError(f"{endpoint_key} must be a valid http(s)/ws(s) URL")
+
     return AppConfig(
         env=raw["env"],
         data_dir=data_dir,
         log_level=log_level,
+        ws_base=str(raw["ws_base"]),
+        rest_base=str(raw["rest_base"]),
+        symbols=symbols,
     )
 
 

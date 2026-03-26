@@ -1,5 +1,8 @@
 {
   "env": "dev",
   "data_dir": "./data/dev",
-  "log_level": "INFO"
+  "log_level": "INFO",
+  "ws_base": "wss://stream.binance.com:9443",
+  "rest_base": "https://api.binance.com",
+  "symbols": ["BTCUSDT", "ETHUSDT"]
 }

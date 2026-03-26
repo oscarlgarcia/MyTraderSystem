@@ -1,5 +1,8 @@
 {
   "env": "test",
   "data_dir": "./data/test",
-  "log_level": "WARNING"
+  "log_level": "WARNING",
+  "ws_base": "wss://stream.binance.com:9443",
+  "rest_base": "https://api.binance.com",
+  "symbols": ["BTCUSDT"]
 }

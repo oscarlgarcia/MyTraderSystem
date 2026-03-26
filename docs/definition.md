@@ -6,6 +6,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 ## Componentes
 - **common**: DTOs, utilidades compartidas (normalización de símbolos, timestamps UTC).
 - **ingestion**: conectores de mercado; entrada de datos normalizados a `MarketEvent`.
+- **ingestion.client**: adaptadores Binance/Bybit (trade/kline 1m), normalización a DTO, construcción de URLs de suscripción.
 - **features**: cálculo y serving de `FeatureVector` para estrategias.
 - **strategy**: generación de `Signal` a partir de features.
 - **risk**: valida `Signal` y produce `OrderIntent` respetando límites.
@@ -31,6 +32,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - `AppConfig`: env, data_dir, log_level; se carga desde `config.<env>.yaml` con override por env vars.
 - Log records: JSON con `ts`, `level`, `logger`, `module`, `message`, `trace_id` opcional y extras seguros.
 - `run_cycle`: orden de pasos y recorder para pruebas; ningún efecto externo.
+- Ingesta: `normalize_trade`/`normalize_kline` validan precio/tamaño>=0, timestamps UTC; `build_ws_url` arma streams trade+kline por símbolo; `parse_message` despacha según tipo de stream.
 
 ## Supuestos actuales
 - Todos los timestamps deben ser timezone-aware en UTC.
