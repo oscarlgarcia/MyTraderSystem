@@ -41,6 +41,15 @@ def test_formatter_excludes_sensitive_keys():
     )
     record.password = "SECRET"
     record.api_key = "HIDDEN"
+    record.TOKEN = "HIDDEN2"
     formatted = formatter.format(record)
     assert "password" not in formatted
     assert "api_key" not in formatted
+    assert "TOKEN" not in formatted
+
+
+def test_trace_id_absent_when_not_set():
+    logger = get_logger(name="notrace", level="INFO", stream=io.StringIO())
+    logger.info("msg")
+    payload = json.loads(logger.handlers[0].stream.getvalue().strip())
+    assert "trace_id" not in payload

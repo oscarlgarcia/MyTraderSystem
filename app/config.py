@@ -15,6 +15,7 @@ from typing import Any, Dict
 
 DEFAULT_ENV = "dev"
 REQUIRED_KEYS = {"env", "data_dir", "log_level"}
+ALLOWED_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +41,9 @@ def load_config(env: str | None = None) -> AppConfig:
     missing = REQUIRED_KEYS - set(raw.keys())
     if missing:
         raise ValueError(f"Missing required config keys: {', '.join(sorted(missing))}")
+    log_level = str(raw["log_level"]).upper()
+    if log_level not in ALLOWED_LOG_LEVELS:
+        raise ValueError(f"log_level must be one of {sorted(ALLOWED_LOG_LEVELS)}")
 
     # Env var override example
     data_dir_override = os.getenv("APP_DATA_DIR")
@@ -48,7 +52,7 @@ def load_config(env: str | None = None) -> AppConfig:
     return AppConfig(
         env=raw["env"],
         data_dir=data_dir,
-        log_level=raw["log_level"],
+        log_level=log_level,
     )
 
 

@@ -29,3 +29,5 @@ def test_run_returns_zero(monkeypatch, capsys):
     payload = json.loads(log_lines[0])
     assert payload["message"] == "pipeline stub ok"
     assert payload["trace_id"]
+    assert payload["steps"] == ["ingestion", "features", "strategy", "risk", "execution", "portfolio"]
+    assert payload["env"] == "dev"

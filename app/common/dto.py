@@ -44,6 +44,10 @@ class MarketEvent:
         self.symbol = normalize_symbol(self.symbol)
         if self.event_ts.tzinfo is None or self.event_ts.tzinfo.utcoffset(self.event_ts) is None:
             raise ValueError("event_ts must be timezone-aware (UTC)")
+        if self.price < 0:
+            raise ValueError("price must be non-negative")
+        if self.size < 0:
+            raise ValueError("size must be non-negative")
 
 
 @dataclass(slots=True)
@@ -80,6 +84,8 @@ class Signal:
             raise ValueError("size must be non-negative")
         if not 0 <= self.confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
+        if self.side not in {"buy", "sell", "flat"}:
+            raise ValueError("side must be buy, sell, or flat")
 
 
 @dataclass(slots=True)
@@ -101,6 +107,8 @@ class OrderIntent:
             raise ValueError("ts must be timezone-aware (UTC)")
         if self.quantity <= 0:
             raise ValueError("quantity must be positive")
+        if self.time_in_force not in {"GTC", "IOC", "FOK"}:
+            raise ValueError("time_in_force must be GTC, IOC, or FOK")
 
 
 @dataclass(slots=True)
@@ -124,6 +132,8 @@ class ExecutionReport:
             raise ValueError("filled_qty must be non-negative")
         if self.avg_price < 0:
             raise ValueError("avg_price must be non-negative")
+        if self.status not in {"accepted", "partial", "filled", "rejected", "cancelled"}:
+            raise ValueError("invalid status")
 
 
 @dataclass(slots=True)
