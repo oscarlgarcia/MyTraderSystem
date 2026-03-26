@@ -59,6 +59,7 @@ subgraph Storage
 end
 
 Pipeline --> ParquetWriter
+Pipeline --> ResilientRunner
 ```
 
 ## Componentes principales (snapshot fase 1.3)

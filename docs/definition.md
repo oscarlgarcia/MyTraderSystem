@@ -34,6 +34,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - `run_cycle`: orden de pasos y recorder para pruebas; ningún efecto externo.
 - Ingesta: `normalize_trade`/`normalize_kline` validan precio/tamaño>=0, timestamps UTC; `build_ws_url` arma streams trade+kline por símbolo; `parse_message` despacha según tipo de stream.
 - Storage: `ParquetWriter` con buffer y partición `data/<env>/symbol=<SYM>/date=<YYYY-MM-DD>/data.parquet`; `read_parquet` para smoke.
+- Resiliencia: `ResilientRunner` con backoff exponencial (cap 8s), detección de gap por timestamp, snapshot opcional para re-sync y métricas (reconnects, last_lag_seconds).
 
 ## Supuestos actuales
 - Todos los timestamps deben ser timezone-aware en UTC.

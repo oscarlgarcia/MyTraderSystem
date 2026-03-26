@@ -9,3 +9,4 @@
 - Añadir pruebas de integración usando websockets/httpx mockeados para asegurar compatibilidad con endpoints Binance.
 - Evaluar compresión snappy y optimizar tamaño/velocidad en Parquet una vez establecida la ingesta.
 - Añadir tool de lectura rápida (CLI) para inspeccionar particiones y conteos.
+- Integrar ResilientRunner con WS real y snapshot REST (httpx) en flujo continuo; exponer métricas en logger/CLI.
