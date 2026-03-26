@@ -75,4 +75,5 @@ def _to_table(events: List[MarketEvent]) -> pa.Table:
 
 
 def read_parquet(path: Path) -> pa.Table:
-    return pq.read_table(path, use_legacy_dataset=True)
+    # Avoid merging hive partition columns to prevent schema conflicts.
+    return pq.read_table(path, partitioning="none")
