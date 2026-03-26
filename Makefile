@@ -24,4 +24,4 @@ docker-shell:
 	docker compose run --rm app bash
 
 docker-test:
-	docker compose run --rm app sh -c "poetry install --no-root && poetry run pytest"
+	docker compose run --rm app sh -c "poetry install && poetry run pytest"

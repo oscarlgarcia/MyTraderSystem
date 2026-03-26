@@ -19,6 +19,6 @@ make run-dev
 ## Sandbox Docker
 - Construir imagen: `make docker-build`
 - Shell interactiva con código bind-mount: `make docker-shell`
-- Ejecutar tests dentro del contenedor: `make docker-test` (instala deps si faltan)
+- Ejecutar tests dentro del contenedor: `make docker-test` (instala proyecto en editable y corre pytest)
 
 El `docker-compose.yml` monta el repo en `/workspace`, por lo que cualquier cambio local se refleja inmediatamente dentro del contenedor para ejecutar pruebas.
