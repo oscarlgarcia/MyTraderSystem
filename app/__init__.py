@@ -1,9 +1,8 @@
 """
 Application package initializer.
 
-This module intentionally stays lean; shared package-level configuration
-should live in dedicated modules to keep imports light.
+Shared, cross-cutting code should live in dedicated submodules inside `common`.
+Keep this file lean to avoid import side effects.
 """
 
 __all__ = []
-
