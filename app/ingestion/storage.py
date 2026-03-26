@@ -46,9 +46,9 @@ class ParquetWriter:
             out_path = out_dir / "data.parquet"
             if out_path.exists():
                 # append by reading existing and concatenating
-                existing = pq.read_table(out_path)
+                existing = pq.read_table(out_path).cast(table.schema)
                 table = pa.concat_tables([existing, table])
-            pq.write_table(table, out_path)
+            pq.write_table(table, out_path, use_dictionary=False)
         self.buffer.clear()
 
 
