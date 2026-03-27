@@ -126,6 +126,13 @@ def run(argv: Optional[list[str]] = None) -> int:
             limit=args.batch,
         )
     events = [normalize_kline_row(symbol, row) for row in klines]
+    events.sort(key=lambda e: e.event_ts)
+
+    if not args.dry_run:
+        writer = ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=True)
+        for ev in events:
+            writer.add(ev)
+        writer.flush()
 
     logger.info(
         "backfill finished",

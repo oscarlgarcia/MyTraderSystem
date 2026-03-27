@@ -5,6 +5,8 @@ import httpx
 import pytest
 
 from app.ingestion import backfill
+from app.ingestion.storage import read_parquet
+from app.common.dto import MarketEvent
 
 
 class DummyResponse:
@@ -69,3 +71,25 @@ def test_normalize_kline_row_utc():
     ev = backfill.normalize_kline_row("BTCUSDT", row)
     assert ev.event_ts.tzinfo is not None
     assert ev.event_ts == dt.datetime.fromtimestamp(60, tz=dt.timezone.utc)
+
+
+def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
+    cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
+    rows = [
+        [0, "", "", "", "1", "10", 60_000],
+        [60_001, "", "", "", "2", "20", 120_000],
+    ]
+
+    monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(backfill, "fetch_klines", lambda **kwargs: rows)
+
+    backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T01:00:00+00:00"])
+    backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T01:00:00+00:00"])
+
+    files = list(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet"))
+    assert files
+    table = read_parquet(files[0])
+    assert table.num_rows == 2  # idempotente
+    # ordenado por event_ts
+    ts_list = table.column("event_ts").to_pylist()
+    assert ts_list == sorted(ts_list)

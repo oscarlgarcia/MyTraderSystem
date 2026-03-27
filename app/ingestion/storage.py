@@ -22,6 +22,7 @@ class ParquetWriter:
     base_dir: Path
     env: str
     flush_size: int = 500
+    dedup: bool = False
     buffer: List[MarketEvent] = field(default_factory=list)
 
     def add(self, event: MarketEvent) -> None:
@@ -47,7 +48,10 @@ class ParquetWriter:
             if out_path.exists():
                 # Append by reading existing with ParquetFile to avoid partition schema inference.
                 existing = pq.ParquetFile(out_path).read().cast(table.schema, safe=False)
-                table = pa.concat_tables([existing, table], promote_options="default")
+                if self.dedup:
+                    table = _dedup_tables(existing, table)
+                else:
+                    table = pa.concat_tables([existing, table], promote_options="default")
             pq.write_table(table, out_path, use_dictionary=False)
         self.buffer.clear()
 
@@ -77,3 +81,25 @@ def _to_table(events: List[MarketEvent]) -> pa.Table:
 def read_parquet(path: Path) -> pa.Table:
     # Read single file without inferring partition directories.
     return pq.ParquetFile(path).read()
+
+
+def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
+    schema = existing.schema
+    merged: list[dict] = []
+    seen = set()
+
+    for row in existing.to_pylist():
+        key = (row["symbol"], row["event_ts"], row["price"], row["size"], row["source"])
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+
+    for row in new.to_pylist():
+        key = (row["symbol"], row["event_ts"], row["price"], row["size"], row["source"])
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+
+    return pa.Table.from_pylist(merged, schema=schema)
