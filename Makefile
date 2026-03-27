@@ -23,6 +23,9 @@ inspect-dev:
 backfill-dev:
 	poetry run python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 --interval 1m --batch 500 --dry-run
 
+backfill-dev-write:
+	poetry run python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 --interval 1m --batch 500
+
 # Docker helpers
 .PHONY: docker-build docker-shell docker-test
 
