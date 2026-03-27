@@ -38,6 +38,12 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - Storage: `ParquetWriter` con buffer y partición `data/<env>/symbol=<SYM>/date=<YYYY-MM-DD>/data.parquet`; `read_parquet` para smoke.
 - Resiliencia: `ResilientRunner` con backoff exponencial (cap 8s), detección de gap por timestamp, snapshot opcional y métricas (reconnects, last_lag_seconds).
 
+## Backfill histórico (vista rápida)
+- CLI: `python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start <ISO UTC> --end <ISO UTC> --interval 1m --batch 500 [--dry-run]`
+- Métricas de salida: `rows`, `expected`, `gaps`, `dry_run`, rango y símbolo.
+- Dedup y detección de huecos: compara `event_ts` contra intervalo esperado; gaps > intervalo se reportan en log.
+- Make targets: `backfill-dev` (dry-run), `backfill-dev-write` (escribe Parquet), configurables vía vars `SYMBOL/START/END/INTERVAL/BATCH`.
+
 ## Supuestos actuales
 - Todos los timestamps deben ser timezone-aware en UTC.
 - Normalización de símbolos a MAYÚSCULAS sin espacios.

@@ -12,5 +12,5 @@
 - Integrar ResilientRunner con WS real y snapshot REST (httpx) en flujo continuo; exponer métricas en logger/CLI.
 - Backfill histórico: F1 CLI + fetch paginado en memoria ✅
 - Backfill histórico: F2 escribir Parquet + dedup + detección de huecos ⬜
-- Backfill histórico: F3 métricas de calidad + dry-run avanzado ⬜
-- Backfill histórico: F4 Make target + doc + prueba slow ⬜
+- Backfill histórico: F3 métricas de calidad + dry-run avanzado ✅
+- Backfill histórico: F4 Make target + doc + prueba slow ✅

@@ -45,6 +45,11 @@ python -m app.ingestion.runner --env dev --duration 600  # ingesta puntual
 python -m app.ingestion.inspect --env dev --limit 10    # inspecciona últimos eventos almacenados
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 --interval 1m --batch 500 --dry-run
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 --interval 1m --batch 500               # escribe Parquet
+
+### Backfill histórico
+- Seco (no escribe): `make backfill-dev START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
+- Escribe Parquet: `make backfill-dev-write START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
+- Campos clave: `INTERVAL` (soportados: 1m,3m,5m,15m,30m,1h), `BATCH` (<=1000).
 ```
 Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.
 
