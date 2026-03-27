@@ -34,7 +34,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - `AppConfig`: env, data_dir, log_level; se carga desde `config.<env>.yaml` con override por env vars.
 - Log records: JSON con `ts`, `level`, `logger`, `module`, `message`, `trace_id` opcional y extras seguros.
 - Ingesta live: `normalize_trade`/`normalize_kline` validan precio/tamaño≥0, timestamps UTC; `build_ws_url` arma streams trade+kline por símbolo; `parse_message` despacha según tipo de stream.
-- Backfill: fetch paginado de klines REST, normalización a `MarketEvent` en memoria (sin persistencia en F1).
+- Backfill: fetch paginado de klines REST, normalización a `MarketEvent`; dry-run (sin escritura) y modo persistente que deduplica y detecta huecos antes de escribir Parquet.
 - Storage: `ParquetWriter` con buffer y partición `data/<env>/symbol=<SYM>/date=<YYYY-MM-DD>/data.parquet`; `read_parquet` para smoke.
 - Resiliencia: `ResilientRunner` con backoff exponencial (cap 8s), detección de gap por timestamp, snapshot opcional y métricas (reconnects, last_lag_seconds).
 
