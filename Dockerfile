@@ -11,8 +11,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Install poetry explicitly (curl installer) and ensure it is on PATH
 RUN curl -sSL https://install.python-poetry.org | python3 - \
-    && poetry --version
+    || pip install poetry==1.7.1
+RUN /opt/poetry/bin/poetry --version || poetry --version
 
 WORKDIR /workspace
 

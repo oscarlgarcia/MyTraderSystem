@@ -51,3 +51,4 @@ El nivel se controla vía `log_level` en la config (dev=INFO, test=WARNING).
 - Tras añadir dependencias en `pyproject.toml`, reconstruye la imagen: `make docker-build` (copia `pyproject.toml` y `poetry.lock` para cache).
 - Ejecutar tests en contenedor con deps nuevas: `make docker-test` (incluye `poetry install` dentro).
 - Si usas Python 3.13 local, instala/ejecuta via Docker (la resolución de `pyarrow` se bloquea en 3.13; la imagen usa Python 3.11).
+- Si ves `poetry: not found` en el contenedor, fuerza rebuild sin caché: `docker compose build --no-cache --pull`.
