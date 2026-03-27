@@ -1,17 +1,19 @@
 # Definición técnica y funcional (versión inicial)
 
 ## Objetivo
-Centralizar la descripción de componentes y sus responsabilidades en la fase temprana (Fase 1.3).
+Centralizar la descripción de componentes y sus responsabilidades en la fase temprana (Fase 1–2).
 
 ## Componentes
 - **common**: DTOs, utilidades compartidas (normalización de símbolos, timestamps UTC).
 - **ingestion**: conectores de mercado; entrada de datos normalizados a `MarketEvent`.
 - **ingestion.client**: adaptadores Binance/Bybit (trade/kline 1m), normalización a DTO, construcción de URLs de suscripción.
-- **features**: cálculo y serving de `FeatureVector` para estrategias.
-- **strategy**: generación de `Signal` a partir de features.
-- **risk**: valida `Signal` y produce `OrderIntent` respetando límites.
-- **execution**: adapta `OrderIntent` a órdenes de exchange y devuelve `ExecutionReport`.
-- **portfolio**: mantiene `PortfolioState`, P&L y reconciliación.
+- **ingestion.backfill**: descarga histórica REST de klines, normaliza a `MarketEvent` en memoria (Fase 1 sin escritura).
+- **ingestion.runner**: ingesta en vivo puntual WS/REST, resiliencia básica, escritura Parquet.
+- **features**: cálculo y serving de `FeatureVector` para estrategias (stub).
+- **strategy**: generación de `Signal` a partir de features (stub).
+- **risk**: valida `Signal` y produce `OrderIntent` respetando límites (stub).
+- **execution**: adapta `OrderIntent` a órdenes de exchange y devuelve `ExecutionReport` (stub).
+- **portfolio**: mantiene `PortfolioState`, P&L y reconciliación (stub).
 - **observability**: logging/metrics/tracing; usa `TraceContext`.
 - **observability.logger**: formateo JSON, `trace_id` por contexto, niveles configurables y handler stdout/archivo opcional.
 - **main.run / run_cycle**: arranque end-to-end (stub) que carga config, crea trace_id y recorre orden fijo de pasos (ingestion→features→strategy→risk→execution→portfolio) sin I/O real.
@@ -22,19 +24,19 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 `MarketEvent` -> `FeatureVector` -> `Signal` -> `OrderIntent` -> `ExecutionReport` -> `PortfolioState`
 
 ## Contratos (resumen)
-- `MarketEvent`: evento de mercado UTC, símbolo normalizado, price/size >=0.
+- `MarketEvent`: evento de mercado UTC, símbolo normalizado, price/size ≥ 0.
 - `FeatureVector`: features derivados en UTC.
-- `Signal`: side buy/sell/flat, size >=0, confidence [0,1], ttl opcional.
-- `OrderIntent`: quantity >0, TIF por defecto GTC, strategy_id obligatorio.
-- `ExecutionReport`: estado de orden, filled_qty/avg_price >=0, correlación por client_order_id.
+- `Signal`: side buy/sell/flat, size ≥ 0, confidence [0,1], ttl opcional.
+- `OrderIntent`: quantity > 0, TIF por defecto GTC, strategy_id obligatorio.
+- `ExecutionReport`: estado de orden, filled_qty/avg_price ≥ 0, correlación por client_order_id.
 - `PortfolioState`: posiciones, cash, P&L; método `total_value()`.
 - `TraceContext`: trace_id (+ span_id opcional) para correlación.
 - `AppConfig`: env, data_dir, log_level; se carga desde `config.<env>.yaml` con override por env vars.
 - Log records: JSON con `ts`, `level`, `logger`, `module`, `message`, `trace_id` opcional y extras seguros.
-- `run_cycle`: orden de pasos y recorder para pruebas; ningún efecto externo.
-- Ingesta: `normalize_trade`/`normalize_kline` validan precio/tamaño>=0, timestamps UTC; `build_ws_url` arma streams trade+kline por símbolo; `parse_message` despacha según tipo de stream.
+- Ingesta live: `normalize_trade`/`normalize_kline` validan precio/tamaño≥0, timestamps UTC; `build_ws_url` arma streams trade+kline por símbolo; `parse_message` despacha según tipo de stream.
+- Backfill: fetch paginado de klines REST, normalización a `MarketEvent` en memoria (sin persistencia en F1).
 - Storage: `ParquetWriter` con buffer y partición `data/<env>/symbol=<SYM>/date=<YYYY-MM-DD>/data.parquet`; `read_parquet` para smoke.
-- Resiliencia: `ResilientRunner` con backoff exponencial (cap 8s), detección de gap por timestamp, snapshot opcional para re-sync y métricas (reconnects, last_lag_seconds).
+- Resiliencia: `ResilientRunner` con backoff exponencial (cap 8s), detección de gap por timestamp, snapshot opcional y métricas (reconnects, last_lag_seconds).
 
 ## Supuestos actuales
 - Todos los timestamps deben ser timezone-aware en UTC.
@@ -48,6 +50,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - Import de paquetes y `python -m app` sale con código 0.
 - Validaciones de DTOs (cantidades positivas, timestamps UTC, confidence en rango).
 - Round-trip de normalización de símbolo y cálculo de `total_value`.
+- Backfill F1: `--dry-run` descarga rango corto y reporta conteo > 0.
 
 ## Evolución esperada
 - Añadir serialización (p.ej. JSON) manteniendo contratos.

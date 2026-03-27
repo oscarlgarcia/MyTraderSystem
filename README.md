@@ -13,6 +13,8 @@ make lint
 make test
 make run-dev
 make ingest-dev   # ingesta puntual 10 min contra testnet, escribe en data/dev
+make backfill-dev # backfill en memoria (ejemplo 1h BTCUSDT)
+python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 --interval 1m --batch 500 --dry-run  # backfill en memoria
 ```
 
 `run-dev` imprime un stub de pipeline para validar que el entorno arranca.
@@ -40,6 +42,7 @@ python -m app --env dev   # usa config.dev.yaml
 python -m app --env test  # usa config.test.yaml
 python -m app.ingestion.runner --env dev --duration 600  # ingesta puntual
 python -m app.ingestion.inspect --env dev --limit 10    # inspecciona últimos eventos almacenados
+python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 --interval 1m --batch 500 --dry-run
 ```
 Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.
 

@@ -60,11 +60,13 @@ end
 
 Pipeline --> ParquetWriter
 Pipeline --> ResilientRunner
+Backfill --> DTOs
+Backfill --> ParquetWriter
 ```
 
 ## Componentes principales (snapshot fase 1.3)
 - `common`: DTOs y utilidades transversales (`normalize_symbol`, `utc_now`, validaciones).
-- `ingestion`: (stub) conectores de datos de mercado.
+- `ingestion`: conectores de datos de mercado (live runner y backfill REST).
 - `features`: (stub) cálculo/serving de features.
 - `strategy`: (stub) generación de señales.
 - `risk`: (stub) chequeos pre/post trade.
@@ -72,6 +74,7 @@ Pipeline --> ResilientRunner
 - `portfolio`: (stub) P&L, balances, reconciliación.
 - `observability`: (stub) logging/metrics.
 - `ops`: (stub) configuración/CLI/runbooks.
+- `backfill`: descarga histórica REST y normaliza klines a `MarketEvent` (en F1 sólo memoria; futuro escritura Parquet).
 
 ## Diagrama de clases (DTOs)
 ```mermaid
