@@ -84,6 +84,25 @@ def test_schema_stable_across_writer_instances(tmp_path):
     assert table.num_rows == 2
 
 
+def test_dedup_sorts_after_merge(tmp_path):
+    ts = datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10, dedup=True)
+    writer.add(make_event("BTCUSDT", ts.replace(hour=1)))  # later
+    writer.flush()
+
+    # new event earlier + duplicate
+    writer2 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10, dedup=True)
+    writer2.add(make_event("BTCUSDT", ts))
+    writer2.add(make_event("BTCUSDT", ts.replace(hour=1)))  # duplicate
+    writer2.flush()
+
+    out = tmp_path / "dev" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
+    table = read_parquet(out)
+    ts_list = table.column("event_ts").to_pylist()
+    assert ts_list == sorted(ts_list)
+    assert table.num_rows == 2
+
+
 def test_read_parquet_missing_path_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         read_parquet(tmp_path / "missing.parquet")

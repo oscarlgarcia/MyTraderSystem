@@ -88,18 +88,16 @@ def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
     merged: list[dict] = []
     seen = set()
 
-    for row in existing.to_pylist():
-        key = (row["symbol"], row["event_ts"], row["price"], row["size"], row["source"])
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(row)
+    def add_rows(rows: list[dict]) -> None:
+        for row in rows:
+            key = (row["symbol"], row["event_ts"], row["price"], row["size"], row["source"])
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
 
-    for row in new.to_pylist():
-        key = (row["symbol"], row["event_ts"], row["price"], row["size"], row["source"])
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(row)
-
+    add_rows(existing.to_pylist())
+    add_rows(new.to_pylist())
+    # Ordenar por timestamp para mantener consistencia
+    merged.sort(key=lambda r: r["event_ts"])
     return pa.Table.from_pylist(merged, schema=schema)

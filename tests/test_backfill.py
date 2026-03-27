@@ -114,3 +114,67 @@ def test_dry_run_creates_no_files(monkeypatch, tmp_path):
     backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T00:10:00+00:00", "--dry-run"])
     files = list(tmp_path.glob("dev/symbol=BTCUSDT/date=*/data.parquet"))
     assert not files
+
+
+def test_interval_no_soportado():
+    with pytest.raises(ValueError):
+        backfill.run(
+            [
+                "--env",
+                "dev",
+                "--symbol",
+                "BTCUSDT",
+                "--start",
+                "2024-01-01T00:00:00+00:00",
+                "--end",
+                "2024-01-01T00:05:00+00:00",
+                "--interval",
+                "2m",  # no soportado
+            ]
+        )
+
+
+def test_http_500_retries_then_fail(monkeypatch):
+    attempts = {"n": 0}
+
+    class DummyResponse:
+        status_code = 500
+
+        def json(self):
+            return []
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("err", request=None, response=None)
+
+    def fake_get(url, params=None, timeout=None):
+        attempts["n"] += 1
+        return DummyResponse()
+
+    client = SimpleNamespace(get=fake_get)
+    with pytest.raises(httpx.HTTPStatusError):
+        backfill.fetch_klines(client, "https://x", "BTCUSDT", 0, 1000, limit=1, max_retries=2)
+    assert attempts["n"] == 2
+
+
+def test_gap_zero_when_consecutive():
+    events = [
+        backfill.normalize_kline_row(
+            "BTCUSDT", [0, "", "", "", "1", "1", 60_000]
+        ),
+        backfill.normalize_kline_row(
+            "BTCUSDT", [60_001, "", "", "", "1", "1", 120_000]
+        ),
+    ]
+    assert backfill._count_gaps(events, interval_ms=60_000) == 0
+
+
+def test_gap_custom_interval():
+    events = [
+        backfill.normalize_kline_row(
+            "BTCUSDT", [0, "", "", "", "1", "1", 300_000]
+        ),
+        backfill.normalize_kline_row(
+            "BTCUSDT", [900_001, "", "", "", "1", "1", 1_200_000]
+        ),
+    ]
+    assert backfill._count_gaps(events, interval_ms=300_000) == 1
