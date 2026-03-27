@@ -73,4 +73,5 @@ def load_config(env: str | None = None) -> AppConfig:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MyTraderSystem")
     parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
-    return parser.parse_args(argv)
+    args, _unknown = parser.parse_known_args(argv)
+    return args
