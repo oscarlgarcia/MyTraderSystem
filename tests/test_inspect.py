@@ -31,4 +31,4 @@ def test_collect_events_filter_date_and_limit(tmp_path):
     assert files
     dataset_rows = collect_events(tmp_path, "dev", symbol="BTCUSDT", date="2024-01-01", limit=1)
     assert len(dataset_rows) == 1
-    assert dataset_rows[0]["event_ts"].startswith("2024-01-01")
+    assert str(dataset_rows[0]["event_ts"]).startswith("2024-01-01")
