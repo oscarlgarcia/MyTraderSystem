@@ -53,7 +53,14 @@ def normalize_kline(payload: dict) -> MarketEvent:
 
 
 def build_streams(symbols: Iterable[str]) -> List[str]:
-    syms = [normalize_symbol(s).lower() for s in symbols]
+    seen = set()
+    syms = []
+    for s in symbols:
+        norm = normalize_symbol(s).lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+        syms.append(norm)
     return [f"{sym}@trade" for sym in syms] + [f"{sym}@kline_1m" for sym in syms]
 
 

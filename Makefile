@@ -14,6 +14,12 @@ test:
 run-dev:
 	poetry run python -m app.main
 
+ingest-dev:
+	poetry run python -m app.ingestion.runner --env dev --duration 600
+
+inspect-dev:
+	poetry run python -m app.ingestion.inspect --env dev --limit 20
+
 # Docker helpers
 .PHONY: docker-build docker-shell docker-test
 

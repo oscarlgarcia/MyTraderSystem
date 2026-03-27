@@ -39,3 +39,31 @@ def test_parse_message_dispatches_kline():
 def json_dumps(obj):
     import json
     return json.dumps(obj)
+
+
+def test_parse_message_trade():
+    msg = {
+        "stream": "btcusdt@trade",
+        "data": {"s": "BTCUSDT", "E": 1710000000000, "p": "100", "q": "1"},
+    }
+    ev = parse_message(json_dumps(msg))
+    assert ev.source == "trade"
+    assert ev.symbol == "BTCUSDT"
+
+
+def test_parse_message_unknown_stream_raises():
+    msg = {"stream": "unknown", "data": {"foo": "bar"}}
+    with pytest.raises(KeyError):
+        parse_message(json_dumps(msg))
+
+
+def test_normalize_kline_negative_price():
+    payload = {"s": "BTCUSDT", "E": 1710000000000, "k": {"c": "-1", "q": "1"}}
+    with pytest.raises(ValueError):
+        normalize_kline(payload)
+
+
+def test_build_ws_url_dedupes_and_orders():
+    url = build_ws_url("wss://example/stream", ["ETHUSDT", "ethusdt", "BTCUSDT"])
+    assert url.count("ethusdt@trade") == 1
+    assert url.index("ethusdt@trade") < url.index("btcusdt@trade")

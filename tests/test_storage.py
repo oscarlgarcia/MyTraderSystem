@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pyarrow.parquet as pq
+import pytest
 
 from app.common.dto import MarketEvent
 from app.ingestion.storage import ParquetWriter, read_parquet
@@ -50,3 +51,39 @@ def test_flush_threshold(tmp_path):
     writer.add(make_event("BTCUSDT", ts))
     out = tmp_path / "dev" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
     assert out.exists()
+
+
+def test_partition_by_symbol(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    writer.add(make_event("BTCUSDT", ts))
+    writer.add(make_event("ETHUSDT", ts))
+    writer.flush()
+    p1 = tmp_path / "dev" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
+    p2 = tmp_path / "dev" / "symbol=ETHUSDT" / "date=2024-01-01" / "data.parquet"
+    assert p1.exists() and p2.exists()
+
+
+def test_flush_manual_without_threshold(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=100)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    writer.add(make_event("BTCUSDT", ts))
+    writer.flush()
+    out = tmp_path / "dev" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
+    assert out.exists()
+
+
+def test_schema_stable_across_writer_instances(tmp_path):
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    writer1 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
+    writer1.add(make_event("BTCUSDT", ts))
+    writer2 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
+    writer2.add(make_event("BTCUSDT", ts.replace(hour=1)))
+    out = tmp_path / "dev" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
+    table = read_parquet(out)
+    assert table.num_rows == 2
+
+
+def test_read_parquet_missing_path_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        read_parquet(tmp_path / "missing.parquet")

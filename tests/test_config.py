@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.config import AppConfig, load_config
+from app.config import AppConfig, load_config, parse_args
 
 
 def test_load_dev_config():
@@ -75,3 +75,26 @@ def test_invalid_endpoint(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError):
         load_config("dev")
+
+
+def test_symbols_required_and_upper(monkeypatch, tmp_path):
+    cfg_path = tmp_path / "config.dev.yaml"
+    cfg_path.write_text(
+        '{"env": "dev", "data_dir": "./data/dev", "log_level": "INFO", "ws_base": "wss://x", "rest_base": "https://x", "symbols": []}',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError):
+        load_config("dev")
+
+    cfg_path.write_text(
+        '{"env": "dev", "data_dir": "./data/dev", "log_level": "INFO", "ws_base": "wss://x", "rest_base": "https://x", "symbols": ["ethusdt"]}',
+        encoding="utf-8",
+    )
+    cfg = load_config("dev")
+    assert cfg.symbols == ["ETHUSDT"]
+
+
+def test_parse_args_accepts_pytest_flags():
+    args = parse_args(["--env", "test", "-vv"])
+    assert args.env == "test"

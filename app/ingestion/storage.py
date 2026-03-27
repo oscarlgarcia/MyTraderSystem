@@ -45,9 +45,9 @@ class ParquetWriter:
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / "data.parquet"
             if out_path.exists():
-                # append by reading existing and concatenating
-                existing = pq.read_table(out_path).cast(table.schema)
-                table = pa.concat_tables([existing, table])
+                # Append by reading existing with ParquetFile to avoid partition schema inference.
+                existing = pq.ParquetFile(out_path).read().cast(table.schema, safe=False)
+                table = pa.concat_tables([existing, table], promote_options="default")
             pq.write_table(table, out_path, use_dictionary=False)
         self.buffer.clear()
 

@@ -118,3 +118,18 @@ def test_execution_report_negative_avg_price():
 def test_portfolio_rejects_naive_ts():
     with pytest.raises(ValueError):
         PortfolioState(ts=datetime.utcnow(), positions={}, cash=0)
+
+
+def test_market_event_negative_size_rejected():
+    ts = datetime.now(timezone.utc)
+    with pytest.raises(ValueError):
+        MarketEvent(symbol="BTCUSDT", event_ts=ts, price=1, size=-1, source="trade")
+
+
+def test_trace_context_serialization_roundtrip():
+    from dataclasses import asdict
+    ctx = TraceContext(trace_id="abc", span_id="def")
+    as_dict = asdict(ctx)
+    assert as_dict["trace_id"] == "abc"
+    recreated = TraceContext(**as_dict)
+    assert recreated.span_id == "def"

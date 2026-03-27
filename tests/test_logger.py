@@ -56,3 +56,24 @@ def test_trace_id_absent_when_not_set():
     logger.info("msg")
     payload = json.loads(buffer.getvalue().strip())
     assert "trace_id" not in payload
+
+
+def test_clear_trace_id_removes_previous():
+    buffer = io.StringIO()
+    set_trace_id("abc")
+    clear_trace_id()
+    logger = get_logger(name="clear", level="INFO", stream=buffer)
+    logger.info("msg")
+    payload = json.loads(buffer.getvalue().strip())
+    assert "trace_id" not in payload
+
+
+def test_file_handler_writes_json(tmp_path):
+    log_path = tmp_path / "out.log"
+    logger = get_logger(name="filelog", level="INFO", log_file=str(log_path))
+    logger.info("file message", extra={"env": "dev"})
+    contents = log_path.read_text(encoding="utf-8").strip()
+    assert contents, "file should contain log entry"
+    payload = json.loads(contents)
+    assert payload["message"] == "file message"
+    assert payload["env"] == "dev"

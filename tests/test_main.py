@@ -31,3 +31,9 @@ def test_run_returns_zero(monkeypatch, capsys):
     assert payload["trace_id"]
     assert payload["steps"] == ["ingestion", "features", "strategy", "risk", "execution", "portfolio"]
     assert payload["env"] == "dev"
+
+
+def test_run_respects_app_env(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    rc = main.run()
+    assert rc == 0

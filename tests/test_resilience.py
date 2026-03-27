@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.common.dto import MarketEvent
 from app.ingestion.resilience import ResilientRunner
 
@@ -80,3 +82,64 @@ def test_backoff_capped():
         pass
     assert sleeps
     assert all(s <= 8 for s in sleeps)
+
+
+def test_max_retries_raises_after_limit():
+    def stream():
+        raise RuntimeError("always")
+
+    runner = ResilientRunner(stream_fn=stream, sleeper=lambda s: None)
+    with pytest.raises(RuntimeError):
+        runner.run(lambda ev: None, max_retries=1, stop_on_complete=True)
+
+
+def test_last_lag_updates():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [make_ev(base), make_ev(base + timedelta(seconds=3))]
+
+    def stream():
+        for ev in events:
+            yield ev
+
+    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, lag_threshold_seconds=1, sleeper=lambda s: None)
+    runner.run(lambda ev: None, stop_on_complete=True)
+    assert runner.metrics.last_lag_seconds >= 3
+
+
+def test_dedup_stream_duplicates():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    ev = make_ev(base)
+
+    def stream():
+        yield ev
+        yield ev
+
+    handled = []
+    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, sleeper=lambda s: None)
+    runner.run(lambda e: handled.append(e), stop_on_complete=True)
+    assert len(handled) == 1
+
+
+def test_stop_on_complete_empty_stream_exits():
+    def stream():
+        if False:
+            yield  # pragma: no cover
+
+    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, sleeper=lambda s: None)
+    runner.run(lambda ev: None, stop_on_complete=True)
+    assert runner.metrics.reconnects == 0
+
+
+def test_gap_without_snapshot_skips_resync():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [make_ev(base), make_ev(base + timedelta(seconds=10))]
+    handled = []
+
+    def stream():
+        for ev in events:
+            yield ev
+
+    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, lag_threshold_seconds=2, sleeper=lambda s: None)
+    runner.run(lambda ev: handled.append(ev), stop_on_complete=True)
+    assert len(handled) == 2
+    assert runner.metrics.last_lag_seconds >= 10

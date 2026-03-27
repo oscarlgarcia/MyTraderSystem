@@ -12,6 +12,7 @@ make install
 make lint
 make test
 make run-dev
+make ingest-dev   # ingesta puntual 10 min contra testnet, escribe en data/dev
 ```
 
 `run-dev` imprime un stub de pipeline para validar que el entorno arranca.
@@ -37,6 +38,8 @@ Actualiza estas instrucciones al completar cada fase con los comandos vigentes p
 ```bash
 python -m app --env dev   # usa config.dev.yaml
 python -m app --env test  # usa config.test.yaml
+python -m app.ingestion.runner --env dev --duration 600  # ingesta puntual
+python -m app.ingestion.inspect --env dev --limit 10    # inspecciona últimos eventos almacenados
 ```
 Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.
 
