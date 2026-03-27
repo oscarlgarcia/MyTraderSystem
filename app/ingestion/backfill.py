@@ -17,6 +17,7 @@ import httpx
 from app.common.dto import MarketEvent, normalize_symbol
 from app.config import load_config
 from app.observability.logger import get_logger, set_trace_id
+from app.ingestion.storage import ParquetWriter
 
 
 def parse_iso_utc(value: str) -> dt.datetime:
