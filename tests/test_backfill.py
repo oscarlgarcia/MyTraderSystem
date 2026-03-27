@@ -76,8 +76,8 @@ def test_normalize_kline_row_utc():
 def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
     rows = [
-        [0, "", "", "", "1", "10", 60_000],
-        [60_001, "", "", "", "2", "20", 120_000],
+        [1704067200000, "", "", "", "1", "10", 1704067260000],  # 2024-01-01 00:00:00 / close +60s
+        [1704067260001, "", "", "", "2", "20", 1704067320000],  # +60s
     ]
 
     monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
