@@ -97,6 +97,7 @@ def run(argv: Optional[list[str]] = None) -> int:
     symbol = normalize_symbol(args.symbol)
     start_ms = to_ms(args.start)
     end_ms = to_ms(args.end)
+    interval_ms = _interval_to_ms(args.interval)
 
     trace_id = f"backfill-{int(time.time())}"
     logger = get_logger(name="backfill", level=cfg.log_level)
@@ -129,6 +130,10 @@ def run(argv: Optional[list[str]] = None) -> int:
     events = [normalize_kline_row(symbol, row) for row in klines]
     events.sort(key=lambda e: e.event_ts)
 
+    expected = ((end_ms - start_ms) // interval_ms) + 1
+    received = len(events)
+    gaps = _count_gaps(events, interval_ms)
+
     if not args.dry_run:
         writer = ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=True)
         for ev in events:
@@ -142,6 +147,8 @@ def run(argv: Optional[list[str]] = None) -> int:
             "env": cfg.env,
             "symbol": symbol,
             "rows": len(events),
+            "expected": expected,
+            "gaps": gaps,
             "start": args.start.isoformat(),
             "end": args.end.isoformat(),
             "interval": args.interval,
@@ -149,6 +156,33 @@ def run(argv: Optional[list[str]] = None) -> int:
         },
     )
     return 0
+
+
+def _interval_to_ms(interval: str) -> int:
+    mapping = {
+        "1m": 60_000,
+        "3m": 180_000,
+        "5m": 300_000,
+        "15m": 900_000,
+        "30m": 1_800_000,
+        "1h": 3_600_000,
+    }
+    if interval not in mapping:
+        raise ValueError(f"Intervalo no soportado para backfill: {interval}")
+    return mapping[interval]
+
+
+def _count_gaps(events: List[MarketEvent], interval_ms: int) -> int:
+    if len(events) < 2:
+        return 0
+    events_sorted = sorted(events, key=lambda e: e.event_ts)
+    gap_count = 0
+    expected_delta = dt.timedelta(milliseconds=interval_ms)
+    for prev, curr in zip(events_sorted, events_sorted[1:]):
+        delta = curr.event_ts - prev.event_ts
+        if delta > expected_delta:
+            gap_count += 1
+    return gap_count
 
 
 if __name__ == "__main__":

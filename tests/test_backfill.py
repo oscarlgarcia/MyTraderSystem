@@ -93,3 +93,24 @@ def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     # ordenado por event_ts
     ts_list = table.column("event_ts").to_pylist()
     assert ts_list == sorted(ts_list)
+
+
+def test_gap_detection(monkeypatch):
+    events = [
+        MarketEvent(symbol="BTCUSDT", event_ts=dt.datetime.fromtimestamp(0, tz=dt.timezone.utc), price=1.0, size=1.0, source="kline"),
+        MarketEvent(symbol="BTCUSDT", event_ts=dt.datetime.fromtimestamp(180, tz=dt.timezone.utc), price=1.0, size=1.0, source="kline"),
+    ]
+    assert backfill._count_gaps(events, interval_ms=60_000) == 1
+
+
+def test_dry_run_creates_no_files(monkeypatch, tmp_path):
+    cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
+    rows = [
+        [1704067200000, "", "", "", "1", "10", 1704067260000],
+    ]
+    monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(backfill, "fetch_klines", lambda **kwargs: rows)
+
+    backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T00:10:00+00:00", "--dry-run"])
+    files = list(tmp_path.glob("dev/symbol=BTCUSDT/date=*/data.parquet"))
+    assert not files
