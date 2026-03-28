@@ -1,5 +1,6 @@
 import pytest
 
+from app.common.dto import MarketEvent
 from app.ingestion.client import build_ws_url, normalize_kline, normalize_trade, parse_message, register_normalizer
 
 
