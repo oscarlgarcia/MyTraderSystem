@@ -56,9 +56,9 @@ def test_invalid_date_raises():
 def test_429_retries_and_fails(monkeypatch):
     attempts = {"n": 0}
 
-    def fake_get(url, params=None, timeout=None):
-        attempts["n"] += 1
-        return DummyResponse(429, [])
+        def fake_get(url, params=None, timeout=None):
+            attempts["n"] += 1
+            return DummyResponse(429, [])
 
     client = SimpleNamespace(get=fake_get)
     with pytest.raises(httpx.HTTPStatusError):
@@ -154,7 +154,8 @@ def test_http_500_retries_then_fail(monkeypatch):
     client = SimpleNamespace(get=fake_get)
     with pytest.raises(httpx.HTTPStatusError):
         backfill.fetch_klines(client, "https://x", "BTCUSDT", 0, 1000, limit=1, retries_5xx=2)
-    assert attempts["n"] == 2
+    # 1 intento inicial + 2 reintentos = 3
+    assert attempts["n"] == 3
 
 
 def test_timeout_retries_then_fail(monkeypatch):
