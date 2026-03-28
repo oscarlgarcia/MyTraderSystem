@@ -4,15 +4,15 @@
 - `app.config` → stdlib (json, argparse, pathlib); consumido por main, runner, backfill, inspect.
 - `app.common.dto` → stdlib (dataclasses); consumido por todos los módulos de dominio.
 - `app.observability.logger` → stdlib logging/json/contextvars; usado por main, runner, backfill, resilience.
-- `app.ingestion.client` → stdlib json/datetime; dependencias internas: `common.dto`.
+- `app.ingestion.client` → stdlib json/datetime; depende de `common.dto`.
 - `app.ingestion.resilience` → stdlib time/contextvars; depende de `common.dto`.
 - `app.ingestion.storage` → pyarrow; depende de `common.dto`.
-- `app.ingestion.runner` → websockets, httpx (config endpoints), storage, resilience, logger.
+- `app.ingestion.runner` → websockets, httpx, storage, resilience, logger.
 - `app.ingestion.backfill` → httpx (REST), storage, logger, dto.
 - `app.ingestion.inspect` → pyarrow.dataset; depende de config.
 - Tests → pytest, httpx mocks, pyarrow.
 
-## Dependencias externas (librerías)
+## Dependencias externas
 - `httpx` (REST)
 - `websockets` (WS)
 - `pyarrow` (Parquet)
@@ -20,27 +20,27 @@
 - `poetry` (gestión)
 
 ## Acoplamientos fuertes
-- `runner` ↔ `storage`/`resilience`: la ingesta en vivo escribe directamente con `ParquetWriter` y usa `ResilientRunner` para control de flujo.
+- `runner` ↔ `storage`/`resilience`: ingesta en vivo escribe con `ParquetWriter` y controla flujo con `ResilientRunner`.
 - `backfill` ↔ `storage`: escribe Parquet en el mismo layout; deduplicación implementada en storage.
-- `dto` ↔ todos los módulos: cambios en DTO rompen consumidores.
-- `config` ↔ todos los CLIs: forma de claves y validación está integrada en runner/backfill/inspect.
-- `pyarrow` ↔ storage/inspect: formato de persistencia y lectura depende de esta lib.
+- `dto` ↔ todos los módulos: cambios en DTO impactan a todos.
+- `config` ↔ CLIs: claves/validación compartidas en runner/backfill/inspect.
+- `pyarrow` ↔ storage/inspect: formato persistencia/lectura depende de esta lib.
+- `logger` ↔ escritura de archivos: rotación obligatoria al usar `log_file`; si falla la ruta, fallback a stdout.
 
 ## Acoplamientos débiles
-- `logger` está inyectado por función (`get_logger`) y se puede reemplazar con mínimo impacto.
-- `resilience` se usa como envoltura de stream_fn; se podría sustituir por otro componente si mantiene la misma interfaz.
-- `backfill` consume REST vía httpx; la fuente (Binance) es configurable por endpoint, no está hardcodeada en lógica de negocio.
+- `logger` inyectable (`get_logger`); `stream` personalizable.
+- `resilience` envuelve `stream_fn`; se puede cambiar manteniendo interfaz.
+- `backfill` usa endpoints configurables; proveedor no está hardcodeado.
 
 ## Riesgos
-- Cambio de esquema en `dto` afecta a todos los módulos (acoplamiento fuerte).
-- `pyarrow` versión/compatibilidad (especialmente en Windows) puede romper lectura/escritura.
-- Dependencia en Binance API shape (klines) en `backfill`: cambios del proveedor romperían normalización.
-- Uso compartido de layout Parquet por runner y backfill: dedup/orden deben ser consistentes; divergencia genera datos corruptos.
-- `ResilientRunner` acoplado a callbacks sin backpressure ni colas; si crece la lógica downstream, puede bloquearse.
+- Cambios en DTO o schema Parquet rompen consumidores.
+- Compatibilidad de `pyarrow` (especialmente en Windows).
+- Cambios de API del proveedor (Binance) afectarían normalización.
+- Dedup: OOM si se supera umbral; mitigado con `max_dedup_rows` y ruta incremental.
+- ResilientRunner sin backpressure puede bloquear si downstream se enlentece.
 
 ## Oportunidades de desacoplar
-- Introducir interfaces claras (puertos) para storage: `EventSink` con implementación Parquet; permitir futuro sink (S3, DB) sin tocar runner/backfill.
-- Encapsular proveedor REST/WS en adaptadores intercambiables (Strategy Pattern) con contratos explícitos para klines/trades.
-- Separar validación de DTO de normalización: un validador reutilizable reduciría acoplamiento en client/backfill.
-- Inyectar `logger` y `resilience` vía parámetros/config para tests y futuras integraciones sin modificar código.
-- Definir un contrato de feature store (`FeatureService`) para desacoplar cálculo de features del pipeline de ingest/backfill.
+- Interfaces claras: `EventSink` (Parquet impl), `MarketSource` (REST/WS), `FeatureService`.
+- Versionar schema Parquet en metadata y validar compat.
+- Validador central de DTO separando normalización/validación.
+- Configurar métricas/observabilidad como plugin (futuro) sin cambiar lógica de dominio.
