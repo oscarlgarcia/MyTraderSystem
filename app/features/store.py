@@ -19,6 +19,20 @@ def _is_finite_price(price: float) -> bool:
     return isinstance(price, (int, float)) and math.isfinite(price)
 
 
+def _sma(prices: Sequence[float], window: int) -> float | None:
+    if len(prices) < window:
+        return None
+    return sum(prices[-window:]) / window
+
+
+def _log_return(prev_price: float | None, current_price: float) -> float | None:
+    if prev_price is None:
+        return None
+    if prev_price <= 0 or current_price <= 0:
+        return None
+    return math.log(current_price / prev_price)
+
+
 def compute_features(
     events: Sequence[MarketEvent],
     window: int = 5,
@@ -55,12 +69,14 @@ def compute_features(
             prices.append(ev.price)
             values: Dict[str, float] = {"price": ev.price}
 
-            if prev_price is not None and _is_finite_price(prev_price):
-                values["ret_1"] = math.log(ev.price / prev_price) if prev_price > 0 else 0.0
+            ret = _log_return(prev_price, ev.price)
+            if ret is not None:
+                values["ret_1"] = ret
 
             for w in window_set:
-                if len(prices) >= w:
-                    values[f"sma_{w}"] = sum(list(prices)[-w:]) / w
+                sma_val = _sma(list(prices), w)
+                if sma_val is not None:
+                    values[f"sma_{w}"] = sma_val
 
             results.append(
                 FeatureVector(

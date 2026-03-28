@@ -3,7 +3,7 @@
 ```mermaid
 flowchart LR
     A[MarketEvent stream] --> B[compute_features (ventana deslizante)]
-    B --> C[FeatureVector]
+    B --> C[FeatureVector (price, ret_1, sma_N)]
     C --> D[Strategy]
     D --> E[Risk]
     E --> F[Execution (paper/live)]

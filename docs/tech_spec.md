@@ -5,9 +5,9 @@
 - **Backfill**: descarga klines REST para rangos históricos; deduplica y opcionalmente escribe Parquet.
 - **Feature Store (app/features/store.py)**:
   - Entrada: lista de `MarketEvent` por símbolo.
-  - Proceso: ventana deslizante (tamaño configurable, default 5); cálculos `price`, `ret_1`, `sma_window`.
+  - Proceso: ventana deslizante (tamaño configurable, default 5); cálculos `price`, `ret_1` (log-return seguro, omite si prev o actual <=0), `sma_window` (solo si ventana completa).
   - Salida: lista de `FeatureVector` alineados uno a uno con los eventos válidos.
-  - Restricciones: sin IO, solo stdlib; descarta precios no finitos; limita memoria con `deque(maxlen)`.
+  - Restricciones: sin IO, solo stdlib; descarta precios no finitos; limita memoria con `deque(maxlen)`; no numpy/pandas.
 - **Strategy**: consume `FeatureVector` y genera `Signal` (reglas simples).
 - **Risk**: filtra señales y crea `OrderIntent` según límites.
 - **Execution (paper)**: simula fills inmediatos; produce `ExecutionReport`.
@@ -15,9 +15,9 @@
 - **Observability**: logging estructurado JSON con `trace_id`.
 
 ## Interfaces
-- `compute_features(events: list[MarketEvent], window: int = 5) -> list[FeatureVector]`
+- `compute_features(events: list[MarketEvent], window: int = 5, windows: Iterable[int] | None = None) -> list[FeatureVector]`
   - Eventos vacíos → lista vacía.
-  - Cada `FeatureVector.values` siempre incluye `price`; incluye `ret_1` si hay precio previo; incluye `sma_{window}` cuando la ventana está completa.
+  - `price` siempre presente; `ret_1` solo si prev>0 y precio actual>0; `sma_{w}` solo cuando hay al menos w precios.
 
 ## Supuestos y límites
 - No se añaden dependencias externas.
