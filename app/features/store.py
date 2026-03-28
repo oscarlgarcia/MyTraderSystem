@@ -8,11 +8,15 @@ Sin IO ni dependencias externas.
 from __future__ import annotations
 
 import math
+import logging
 from collections import defaultdict, deque
 from datetime import datetime
 from typing import Deque, Dict, Iterable, List, Sequence
 
 from app.common.dto import FeatureVector, MarketEvent
+
+logger = logging.getLogger("features.store")
+REQUIRED_KEYS = {"price"}
 
 
 def _is_finite_price(price: float) -> bool:
@@ -57,6 +61,7 @@ def compute_features(
         by_symbol[ev.symbol].append(ev)
 
     results: List[FeatureVector] = []
+    dropped_invalid = 0
     for sym, evs in by_symbol.items():
         evs.sort(key=lambda e: e.event_ts)
         prices: Deque[float] = deque(maxlen=effective_window)
@@ -64,6 +69,7 @@ def compute_features(
 
         for ev in evs:
             if not _is_finite_price(ev.price):
+                dropped_invalid += 1
                 continue
 
             prices.append(ev.price)
@@ -78,6 +84,16 @@ def compute_features(
                 if sma_val is not None:
                     values[f"sma_{w}"] = sma_val
 
+            missing = REQUIRED_KEYS - set(values.keys())
+            if missing:
+                dropped_invalid += 1
+                continue
+            if not all(_is_finite_price(v) for v in values.values()):
+                dropped_invalid += 1
+                continue
+
+            values["window_max"] = float(effective_window)
+
             results.append(
                 FeatureVector(
                     symbol=sym,
@@ -88,5 +104,8 @@ def compute_features(
 
             if ev.price > 0:
                 prev_valid_price = ev.price
+
+    if dropped_invalid:
+        logger.info("features discarded", extra={"dropped": dropped_invalid})
 
     return results

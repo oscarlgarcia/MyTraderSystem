@@ -6,6 +6,7 @@
 - **Feature Store (app/features/store.py)**:
   - Entrada: lista de `MarketEvent` por símbolo.
   - Proceso: ventana deslizante (tamaño configurable, default 5); cálculos `price`, `ret_1` (log-return seguro, omite si prev o actual <=0), `sma_window` (solo si ventana completa).
+  - Validación: claves requeridas (`price`) presentes y finitas; se añade metadato `window_max`; eventos inválidos se descartan y se loguea `features discarded` con conteo.
   - Salida: lista de `FeatureVector` alineados uno a uno con los eventos válidos.
   - Restricciones: sin IO, solo stdlib; descarta precios no finitos; limita memoria con `deque(maxlen)`; no numpy/pandas.
 - **Trazas de pipeline**:
@@ -19,7 +20,8 @@
 ## Interfaces
 - `compute_features(events: list[MarketEvent], window: int = 5, windows: Iterable[int] | None = None) -> list[FeatureVector]`
   - Eventos vacíos → lista vacía.
-  - `price` siempre presente; `ret_1` solo si prev>0 y precio actual>0; `sma_{w}` solo cuando hay al menos w precios.
+  - `price` siempre presente y finito; `ret_1` solo si prev>0 y precio actual>0; `sma_{w}` solo cuando hay al menos w precios; `window_max` siempre presente.
+  - Elementos inválidos (sin claves requeridas o con valores no finitos) se descartan y se registra el total descartado.
 
 ## Supuestos y límites
 - No se añaden dependencias externas.
