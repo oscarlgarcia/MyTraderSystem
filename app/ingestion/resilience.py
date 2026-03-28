@@ -45,7 +45,6 @@ class ResilientRunner:
     metrics: ResilienceMetrics = field(default_factory=ResilienceMetrics)
     last_event_ts: Optional[datetime] = None
     seen: Set[Tuple[str, datetime, float, float, str]] = field(default_factory=set)
-    buffer: List[MarketEvent] = field(default_factory=list)
 
     def run(
         self,
@@ -54,19 +53,20 @@ class ResilientRunner:
         stop_on_complete: bool = False,
     ) -> None:
         backoff = self.backoff_base
+        buffer: List[MarketEvent] = []
         while True:
             handled_this_cycle = 0
             try:
                 for ev in self.stream_fn():
-                    if len(self.buffer) >= self.max_buffer:
+                    if len(buffer) >= self.max_buffer:
                         self.metrics.buffer_skipped += 1
                         continue
-                    self.buffer.append(ev)
-                    self.metrics.buffer_size = len(self.buffer)
-                    while self.buffer:
-                        current = self.buffer.pop(0)
-                    self._process_event(current, handler)
-                    handled_this_cycle += 1
+                    buffer.append(ev)
+                    self.metrics.buffer_size = len(buffer)
+                    while buffer:
+                        current = buffer.pop(0)
+                        self._process_event(current, handler)
+                        handled_this_cycle += 1
                     backoff = self.backoff_base  # reset on success
                 if stop_on_complete:
                     # If we are in a finite run mode and consumed the stream (even empty), exit.
