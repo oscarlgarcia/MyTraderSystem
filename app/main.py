@@ -71,7 +71,7 @@ def run_cycle(
         max_events=max_events,
         duration_s=duration_s,
         logger=logger,
-        compute_features_after=compute_features_after,
+        compute_features_after=compute_features_after_ingest,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
