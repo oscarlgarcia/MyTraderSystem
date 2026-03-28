@@ -28,6 +28,8 @@ def _key(ev: MarketEvent) -> Tuple[str, datetime, float, float, str]:
 class ResilienceMetrics:
     reconnects: int = 0
     last_lag_seconds: float = 0.0
+    buffer_size: int = 0
+    buffer_skipped: int = 0
 
 
 @dataclass
@@ -37,10 +39,12 @@ class ResilientRunner:
     backoff_base: float = 1.0
     backoff_max: float = 8.0  # keep <10s per requirement
     lag_threshold_seconds: float = 5.0
+    max_buffer: int = 10_000
     sleeper: Sleeper = time.sleep
     metrics: ResilienceMetrics = field(default_factory=ResilienceMetrics)
     last_event_ts: Optional[datetime] = None
     seen: Set[Tuple[str, datetime, float, float, str]] = field(default_factory=set)
+    buffer: List[MarketEvent] = field(default_factory=list)
 
     def run(
         self,
@@ -53,8 +57,15 @@ class ResilientRunner:
             handled_this_cycle = 0
             try:
                 for ev in self.stream_fn():
-                    self._process_event(ev, handler)
-                    handled_this_cycle += 1
+                    if len(self.buffer) >= self.max_buffer:
+                        self.metrics.buffer_skipped += 1
+                        continue
+                    self.buffer.append(ev)
+                    self.metrics.buffer_size = len(self.buffer)
+                    while self.buffer:
+                        current = self.buffer.pop(0)
+                        self._process_event(current, handler)
+                        handled_this_cycle += 1
                     backoff = self.backoff_base  # reset on success
                 if stop_on_complete:
                     # If we are in a finite run mode and consumed the stream (even empty), exit.

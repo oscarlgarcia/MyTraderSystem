@@ -143,3 +143,23 @@ def test_gap_without_snapshot_skips_resync():
     runner.run(lambda ev: handled.append(ev), stop_on_complete=True)
     assert len(handled) == 2
     assert runner.metrics.last_lag_seconds >= 10
+
+
+def test_buffer_skip_when_overflow():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def stream():
+        for i in range(5):
+            yield make_ev(base + timedelta(seconds=i))
+
+    handled = []
+
+    def slow_handler(ev):
+        handled.append(ev)
+        # no sleep needed; skip logic is based on buffer size
+
+    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_buffer=2, sleeper=lambda s: None)
+    runner.run(slow_handler, stop_on_complete=True)
+    # se deberían haber descartado al menos 1 evento
+    assert runner.metrics.buffer_skipped > 0
+    assert runner.metrics.buffer_size <= 2
