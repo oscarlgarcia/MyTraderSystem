@@ -91,5 +91,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Duración máxima en segundos para live; ignora en dry si no se indica",
     )
+    parser.add_argument(
+        "--trace-steps",
+        action="store_true",
+        help="Emite trazas start/done por fase del pipeline para debugging visual",
+    )
     args, _unknown = parser.parse_known_args(argv)
     return args

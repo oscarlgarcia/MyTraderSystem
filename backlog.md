@@ -4,6 +4,7 @@
 - Fase 3.1 Feature Store: ventana deslizante en memoria + compute_features pura. [hecho]
 - Fase 3.2 Feature Store: SMA + retornos log en compute_features, ventanas configurables. [hecho]
 - Fase 3.3 Feature Store: API get_features en vivo / actualizacion incremental. [pendiente]
+- Trazas pipeline opcionales (--trace-steps) para depuración visual. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.

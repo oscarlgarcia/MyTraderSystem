@@ -17,6 +17,7 @@ make backfill-dev                 # backfill en memoria (ejemplo 1h BTCUSDT)
 
 python -m app --env dev --mode dry                          # pipeline determinista (default)
 python -m app --env dev --mode live --duration 30 --max-events 200  # pipeline live acotado WS/REST+Parquet
+python -m app --env dev --mode dry --trace-steps                   # pipeline con trazas start/done por fase
 python -m app.ingestion.runner --env dev --duration 600     # ingesta puntual WS con flush
 python -m app.ingestion.inspect --env dev --limit 10        # inspeccion rapida de Parquet
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT \

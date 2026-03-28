@@ -23,6 +23,15 @@ from app.execution.paper import paper_execute
 from app.portfolio.state import update_portfolio
 
 
+def _trace(logger, enabled: bool, phase: str, status: str, extra: Optional[Dict[str, object]] = None) -> None:
+    if not enabled:
+        return
+    payload = {"phase": phase, "status": status}
+    if extra:
+        payload.update(extra)
+    logger.info("pipeline step", extra=payload)
+
+
 def _mark(recorder: Optional[List[str]], step: str) -> None:
     if recorder is not None:
         recorder.append(step)
@@ -43,6 +52,7 @@ def run_cycle(
     max_events: int = 50,
     duration_s: Optional[float] = None,
     recorder: Optional[List[str]] = None,
+    trace_steps: bool = False,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -53,28 +63,40 @@ def run_cycle(
     logger = logger or get_logger(level=cfg.log_level)
 
     # Ingestión
+    _trace(logger, trace_steps, "ingestion", "start")
     events = collect_events(mode=mode, cfg=cfg, max_events=max_events, duration_s=duration_s, logger=logger)
+    _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
 
     # Features
+    _trace(logger, trace_steps, "features", "start")
     fvs = compute_features(events)
+    _trace(logger, trace_steps, "features", "done", {"count": len(fvs)})
     _mark(recorder, "features")
 
     # Estrategia
+    _trace(logger, trace_steps, "strategy", "start")
     signals = generate_signals(fvs)
+    _trace(logger, trace_steps, "strategy", "done", {"count": len(signals)})
     _mark(recorder, "strategy")
 
     # Riesgo
     price_by_symbol = _price_map_from_events(events)
+    _trace(logger, trace_steps, "risk", "start")
     order_intents = apply_risk(signals, price_by_symbol=price_by_symbol)
+    _trace(logger, trace_steps, "risk", "done", {"count": len(order_intents)})
     _mark(recorder, "risk")
 
     # Ejecución (paper)
+    _trace(logger, trace_steps, "execution", "start")
     reports = paper_execute(order_intents, price_by_symbol=price_by_symbol)
+    _trace(logger, trace_steps, "execution", "done", {"count": len(reports)})
     _mark(recorder, "execution")
 
     # Portfolio
+    _trace(logger, trace_steps, "portfolio", "start")
     portfolio_state = update_portfolio(reports)
+    _trace(logger, trace_steps, "portfolio", "done", {"positions": portfolio_state.positions})
     _mark(recorder, "portfolio")
 
     return {
@@ -104,6 +126,7 @@ def run() -> int:
         max_events=args.max_events,
         duration_s=args.duration,
         recorder=[],
+        trace_steps=args.trace_steps,
     )
 
     logger.info(

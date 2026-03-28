@@ -38,3 +38,16 @@ def test_run_respects_app_env(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     rc = main.run()
     assert rc == 0
+
+
+def test_run_cycle_traces(monkeypatch):
+    import io
+
+    buffer = io.StringIO()
+    logger = get_logger(stream=buffer, level="INFO")
+    cfg = load_config("dev")
+
+    main.run_cycle(cfg=cfg, logger=logger, mode="dry", max_events=3, recorder=[], trace_steps=True)
+    out = buffer.getvalue()
+    assert '"phase": "ingestion"' in out
+    assert '"phase": "features"' in out

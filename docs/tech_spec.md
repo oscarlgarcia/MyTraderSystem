@@ -8,6 +8,8 @@
   - Proceso: ventana deslizante (tamaño configurable, default 5); cálculos `price`, `ret_1` (log-return seguro, omite si prev o actual <=0), `sma_window` (solo si ventana completa).
   - Salida: lista de `FeatureVector` alineados uno a uno con los eventos válidos.
   - Restricciones: sin IO, solo stdlib; descarta precios no finitos; limita memoria con `deque(maxlen)`; no numpy/pandas.
+- **Trazas de pipeline**:
+  - Flag CLI `--trace-steps` (default off) añade logs `pipeline step` con `phase` y `status` (start/done) y conteos.
 - **Strategy**: consume `FeatureVector` y genera `Signal` (reglas simples).
 - **Risk**: filtra señales y crea `OrderIntent` según límites.
 - **Execution (paper)**: simula fills inmediatos; produce `ExecutionReport`.
