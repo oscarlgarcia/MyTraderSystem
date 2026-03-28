@@ -51,3 +51,34 @@ def test_run_cycle_traces(monkeypatch):
     out = buffer.getvalue()
     assert '"phase": "ingestion"' in out
     assert '"phase": "features"' in out
+
+
+def test_trace_steps_false_emits_no_phase(monkeypatch):
+    import io
+
+    buffer = io.StringIO()
+    logger = get_logger(stream=buffer, level="INFO")
+    cfg = load_config("dev")
+    main.run_cycle(cfg=cfg, logger=logger, mode="dry", max_events=2, recorder=[], trace_steps=False)
+    out = buffer.getvalue()
+    assert '"phase": "ingestion"' not in out
+
+
+def test_features_after_ingest_runs_pipeline(monkeypatch, caplog):
+    import io
+
+    caplog.set_level("INFO")
+    buffer = io.StringIO()
+    logger = get_logger(stream=buffer, level="INFO")
+    cfg = load_config("dev")
+
+    main.run_cycle(
+        cfg=cfg,
+        logger=logger,
+        mode="dry",
+        max_events=2,
+        recorder=[],
+        trace_steps=False,
+        compute_features_after_ingest=True,
+    )
+    assert any("feature pipeline done" in rec.message for rec in caplog.records)

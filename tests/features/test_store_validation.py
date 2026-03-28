@@ -24,6 +24,7 @@ def test_valid_series_keeps_length(caplog):
     assert len(fvs) == 10
     assert all("price" in fv.values for fv in fvs)
     assert all(math.isfinite(fv.values["price"]) for fv in fvs)
+    assert all("window_max" in fv.values for fv in fvs)
 
 
 def test_nan_is_dropped_and_logged(caplog):
@@ -40,4 +41,12 @@ def test_missing_required_key_drops_feature(caplog, monkeypatch):
     events = [_ev(i * 60, 100 + i) for i in range(5)]
     fvs = compute_features(events, window=2)
     assert len(fvs) == 0  # faltó sma_5
+    assert any("features discarded" in rec.message for rec in caplog.records)
+
+
+def test_negative_price_discards_and_counts(caplog):
+    caplog.set_level("INFO")
+    events = [_ev(0, -1), _ev(60, 100)]
+    fvs = compute_features(events, window=2)
+    assert len(fvs) == 1
     assert any("features discarded" in rec.message for rec in caplog.records)
