@@ -9,9 +9,10 @@ from __future__ import annotations
 import math
 import time
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Deque, Iterable, List, Optional, Set, Tuple
 
 from app.common.dto import MarketEvent
 
@@ -44,6 +45,7 @@ class ResilientRunner:
     lag_threshold_seconds: float = 5.0
     max_lag_seconds: float = 10.0
     max_buffer: int = 10_000
+    dedup_enabled: bool = True
     sleeper: Sleeper = time.sleep
     metrics: ResilienceMetrics = field(default_factory=ResilienceMetrics)
     last_event_ts: Optional[datetime] = None
@@ -96,9 +98,10 @@ class ResilientRunner:
 
     def _process_event(self, ev: MarketEvent, handler: Callable[[MarketEvent], None]) -> None:
         # dedup
-        k = _key(ev)
-        if k in self.seen:
-            return
+        if self.dedup_enabled:
+            k = _key(ev)
+            if k in self.seen:
+                return
 
         # gap detection
         if self.last_event_ts:
@@ -118,7 +121,8 @@ class ResilientRunner:
                 )
 
         handler(ev)
-        self.seen.add(k)
+        if self.dedup_enabled:
+            self.seen.add(k)
         self.last_event_ts = ev.event_ts
 
         # latency from event_ts to processing time

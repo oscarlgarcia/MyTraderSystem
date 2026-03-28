@@ -101,5 +101,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Ejecuta feature pipeline tras ingest/backfill (solo logging, no encadena a strategy)",
     )
+    parser.add_argument(
+        "--ingest-max-buffer",
+        type=int,
+        default=10_000,
+        help="Tamaño máximo del buffer en ResilientRunner (control de memoria/throughput).",
+    )
+    parser.add_argument(
+        "--no-ingest-dedup",
+        dest="ingest_dedup",
+        action="store_false",
+        help="Desactiva la deduplicación en vivo para maximizar throughput (riesgo de duplicados).",
+    )
+    parser.set_defaults(ingest_dedup=True)
     args, _unknown = parser.parse_known_args(argv)
     return args

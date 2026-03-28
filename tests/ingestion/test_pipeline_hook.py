@@ -34,6 +34,14 @@ def test_compute_features_after_flag_on(monkeypatch, caplog):
     feats_mock = mock.Mock(return_value=[1, 2])
     monkeypatch.setattr(pipeline, "run_feature_pipeline", feats_mock)
 
-    out = pipeline.collect_events(mode="dry", cfg=cfg, max_events=2, logger=mock.Mock(), compute_features_after=True)
+    out = pipeline.collect_events(
+        mode="dry",
+        cfg=cfg,
+        max_events=2,
+        logger=mock.Mock(),
+        compute_features_after=True,
+        max_buffer=5,
+        dedup_enabled=True,
+    )
     assert out == events
     feats_mock.assert_called_once()

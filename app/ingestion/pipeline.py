@@ -74,6 +74,8 @@ def collect_events(
     duration_s: Optional[float] = None,
     logger: Optional[logging.Logger] = None,
     compute_features_after: bool = False,
+    max_buffer: int = 10_000,
+    dedup_enabled: bool = True,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
@@ -104,6 +106,8 @@ def collect_events(
             stream_fn=stream,
             snapshot_fn=snapshot_fn,
             lag_threshold_seconds=5.0,
+            max_buffer=max_buffer,
+            dedup_enabled=dedup_enabled,
         )
         runner.run(handler, stop_on_complete=False, max_retries=1)
         writer.flush()

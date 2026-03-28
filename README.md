@@ -19,6 +19,8 @@ python -m app --env dev --mode dry                          # pipeline determini
 python -m app --env dev --mode live --duration 30 --max-events 200  # pipeline live acotado WS/REST+Parquet
 python -m app --env dev --mode dry --trace-steps                   # pipeline con trazas start/done por fase
 python -m app --env dev --mode live --features-after-ingest        # ejecuta feature pipeline tras ingesta (solo log)
+python -m app --env dev --mode live --ingest-max-buffer 20000      # ajusta buffer del runner (escalabilidad)
+python -m app --env dev --mode live --no-ingest-dedup              # desactiva dedup para throughput (riesgo duplicados)
 python -m app.ingestion.runner --env dev --duration 600     # ingesta puntual WS con flush
 python -m app.ingestion.inspect --env dev --limit 10        # inspeccion rapida de Parquet
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT \

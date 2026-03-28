@@ -14,6 +14,9 @@
   - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`.
 - **E2E mock (tests/slow/test_e2e_features_pipeline.py)**:
   - Verifica que 5 eventos mock producen 5 `FeatureVector` y se loguea `feature pipeline done`.
+- **Ingesta/Resilience**:
+  - Flags CLI: `--ingest-max-buffer` (default 10k), `--no-ingest-dedup` para throughput (riesgo de duplicados).
+  - Métricas: `reconnects`, `buffer_skipped`, `max_latency_seconds` se loguean al cerrar ingest live.
 - **Trazas de pipeline**:
   - Flag CLI `--trace-steps` (default off) añade logs `pipeline step` con `phase` y `status` (start/done) y conteos.
 - **Strategy**: consume `FeatureVector` y genera `Signal` (reglas simples).

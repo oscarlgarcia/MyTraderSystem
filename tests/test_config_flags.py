@@ -6,6 +6,8 @@ def test_defaults_flags():
     assert args.mode == "dry"
     assert args.trace_steps is False
     assert args.features_after_ingest is False
+    assert args.ingest_max_buffer == 10_000
+    assert args.ingest_dedup is True
 
 
 def test_features_after_ingest_flag():
