@@ -30,6 +30,7 @@ python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
   --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 \
   --interval 1m --batch 500                                 # backfill escribiendo Parquet
 python -m app.ingestion.backfill --help                     # recordatorio de flags disponibles
+python -m app.ingestion.demo --env dev --duration 30 --max-events 200  # demo en vivo con resumen de métricas
 ```
 
 `run-dev` ejecuta el pipeline en modo dry para validar que el entorno arranca (sin IO externo).

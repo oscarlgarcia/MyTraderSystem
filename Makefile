@@ -46,3 +46,6 @@ docker-shell:
 
 docker-test:
 	docker compose run --rm app sh -c "poetry install && poetry run pytest"
+
+demo-ingest:
+	poetry run python -m app.ingestion.demo --env dev --duration 30 --max-events 200

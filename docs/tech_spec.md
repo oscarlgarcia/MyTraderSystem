@@ -17,6 +17,8 @@
 - **Ingesta/Resilience**:
   - Flags CLI: `--ingest-max-buffer` (default 10k), `--no-ingest-dedup` para throughput (riesgo de duplicados).
   - Métricas: `reconnects`, `buffer_skipped`, `max_latency_seconds` se loguean al cerrar ingest live.
+- **Demo de ingesta**:
+  - `python -m app.ingestion.demo --env dev --duration 30 --max-events 200` corre stream real, escribe Parquet y ejecuta features, mostrando métricas (events, features, latency).
 - **Trazas de pipeline**:
   - Flag CLI `--trace-steps` (default off) añade logs `pipeline step` con `phase` y `status` (start/done) y conteos.
 - **Strategy**: consume `FeatureVector` y genera `Signal` (reglas simples).
