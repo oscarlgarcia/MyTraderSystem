@@ -62,7 +62,7 @@ def test_429_retries_and_fails(monkeypatch):
 
     client = SimpleNamespace(get=fake_get)
     with pytest.raises(httpx.HTTPStatusError):
-        backfill.fetch_klines(client, "https://x", "BTCUSDT", 0, 1000, limit=1, max_retries=2)
+        backfill.fetch_klines(client, "https://x", "BTCUSDT", 0, 1000, limit=1, retries_429=2)
     assert attempts["n"] == 2
 
 
@@ -139,6 +139,7 @@ def test_http_500_retries_then_fail(monkeypatch):
 
     class DummyResponse:
         status_code = 500
+        request = None
 
         def json(self):
             return []
