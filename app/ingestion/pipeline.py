@@ -77,7 +77,10 @@ def collect_events(
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
-        return _synthetic_events(max_events)
+        events_out = _synthetic_events(max_events)
+        if compute_features_after:
+            run_feature_pipeline(events_out)
+        return events_out
 
     # modo live: intentar WS + snapshot, con fallback a datos sintéticos
     try:

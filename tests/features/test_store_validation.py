@@ -44,9 +44,9 @@ def test_missing_required_key_drops_feature(caplog, monkeypatch):
     assert any("features discarded" in rec.message for rec in caplog.records)
 
 
-def test_negative_price_discards_and_counts(caplog):
+def test_non_finite_price_discards_and_counts(caplog):
     caplog.set_level("INFO")
-    events = [_ev(0, -1), _ev(60, 100)]
+    events = [_ev(0, float("inf")), _ev(60, 100)]
     fvs = compute_features(events, window=2)
     assert len(fvs) == 1
     assert any("features discarded" in rec.message for rec in caplog.records)
