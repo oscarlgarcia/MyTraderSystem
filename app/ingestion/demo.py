@@ -6,13 +6,14 @@ escribe en Parquet y ejecuta el pipeline de features, mostrando métricas básic
 from __future__ import annotations
 
 import argparse
-import logging
 from datetime import datetime
 from typing import List
 
 from app.config import load_config
 from app.ingestion.pipeline import collect_events
 from app.features.pipeline import run_feature_pipeline
+from app.observability.logger import get_logger
+import logging
 
 
 def _build_args() -> argparse.Namespace:
@@ -28,8 +29,11 @@ def _build_args() -> argparse.Namespace:
 def main() -> int:
     args = _build_args()
     cfg = load_config(args.env)
-    logger = logging.getLogger("ingest.demo")
-    logging.basicConfig(level=logging.INFO)
+    logger = get_logger(name="ingest.demo", level="INFO")
+    # Alinear logging de feature pipeline con el logger estructurado
+    logging.getLogger("features.pipeline").handlers = logger.handlers
+    logging.getLogger("features.pipeline").setLevel(logging.INFO)
+    logging.getLogger("features.pipeline").propagate = False
 
     # Ajustar símbolos si se solicita uno específico
     if args.symbol:
@@ -54,16 +58,17 @@ def main() -> int:
     features = run_feature_pipeline(events, window=5)
 
     elapsed = (datetime.utcnow() - start).total_seconds()
+    throughput = round(len(events) / elapsed, 2) if elapsed else 0.0
     logger.info(
         "demo summary",
         extra={
             "events": len(events),
             "features": len(features),
-            "duration_secs": elapsed,
+            "duration_secs": round(elapsed, 2),
+            "throughput_eps": throughput,
             "symbols": cfg.symbols,
         },
     )
-    # Mostrar una muestra mínima
     if events:
         logger.info("sample event", extra={"event": events[0].__dict__})
     if features:
