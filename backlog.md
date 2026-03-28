@@ -5,6 +5,7 @@
 - Fase 3.2 Feature Store: SMA + retornos log en compute_features, ventanas configurables. [hecho]
 - Fase 3.3 Feature Store: validación/schema de salida + logging de descartes. [hecho]
 - Fase 3.4 Feature Store: wrapper integrado con ingest/backfill (--features-after-ingest). [hecho]
+- Fase 3.5 Feature Store: E2E mock + docs de uso CLI/hook. [hecho]
 - Trazas pipeline opcionales (--trace-steps) para depuración visual. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.

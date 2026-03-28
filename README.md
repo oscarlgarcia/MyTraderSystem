@@ -84,6 +84,11 @@ Ejemplo de salida:
 ```
 El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 
+### Feature Store inicial
+- Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).
+- Uso CLI: `python -m app --env dev --features-after-ingest` (solo logging de features tras ingesta).
+- Uso directo en código: `from app.features.pipeline import run_feature_pipeline`; pasar lista de `MarketEvent`.
+
 ### Dependencias y Docker
 - Tras anadir dependencias en `pyproject.toml`, reconstruye la imagen: `make docker-build` (copia `pyproject.toml` y `poetry.lock` para cache).
 - Ejecutar tests en contenedor con deps nuevas: `make docker-test` (incluye `poetry install` dentro).
