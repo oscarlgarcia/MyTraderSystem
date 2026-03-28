@@ -39,6 +39,7 @@ class ResilientRunner:
     backoff_base: float = 1.0
     backoff_max: float = 8.0  # keep <10s per requirement
     lag_threshold_seconds: float = 5.0
+    max_lag_seconds: float = 10.0
     max_buffer: int = 10_000
     sleeper: Sleeper = time.sleep
     metrics: ResilienceMetrics = field(default_factory=ResilienceMetrics)
@@ -64,8 +65,8 @@ class ResilientRunner:
                     self.metrics.buffer_size = len(self.buffer)
                     while self.buffer:
                         current = self.buffer.pop(0)
-                        self._process_event(current, handler)
-                        handled_this_cycle += 1
+                    self._process_event(current, handler)
+                    handled_this_cycle += 1
                     backoff = self.backoff_base  # reset on success
                 if stop_on_complete:
                     # If we are in a finite run mode and consumed the stream (even empty), exit.
@@ -106,6 +107,12 @@ class ResilientRunner:
                 # so skip if it's now seen to avoid double handling.
                 if k in self.seen:
                     return
+            if lag > self.max_lag_seconds:
+                # log via handler extra if it accepts 'warning' pattern? we can't assume; emit via logging module
+                logging.getLogger("ingest.resilience").warning(
+                    "Lag exceeds max_lag_seconds",
+                    extra={"lag_seconds": lag, "max_lag_seconds": self.max_lag_seconds},
+                )
 
         handler(ev)
         self.seen.add(k)

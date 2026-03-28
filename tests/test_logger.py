@@ -103,3 +103,10 @@ def test_logger_fallback_on_bad_path(tmp_path):
     # solo stream handler debe existir si falla file handler
     assert any(isinstance(h, logging.StreamHandler) for h in logger.handlers)
     assert not any(isinstance(h, RotatingFileHandler) for h in logger.handlers)
+
+
+def test_log_file_metrics_emitted(tmp_path, capsys):
+    log_path = tmp_path / "m.log"
+    logger = get_logger(name="metricslog", level="INFO", log_file=str(log_path), max_bytes=200, backup_count=1)
+    out = capsys.readouterr().out
+    assert "log_file_metrics" in out

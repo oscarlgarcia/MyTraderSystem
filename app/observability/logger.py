@@ -85,6 +85,7 @@ def get_logger(
             )
             file_handler.setFormatter(JsonFormatter())
             logger.addHandler(file_handler)
+            _log_file_metrics(logger, file_handler)
         except OSError as exc:
             warning_logger = _base_handler(stream=sys.stdout)
             logger.addHandler(warning_logger)
@@ -94,3 +95,21 @@ def get_logger(
             )
     logger.propagate = False
     return logger
+
+
+def _log_file_metrics(logger: Logger, handler: RotatingFileHandler) -> None:
+    try:
+        path = handler.baseFilename
+        size = Path(path).stat().st_size if Path(path).exists() else 0
+        backups = list(Path(path).parent.glob(Path(path).name + "*"))
+        logger.info(
+            "log_file_metrics",
+            extra={
+                "log_file": path,
+                "log_file_size": size,
+                "log_file_backups": len(backups),
+            },
+        )
+    except Exception:
+        # No romper inicialización por métricas de log.
+        pass

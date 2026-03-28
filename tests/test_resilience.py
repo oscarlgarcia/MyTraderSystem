@@ -163,3 +163,17 @@ def test_buffer_skip_when_overflow():
     # se deberían haber descartado al menos 1 evento
     assert runner.metrics.buffer_skipped > 0
     assert runner.metrics.buffer_size <= 2
+
+
+def test_warning_when_lag_exceeds(monkeypatch, caplog):
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [make_ev(base), make_ev(base + timedelta(seconds=20))]
+
+    def stream():
+        for ev in events:
+            yield ev
+
+    caplog.set_level("WARNING")
+    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_lag_seconds=5, sleeper=lambda s: None)
+    runner.run(lambda ev: None, stop_on_complete=True)
+    assert any("Lag exceeds max_lag_seconds" in rec.message for rec in caplog.records)
