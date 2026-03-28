@@ -67,3 +67,19 @@ def test_build_ws_url_dedupes_and_orders():
     url = build_ws_url("wss://example/stream", ["ETHUSDT", "ethusdt", "BTCUSDT"])
     assert url.count("ethusdt@trade") == 1
     assert url.index("ethusdt@trade") < url.index("btcusdt@trade")
+
+
+def test_register_normalizer_used_by_parse_message():
+    def normalize_foo(payload):
+        return MarketEvent(
+            symbol="FOO",
+            event_ts=datetime.fromtimestamp(1700000000, tz=timezone.utc),
+            price=1.0,
+            size=1.0,
+            source="foo",
+        )
+
+    register_normalizer("foo", normalize_foo)
+    msg = {"stream": "foo@bar", "data": {"e": "foo"}}
+    ev = parse_message(json_dumps(msg))
+    assert ev.source == "foo"

@@ -107,7 +107,16 @@ def collect_events(
         )
         runner.run(handler, stop_on_complete=False, max_retries=1)
         writer.flush()
-        logger.info("ingestion live complete", extra={"events_written": stats["written"], "env": cfg.env})
+        logger.info(
+            "ingestion live complete",
+            extra={
+                "events_written": stats["written"],
+                "env": cfg.env,
+                "reconnects": runner.metrics.reconnects,
+                "buffer_skipped": runner.metrics.buffer_skipped,
+                "max_latency_seconds": runner.metrics.max_latency_seconds,
+            },
+        )
         events_out = _read_from_writer_buffer(writer, stats["written"])
         if compute_features_after:
             run_feature_pipeline(events_out)

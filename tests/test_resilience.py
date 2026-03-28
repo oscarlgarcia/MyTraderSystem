@@ -177,3 +177,18 @@ def test_warning_when_lag_exceeds(monkeypatch, caplog):
     runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_lag_seconds=5, sleeper=lambda s: None)
     runner.run(lambda ev: None, stop_on_complete=True)
     assert any("Lag exceeds max_lag_seconds" in rec.message for rec in caplog.records)
+
+
+def test_latency_metrics_updated():
+    base = datetime(2023, 1, 1, tzinfo=timezone.utc)
+    events = [make_ev(base)]
+
+    def stream():
+        for ev in events:
+            yield ev
+        raise StopIteration
+
+    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, sleeper=lambda s: None, lag_threshold_seconds=2)
+    runner.run(lambda ev: None, stop_on_complete=True)
+    assert runner.metrics.last_latency_seconds >= 0
+    assert runner.metrics.max_latency_seconds >= runner.metrics.last_latency_seconds

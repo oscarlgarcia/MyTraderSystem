@@ -31,6 +31,8 @@ class ResilienceMetrics:
     last_lag_seconds: float = 0.0
     buffer_size: int = 0
     buffer_skipped: int = 0
+    last_latency_seconds: float = 0.0
+    max_latency_seconds: float = 0.0
 
 
 @dataclass
@@ -54,7 +56,7 @@ class ResilientRunner:
         stop_on_complete: bool = False,
     ) -> None:
         backoff = self.backoff_base
-        buffer: List[MarketEvent] = []
+        buffer: Deque[MarketEvent] = deque()
         while True:
             handled_this_cycle = 0
             try:
@@ -65,7 +67,7 @@ class ResilientRunner:
                     buffer.append(ev)
                     self.metrics.buffer_size = len(buffer)
                     while buffer:
-                        current = buffer.pop(0)
+                        current = buffer.popleft()
                         self._process_event(current, handler)
                         handled_this_cycle += 1
                     backoff = self.backoff_base  # reset on success
@@ -118,6 +120,13 @@ class ResilientRunner:
         handler(ev)
         self.seen.add(k)
         self.last_event_ts = ev.event_ts
+
+        # latency from event_ts to processing time
+        now = datetime.now(timezone.utc)
+        latency = max(0.0, (now - ev.event_ts).total_seconds())
+        self.metrics.last_latency_seconds = latency
+        if latency > self.metrics.max_latency_seconds:
+            self.metrics.max_latency_seconds = latency
 
     def _resync(self, handler: Callable[[MarketEvent], None]) -> None:
         if not self.snapshot_fn:

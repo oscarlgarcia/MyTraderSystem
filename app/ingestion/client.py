@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, List
+from typing import Iterable, List, Callable, Dict
 
 from app.common.dto import MarketEvent, normalize_symbol
 
@@ -52,6 +52,16 @@ def normalize_kline(payload: dict) -> MarketEvent:
     return MarketEvent(symbol=symbol, event_ts=event_ts, price=price, size=size, source="kline")
 
 
+NORMALIZERS: Dict[str, Callable[[dict], MarketEvent]] = {
+    "trade": normalize_trade,
+    "kline": normalize_kline,
+}
+
+
+def register_normalizer(event_type: str, fn: Callable[[dict], MarketEvent]) -> None:
+    NORMALIZERS[event_type] = fn
+
+
 def build_streams(symbols: Iterable[str]) -> List[str]:
     seen = set()
     syms = []
@@ -81,6 +91,10 @@ def parse_message(msg: str) -> MarketEvent:
     payload = json.loads(msg)
     data = payload.get("data", payload)
     stream = payload.get("stream", "")
-    if "kline" in stream or "kline" in data.get("e", ""):
-        return normalize_kline(data)
-    return normalize_trade(data)
+    event_type = data.get("e")
+    if not event_type:
+        event_type = "kline" if "kline" in stream else "trade"
+    handler = NORMALIZERS.get(event_type)
+    if handler is None:
+        raise KeyError(f"Unknown event type: {event_type}")
+    return handler(data)
