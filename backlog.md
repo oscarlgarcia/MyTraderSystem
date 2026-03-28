@@ -9,6 +9,7 @@
 - Evaluar compresión snappy y optimizar tamaño/velocidad en Parquet una vez establecida la ingesta.
 - Añadir tool de lectura rápida (CLI) para inspeccionar particiones y conteos.
 - Integrar ResilientRunner con WS real y snapshot REST (httpx) en flujo continuo; exponer métricas en logger/CLI.
+- Resiliencia operativa: métricas de buffer/lag y skips en Runner ✅
 - Backfill histórico: F1 CLI + fetch paginado en memoria ✅
 - Backfill histórico: F2 escribir Parquet + dedup + detección de huecos ✅
 - Backfill histórico: F3 métricas de calidad + dry-run avanzado ✅

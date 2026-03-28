@@ -64,6 +64,7 @@ Proveer una plataforma de trading personal que permita:
 - Intervalos soportados en backfill: {1m, 3m, 5m, 15m, 30m, 1h}.
 - Backoff en errores WS/REST: reintentos limitados; el fallo se expone en logs.
 - Logs persistentes: si se configura `log_file`, la rotación es por defecto (5 MB, 3 backups); si no se puede abrir la ruta, se hace fallback a stdout con warning.
+- Resiliencia: `ResilientRunner` expone métricas de buffer/lag y descarta eventos si `max_buffer` se supera, con warning cuando el lag excede `max_lag_seconds`.
 
 ## Validaciones
 - Config: claves requeridas (env, data_dir, log_level, ws_base, rest_base, symbols), log_level permitido, endpoints con esquema válido.
