@@ -114,7 +114,7 @@ def test_dedup_threshold_appends_without_oom(tmp_path):
     # new writer triggers threshold path
     writer2 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=100, dedup=True, max_dedup_rows=2)
     writer2.add(make_event("BTCUSDT", ts))  # duplicate
-    writer2.add(make_event("BTCUSDT", ts.replace(minutes=2)))
+    writer2.add(make_event("BTCUSDT", ts + timedelta(minutes=2)))
     writer2.flush()
 
     out = tmp_path / "dev" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"

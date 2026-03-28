@@ -63,7 +63,7 @@ def test_429_retries_and_fails(monkeypatch):
     client = SimpleNamespace(get=fake_get)
     with pytest.raises(httpx.HTTPStatusError):
         backfill.fetch_klines(client, "https://x", "BTCUSDT", 0, 1000, limit=1, retries_429=2)
-    assert attempts["n"] == 2
+    assert attempts["n"] == 3  # 1 intento inicial + 2 reintentos
 
 
 def test_normalize_kline_row_utc():
