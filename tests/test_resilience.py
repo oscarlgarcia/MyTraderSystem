@@ -159,7 +159,7 @@ def test_buffer_skip_when_overflow():
         # no sleep needed; skip logic is based on buffer size
 
     runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_buffer=0, sleeper=lambda s: None)
-    runner.run(slow_handler, stop_on_complete=True)
+    runner.run(slow_handler, stop_on_complete=True, max_retries=0)
     # se deberían haber descartado al menos 1 evento
     assert runner.metrics.buffer_skipped > 0
     assert runner.metrics.buffer_size <= 0
