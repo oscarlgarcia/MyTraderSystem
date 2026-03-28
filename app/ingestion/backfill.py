@@ -82,25 +82,25 @@ def fetch_klines(
 
             if resp.status_code == 429:
                 attempt_429 += 1
-                    if attempt_429 > retries_429:
-                        raise httpx.HTTPStatusError(
-                            f"Rate limit alcanzado ({resp.status_code}) tras {retries_429} reintentos "
-                            f"para {symbol} interval={interval}",
-                            request=getattr(resp, "request", None),
-                            response=resp,
-                        )
-                    time.sleep(0.5 * attempt_429)
-                    continue
+                if attempt_429 > retries_429:
+                    raise httpx.HTTPStatusError(
+                        f"Rate limit alcanzado ({resp.status_code}) tras {retries_429} reintentos "
+                        f"para {symbol} interval={interval}",
+                        request=getattr(resp, "request", None),
+                        response=resp,
+                    )
+                time.sleep(0.5 * attempt_429)
+                continue
 
             if resp.status_code >= 500:
                 attempt_5xx += 1
-                    if attempt_5xx > retries_5xx:
-                        raise httpx.HTTPStatusError(
-                            f"Error servidor {resp.status_code} tras {retries_5xx} reintentos "
-                            f"para {symbol} interval={interval}",
-                            request=getattr(resp, "request", None),
-                            response=resp,
-                        )
+                if attempt_5xx > retries_5xx:
+                    raise httpx.HTTPStatusError(
+                        f"Error servidor {resp.status_code} tras {retries_5xx} reintentos "
+                        f"para {symbol} interval={interval}",
+                        request=getattr(resp, "request", None),
+                        response=resp,
+                    )
                 time.sleep(0.5 * attempt_5xx)
                 continue
 

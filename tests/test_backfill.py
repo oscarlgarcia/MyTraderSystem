@@ -56,9 +56,9 @@ def test_invalid_date_raises():
 def test_429_retries_and_fails(monkeypatch):
     attempts = {"n": 0}
 
-        def fake_get(url, params=None, timeout=None):
-            attempts["n"] += 1
-            return DummyResponse(429, [])
+    def fake_get(url, params=None, timeout=None):
+        attempts["n"] += 1
+        return DummyResponse(429, [])
 
     client = SimpleNamespace(get=fake_get)
     with pytest.raises(httpx.HTTPStatusError):
