@@ -60,7 +60,7 @@ def compute_features(
     for sym, evs in by_symbol.items():
         evs.sort(key=lambda e: e.event_ts)
         prices: Deque[float] = deque(maxlen=effective_window)
-        prev_price: float | None = None
+        prev_valid_price: float | None = None
 
         for ev in evs:
             if not _is_finite_price(ev.price):
@@ -69,7 +69,7 @@ def compute_features(
             prices.append(ev.price)
             values: Dict[str, float] = {"price": ev.price}
 
-            ret = _log_return(prev_price, ev.price)
+            ret = _log_return(prev_valid_price, ev.price)
             if ret is not None:
                 values["ret_1"] = ret
 
@@ -86,6 +86,7 @@ def compute_features(
                 )
             )
 
-            prev_price = ev.price
+            if ev.price > 0:
+                prev_valid_price = ev.price
 
     return results
