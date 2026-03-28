@@ -1,72 +1,120 @@
 """
-Entry point for the trading system (stub).
+Entry point for the trading system.
 
-The goal of this module in Fase 1.1 is to verify that the toolchain
-boots correctly. No domain logic or external IO is performed here.
+Implements a dual-mode pipeline:
+- dry (default): determinista, sin IO externo, apto para tests/CI.
+- live: usa WS/REST existentes con ResilientRunner y escribe Parquet acotado.
 """
 
 from __future__ import annotations
 
-# Import packages to ensure availability and detect missing modules early.
-# No side effects or heavy logic should be triggered here.
-from app import common, execution, features, ingestion, observability, ops, portfolio, risk, strategy  # noqa: F401
-from app.config import load_config, parse_args
-from app.observability.logger import get_logger, set_trace_id
-
+from typing import List, Optional, Dict
 from uuid import uuid4
-from typing import List
+
+from app import common, execution, features, ingestion, observability, ops, portfolio, risk, strategy  # noqa: F401
+from app.common.dto import MarketEvent, TraceContext
+from app.config import AppConfig, load_config, parse_args
+from app.observability.logger import get_logger, set_trace_id
+from app.ingestion.pipeline import collect_events
+from app.features.store import compute_features
+from app.strategy.basic import generate_signals
+from app.risk.rules import apply_risk
+from app.execution.paper import paper_execute
+from app.portfolio.state import update_portfolio
 
 
-def _stub_ingest(recorder: List[str]) -> None:
-    recorder.append("ingestion")
+def _mark(recorder: Optional[List[str]], step: str) -> None:
+    if recorder is not None:
+        recorder.append(step)
 
 
-def _stub_features(recorder: List[str]) -> None:
-    recorder.append("features")
+def _price_map_from_events(events: List[MarketEvent]) -> Dict[str, float]:
+    price_by_symbol: Dict[str, float] = {}
+    for ev in events:
+        price_by_symbol[ev.symbol] = ev.price
+    return price_by_symbol
 
 
-def _stub_strategy(recorder: List[str]) -> None:
-    recorder.append("strategy")
+def run_cycle(
+    cfg: Optional[AppConfig] = None,
+    logger=None,
+    *,
+    mode: str = "dry",
+    max_events: int = 50,
+    duration_s: Optional[float] = None,
+    recorder: Optional[List[str]] = None,
+):
+    """
+    Ejecuta el pipeline completo (determinista por defecto).
 
+    Steps: ingestion -> features -> strategy -> risk -> execution -> portfolio.
+    """
+    cfg = cfg or load_config()
+    logger = logger or get_logger(level=cfg.log_level)
 
-def _stub_risk(recorder: List[str]) -> None:
-    recorder.append("risk")
+    # Ingestión
+    events = collect_events(mode=mode, cfg=cfg, max_events=max_events, duration_s=duration_s, logger=logger)
+    _mark(recorder, "ingestion")
 
+    # Features
+    fvs = compute_features(events)
+    _mark(recorder, "features")
 
-def _stub_execution(recorder: List[str]) -> None:
-    recorder.append("execution")
+    # Estrategia
+    signals = generate_signals(fvs)
+    _mark(recorder, "strategy")
 
+    # Riesgo
+    price_by_symbol = _price_map_from_events(events)
+    order_intents = apply_risk(signals, price_by_symbol=price_by_symbol)
+    _mark(recorder, "risk")
 
-def _stub_portfolio(recorder: List[str]) -> None:
-    recorder.append("portfolio")
+    # Ejecución (paper)
+    reports = paper_execute(order_intents, price_by_symbol=price_by_symbol)
+    _mark(recorder, "execution")
 
+    # Portfolio
+    portfolio_state = update_portfolio(reports)
+    _mark(recorder, "portfolio")
 
-def run_cycle(recorder: List[str]) -> None:
-    """Execute a minimal, no-IO pipeline sequence."""
-    _stub_ingest(recorder)
-    _stub_features(recorder)
-    _stub_strategy(recorder)
-    _stub_risk(recorder)
-    _stub_execution(recorder)
-    _stub_portfolio(recorder)
+    return {
+        "events": len(events),
+        "features": len(fvs),
+        "signals": len(signals),
+        "orders": len(order_intents),
+        "fills": len([r for r in reports if r.status == "filled"]),
+        "positions": portfolio_state.positions,
+        "cash": portfolio_state.cash,
+    }
 
 
 def run() -> int:
-    """Basic bootstrap stub returning zero for success."""
+    """Bootstrap principal; devuelve 0 en éxito."""
     args = parse_args()
     config = load_config(args.env)
     trace_id = str(uuid4())
     set_trace_id(trace_id)
     logger = get_logger(level=config.log_level)
-    # Demonstrate DTO usage in a minimal, non-I/O way.
-    _ = common.TraceContext(trace_id=trace_id)
+    _ = TraceContext(trace_id=trace_id)
 
-    recorder: List[str] = []
-    run_cycle(recorder)
+    metrics = run_cycle(
+        cfg=config,
+        logger=logger,
+        mode=args.mode,
+        max_events=args.max_events,
+        duration_s=args.duration,
+        recorder=[],
+    )
 
     logger.info(
-        "pipeline stub ok",
-        extra={"env": config.env, "data_dir": str(config.data_dir), "trace_id": trace_id, "steps": recorder},
+        "pipeline ok",
+        extra={
+            "env": config.env,
+            "data_dir": str(config.data_dir),
+            "trace_id": trace_id,
+            "mode": args.mode,
+            "metrics": metrics,
+        },
     )
     return 0
 

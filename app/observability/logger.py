@@ -13,6 +13,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from logging import Logger
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Optional, TextIO
 
 TRACE_ID: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
@@ -102,14 +103,25 @@ def _log_file_metrics(logger: Logger, handler: RotatingFileHandler) -> None:
         path = handler.baseFilename
         size = Path(path).stat().st_size if Path(path).exists() else 0
         backups = list(Path(path).parent.glob(Path(path).name + "*"))
-        logger.info(
+        record = logger.makeRecord(
+            logger.name,
+            logging.INFO,
+            __file__,
+            0,
             "log_file_metrics",
+            args=(),
+            exc_info=None,
             extra={
                 "log_file": path,
                 "log_file_size": size,
                 "log_file_backups": len(backups),
             },
         )
+        # Emit metrics only to non-file handlers to keep log files clean for application events.
+        for handler in logger.handlers:
+            if isinstance(handler, RotatingFileHandler):
+                continue
+            handler.handle(record)
     except Exception:
         # No romper inicialización por métricas de log.
         pass

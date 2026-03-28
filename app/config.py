@@ -73,5 +73,23 @@ def load_config(env: str | None = None) -> AppConfig:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MyTraderSystem")
     parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
+    parser.add_argument(
+        "--mode",
+        choices=["dry", "live"],
+        default="dry",
+        help="Pipeline mode: dry (deterministic, sin IO) o live (WS/REST + Parquet acotado)",
+    )
+    parser.add_argument(
+        "--max-events",
+        type=int,
+        default=50,
+        help="Límite de eventos a procesar en run_cycle (aplica a dry y live)",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="Duración máxima en segundos para live; ignora en dry si no se indica",
+    )
     args, _unknown = parser.parse_known_args(argv)
     return args

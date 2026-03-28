@@ -14,6 +14,9 @@ test:
 run-dev:
 	poetry run python -m app.main
 
+run-live:
+	poetry run python -m app --env dev --mode live --duration 60 --max-events 200
+
 ingest-dev:
 	poetry run python -m app.ingestion.runner --env dev --duration 600
 
