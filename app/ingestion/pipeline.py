@@ -17,6 +17,7 @@ from app.config import AppConfig
 from app.ingestion.client import build_ws_url, normalize_kline, normalize_trade, parse_message
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.storage import ParquetWriter
+from app.features.pipeline import run_feature_pipeline
 
 
 def _synthetic_events(max_events: int) -> List[MarketEvent]:
@@ -72,6 +73,7 @@ def collect_events(
     max_events: int = 50,
     duration_s: Optional[float] = None,
     logger: Optional[logging.Logger] = None,
+    compute_features_after: bool = False,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
@@ -103,10 +105,16 @@ def collect_events(
         runner.run(handler, stop_on_complete=False, max_retries=1)
         writer.flush()
         logger.info("ingestion live complete", extra={"events_written": stats["written"], "env": cfg.env})
-        return _read_from_writer_buffer(writer, stats["written"])
+        events_out = _read_from_writer_buffer(writer, stats["written"])
+        if compute_features_after:
+            run_feature_pipeline(events_out)
+        return events_out
     except Exception as exc:  # pragma: no cover - ruta live no se prueba en unit tests
         logger.warning("live ingestion failed; falling back to dry", extra={"error": str(exc)})
-        return _synthetic_events(max_events)
+        events_out = _synthetic_events(max_events)
+        if compute_features_after:
+            run_feature_pipeline(events_out)
+        return events_out
 
 
 def _read_from_writer_buffer(writer: ParquetWriter, limit: int) -> List[MarketEvent]:

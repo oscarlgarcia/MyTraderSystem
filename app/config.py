@@ -96,5 +96,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Emite trazas start/done por fase del pipeline para debugging visual",
     )
+    parser.add_argument(
+        "--features-after-ingest",
+        action="store_true",
+        help="Ejecuta feature pipeline tras ingest/backfill (solo logging, no encadena a strategy)",
+    )
     args, _unknown = parser.parse_known_args(argv)
     return args

@@ -9,6 +9,9 @@
   - Validación: claves requeridas (`price`) presentes y finitas; se añade metadato `window_max`; eventos inválidos se descartan y se loguea `features discarded` con conteo.
   - Salida: lista de `FeatureVector` alineados uno a uno con los eventos válidos.
   - Restricciones: sin IO, solo stdlib; descarta precios no finitos; limita memoria con `deque(maxlen)`; no numpy/pandas.
+- **Feature pipeline wrapper (app/features/pipeline.py)**:
+  - `run_feature_pipeline(events, window=5)` ejecuta `compute_features` y loguea métricas (`events_in`, `features_out`, `window`).
+  - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`.
 - **Trazas de pipeline**:
   - Flag CLI `--trace-steps` (default off) añade logs `pipeline step` con `phase` y `status` (start/done) y conteos.
 - **Strategy**: consume `FeatureVector` y genera `Signal` (reglas simples).

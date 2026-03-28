@@ -53,6 +53,7 @@ def run_cycle(
     duration_s: Optional[float] = None,
     recorder: Optional[List[str]] = None,
     trace_steps: bool = False,
+    compute_features_after_ingest: bool = False,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -64,7 +65,14 @@ def run_cycle(
 
     # Ingestión
     _trace(logger, trace_steps, "ingestion", "start")
-    events = collect_events(mode=mode, cfg=cfg, max_events=max_events, duration_s=duration_s, logger=logger)
+    events = collect_events(
+        mode=mode,
+        cfg=cfg,
+        max_events=max_events,
+        duration_s=duration_s,
+        logger=logger,
+        compute_features_after=compute_features_after,
+    )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
 
@@ -127,6 +135,7 @@ def run() -> int:
         duration_s=args.duration,
         recorder=[],
         trace_steps=args.trace_steps,
+        compute_features_after_ingest=args.features_after_ingest,
     )
 
     logger.info(
