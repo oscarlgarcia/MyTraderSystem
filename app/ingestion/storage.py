@@ -23,6 +23,7 @@ class ParquetWriter:
     env: str
     flush_size: int = 500
     max_dedup_rows: int = 200_000
+    schema_version: str = "v1"
     dedup: bool = False
     buffer: List[MarketEvent] = field(default_factory=list)
 
@@ -43,6 +44,8 @@ class ParquetWriter:
 
         for (symbol, day), events in grouped.items():
             table = _to_table(events)
+            # embed schema version metadata
+            table = table.replace_schema_metadata({b"schema_version": self.schema_version.encode("utf-8")})
             out_dir = self.base_dir / self.env / f"symbol={symbol}" / f"date={day}"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / "data.parquet"
@@ -96,8 +99,15 @@ def _to_table(events: List[MarketEvent]) -> pa.Table:
 
 
 def read_parquet(path: Path) -> pa.Table:
-    # Read single file without inferring partition directories.
-    return pq.ParquetFile(path).read()
+    pf = pq.ParquetFile(path)
+    table = pf.read()
+    metadata = table.schema.metadata or {}
+    version = metadata.get(b"schema_version")
+    if version is None:
+        raise ValueError("schema_version missing in parquet metadata")
+    if version.decode("utf-8") != "v1":
+        raise ValueError(f"unsupported schema_version: {version.decode('utf-8')}")
+    return table
 
 
 def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:

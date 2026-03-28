@@ -15,9 +15,11 @@ from typing import Iterable, List, Optional
 import httpx
 
 from app.common.dto import MarketEvent, normalize_symbol
+from app.common import validator
 from app.config import load_config
 from app.observability.logger import get_logger, set_trace_id
 from app.ingestion.storage import ParquetWriter
+from app.ingestion.sinks import EventSink, ParquetEventSink
 
 
 def parse_iso_utc(value: str) -> dt.datetime:
@@ -123,10 +125,11 @@ def normalize_kline_row(symbol: str, row: list) -> MarketEvent:
     close_time = dt.datetime.fromtimestamp(row[6] / 1000, tz=dt.timezone.utc)
     price_close = float(row[4])
     volume = float(row[5])
+    validator.validate_market_payload(symbol, close_time, price_close, volume)
     return MarketEvent(symbol=symbol, event_ts=close_time, price=price_close, size=volume, source="kline")
 
 
-def run(argv: Optional[list[str]] = None) -> int:
+def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> int:
     args = parse_args(argv)
     cfg = load_config(args.env)
     symbol = normalize_symbol(args.symbol)
@@ -170,10 +173,12 @@ def run(argv: Optional[list[str]] = None) -> int:
     gaps = _count_gaps(events, interval_ms)
 
     if not args.dry_run:
-        writer = ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=True)
+        sink_impl = sink or ParquetEventSink(
+            ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=True)
+        )
         for ev in events:
-            writer.add(ev)
-        writer.flush()
+            sink_impl.add(ev)
+        sink_impl.close()
 
     logger.info(
         "backfill finished",
