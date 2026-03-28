@@ -1,6 +1,6 @@
 import pytest
 
-from app.ingestion.client import build_ws_url, normalize_kline, normalize_trade, parse_message
+from app.ingestion.client import build_ws_url, normalize_kline, normalize_trade, parse_message, register_normalizer
 
 
 def test_normalize_trade_symbol_and_utc():
