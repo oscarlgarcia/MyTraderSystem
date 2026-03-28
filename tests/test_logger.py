@@ -107,6 +107,7 @@ def test_logger_fallback_on_bad_path(tmp_path):
 
 def test_log_file_metrics_emitted(tmp_path, capsys):
     log_path = tmp_path / "m.log"
-    logger = get_logger(name="metricslog", level="INFO", log_file=str(log_path), max_bytes=200, backup_count=1)
-    out = capsys.readouterr().out
+    buffer = io.StringIO()
+    logger = get_logger(name="metricslog", level="INFO", log_file=str(log_path), max_bytes=200, backup_count=1, stream=buffer)
+    out = buffer.getvalue()
     assert "log_file_metrics" in out

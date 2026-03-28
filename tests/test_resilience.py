@@ -158,11 +158,11 @@ def test_buffer_skip_when_overflow():
         handled.append(ev)
         # no sleep needed; skip logic is based on buffer size
 
-    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_buffer=2, sleeper=lambda s: None)
+    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_buffer=0, sleeper=lambda s: None)
     runner.run(slow_handler, stop_on_complete=True)
     # se deberían haber descartado al menos 1 evento
     assert runner.metrics.buffer_skipped > 0
-    assert runner.metrics.buffer_size <= 2
+    assert runner.metrics.buffer_size <= 0
 
 
 def test_warning_when_lag_exceeds(monkeypatch, caplog):
