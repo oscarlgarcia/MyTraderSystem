@@ -54,23 +54,58 @@ def fetch_klines(
     end_ms: int,
     interval: str = "1m",
     limit: int = 1000,
-    max_retries: int = 3,
+    retries_429: int = 3,
+    retries_5xx: int = 2,
+    timeout: float = 10.0,
 ) -> List[dict]:
-    """Descarga klines paginadas hasta end_ms (exclusivo)."""
+    """Descarga klines paginadas hasta end_ms (exclusivo) con manejo simple de errores."""
     url = f"{base_url.rstrip('/')}/api/v3/klines"
     out: List[dict] = []
     next_start = start_ms
     while next_start < end_ms:
         params = {"symbol": symbol, "interval": interval, "limit": limit, "startTime": next_start, "endTime": end_ms}
-        for attempt in range(max_retries):
-            resp = client.get(url, params=params, timeout=10.0)
-            if resp.status_code in (429, 500, 502, 503, 504):
-                time.sleep(0.5 * (2 ** attempt))
+        attempt_429 = 0
+        attempt_5xx = 0
+        while True:
+            try:
+                resp = client.get(url, params=params, timeout=timeout)
+            except httpx.TimeoutException as exc:
+                attempt_5xx += 1
+                if attempt_5xx > retries_5xx:
+                    raise httpx.HTTPStatusError(
+                        f"Timeout agotado al descargar klines {symbol} interval={interval} start={start_ms}",
+                        request=None,
+                        response=None,
+                    ) from exc
+                time.sleep(0.5 * attempt_5xx)
                 continue
+
+            if resp.status_code == 429:
+                attempt_429 += 1
+                if attempt_429 > retries_429:
+                    raise httpx.HTTPStatusError(
+                        f"Rate limit alcanzado ({resp.status_code}) tras {retries_429} reintentos "
+                        f"para {symbol} interval={interval}",
+                        request=resp.request,
+                        response=resp,
+                    )
+                time.sleep(0.5 * attempt_429)
+                continue
+
+            if resp.status_code >= 500:
+                attempt_5xx += 1
+                if attempt_5xx > retries_5xx:
+                    raise httpx.HTTPStatusError(
+                        f"Error servidor {resp.status_code} tras {retries_5xx} reintentos "
+                        f"para {symbol} interval={interval}",
+                        request=resp.request,
+                        response=resp,
+                    )
+                time.sleep(0.5 * attempt_5xx)
+                continue
+
             resp.raise_for_status()
             break
-        else:
-            resp.raise_for_status()
 
         batch = resp.json()
         if not batch:

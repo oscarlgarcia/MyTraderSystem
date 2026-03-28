@@ -12,6 +12,7 @@ import sys
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from logging import Logger
+from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, Optional, TextIO
 
 TRACE_ID: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
@@ -69,6 +70,8 @@ def get_logger(
     level: str = "INFO",
     log_file: Optional[str] = None,
     stream: Optional[TextIO] = None,
+    max_bytes: int = 5_000_000,
+    backup_count: int = 3,
 ) -> Logger:
     logger = logging.getLogger(name)
     logger.setLevel(level.upper())
@@ -76,8 +79,18 @@ def get_logger(
     logger.handlers = []
     logger.addHandler(_base_handler(stream=stream))
     if log_file:
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(JsonFormatter())
-        logger.addHandler(file_handler)
+        try:
+            file_handler = RotatingFileHandler(
+                log_file, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+            )
+            file_handler.setFormatter(JsonFormatter())
+            logger.addHandler(file_handler)
+        except OSError as exc:
+            warning_logger = _base_handler(stream=sys.stdout)
+            logger.addHandler(warning_logger)
+            logger.warning(
+                "No se pudo abrir log_file, usando stdout",
+                extra={"log_file": log_file, "error": str(exc)},
+            )
     logger.propagate = False
     return logger

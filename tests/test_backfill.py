@@ -152,8 +152,21 @@ def test_http_500_retries_then_fail(monkeypatch):
 
     client = SimpleNamespace(get=fake_get)
     with pytest.raises(httpx.HTTPStatusError):
-        backfill.fetch_klines(client, "https://x", "BTCUSDT", 0, 1000, limit=1, max_retries=2)
+        backfill.fetch_klines(client, "https://x", "BTCUSDT", 0, 1000, limit=1, retries_5xx=2)
     assert attempts["n"] == 2
+
+
+def test_timeout_retries_then_fail(monkeypatch):
+    attempts = {"n": 0}
+
+    def fake_get(url, params=None, timeout=None):
+        attempts["n"] += 1
+        raise httpx.TimeoutException("timeout")
+
+    client = SimpleNamespace(get=fake_get)
+    with pytest.raises(httpx.HTTPStatusError):
+        backfill.fetch_klines(client, "https://x", "BTCUSDT", 0, 1000, limit=1, retries_5xx=1)
+    assert attempts["n"] == 2  # initial + retry
 
 
 def test_gap_zero_when_consecutive():

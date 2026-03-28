@@ -3,6 +3,8 @@ import logging
 import io
 
 from app.observability.logger import JsonFormatter, get_logger, set_trace_id, clear_trace_id
+from logging.handlers import RotatingFileHandler
+import os
 
 
 def test_json_formatter_includes_trace_id(monkeypatch, capsys):
@@ -77,3 +79,27 @@ def test_file_handler_writes_json(tmp_path):
     payload = json.loads(contents)
     assert payload["message"] == "file message"
     assert payload["env"] == "dev"
+
+
+def test_file_handler_is_rotating(tmp_path):
+    log_path = tmp_path / "rot.log"
+    logger = get_logger(name="rot", level="INFO", log_file=str(log_path), max_bytes=50, backup_count=2)
+    # generar varias entradas para forzar rotación con límite pequeño
+    for _ in range(20):
+        logger.info("x" * 10)
+    logger.handlers[1].flush()
+    rotated = list(tmp_path.glob("rot.log*"))
+    assert rotated, "expected rotated files"
+    assert any(f.name.endswith(".1") or f.name.endswith(".2") for f in rotated)
+    handler = logger.handlers[1]
+    assert isinstance(handler, RotatingFileHandler)
+    assert handler.maxBytes == 50
+    assert handler.backupCount == 2
+
+
+def test_logger_fallback_on_bad_path(tmp_path):
+    bad_path = tmp_path / "nonexistent" / "log.log"  # directory missing
+    logger = get_logger(name="badlog", level="INFO", log_file=str(bad_path))
+    # solo stream handler debe existir si falla file handler
+    assert any(isinstance(h, logging.StreamHandler) for h in logger.handlers)
+    assert not any(isinstance(h, RotatingFileHandler) for h in logger.handlers)

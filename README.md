@@ -51,6 +51,7 @@ python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01T0
 ### Documentación
 - [Functional](docs/Functional.md)
 - [Use Cases](docs/useCase.md)
+- [Dependencies](docs/dependencies.md)
 
 ### Backfill histórico
 - Seco (no escribe): `make backfill-dev START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
