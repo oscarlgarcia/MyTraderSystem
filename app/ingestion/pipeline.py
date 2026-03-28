@@ -109,7 +109,8 @@ def collect_events(
             max_buffer=max_buffer,
             dedup_enabled=dedup_enabled,
         )
-        runner.run(handler, stop_on_complete=False, max_retries=1)
+        stop_on_complete = duration_s is not None
+        runner.run(handler, stop_on_complete=stop_on_complete, max_retries=1)
         writer.flush()
         logger.info(
             "ingestion live complete",
