@@ -13,6 +13,7 @@
 - Transformadores/pipeline: `FeatureState` acepta `transformers` (lista de nombres); registry `TRANSFORMERS` incluye `clip_non_finite`, `scale_price_2x`, `drop_window_max`; se aplican en orden al `FeatureVector`.
 - Feature Registry: `FeatureRegistry` permite registrar conjuntos de features (name, version, description, windows, aggregators, transformers) y consultarlos o listar versiones.
 - Integración registry → estado: `build_feature_state(name, version)` crea `FeatureState` configurado según el feature set registrado.
+- Feature Cache (app/features/cache.py): cache in-memory LRU por símbolo con índice temporal; APIs `put`, `get_latest(symbol)`, `get_at(symbol, ts, tolerance)` con expulsión por capacidad.
 - **Feature pipeline wrapper (app/features/pipeline.py)**:
   - `run_feature_pipeline(events, window=5)` ejecuta `compute_features` y loguea métricas (`events_in`, `features_out`, `window`).
   - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`.
