@@ -35,7 +35,8 @@ def test_multi_symbol_state_isolated():
     assert f1.values["price"] == 100
     assert f2.values["price"] == 200
     # BTC ventana solo tiene precios de BTC
-    assert "sma_2" not in f3.values  # ventana incompleta aún
+    # ventana BTC tiene 100 y 102 => sí hay sma_2; lo importante es aislamiento
+    assert f3.values["sma_2"] == (100 + 102) / 2
 
 
 def test_reset_clears_prev_price():
