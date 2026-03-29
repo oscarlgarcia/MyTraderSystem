@@ -108,6 +108,12 @@ El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
   features = run_feature_pipeline(events, window=3, engine=eng)
   latest = eng.get_latest("BTCUSDT")
   ```
+- Persistencia offline (opcional):
+  ```python
+  from app.features.storage import save, load
+  save(features, "out/features.json", feature_set=("default", "1.0.0"))
+  features2, fs = load("out/features.json")
+  ```
 - Test E2E mock: `python -m pytest tests/slow/test_e2e_features_pipeline.py`.
 - Registry: puedes registrar un feature set y crear el estado con `from app.features.registry import FeatureRegistry; state = FeatureRegistry().build_feature_state("default","1.0.0")` para calcular features incrementales.
 

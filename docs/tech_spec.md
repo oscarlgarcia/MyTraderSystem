@@ -21,6 +21,9 @@
 - **Feature pipeline wrapper (app/features/pipeline.py)**:
   - `run_feature_pipeline(events, window=5, engine=None)` usa `FeatureEngine` (FeatureState+Cache) para calcular features ordenando por símbolo/ts y loguea métricas (`events_in`, `features_out`, `window`).
   - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`; acepta inyectar un engine existente para reusar cache/estado.
+- **Feature storage (app/features/storage.py)**:
+  - Persistencia batch opcional en JSON (`save`, `load`), incluye `storage_version` y metadatos de `feature_set`.
+  - No se usa en la ruta caliente; sólo para dumps/inspección offline. Extensiones soportadas: `.json/.jsonl`.
 - **E2E mock (tests/slow/test_e2e_features_pipeline.py)**:
   - Verifica que 5 eventos mock producen 5 `FeatureVector` y se loguea `feature pipeline done`.
 - **Ingesta/Resilience**:

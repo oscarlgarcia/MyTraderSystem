@@ -7,6 +7,7 @@ flowchart LR
     C --> D[FeatureEngine<br/>API: update/get_*]
     D --> E[FeatureCache<br/>LRU por símbolo]
     E --> F[FeatureVector]
+    F --> K[Feature Storage<br/>save/load JSON (offline)]
     F --> G[Strategy]
     G --> H[Risk]
     H --> I[Execution (paper/live)]
