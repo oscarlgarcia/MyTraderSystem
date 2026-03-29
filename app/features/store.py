@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Callable, Deque, Dict, Iterable, List, Sequence, Tuple, Optional
 
 from app.features.registry import FeatureSet
-
+from app.features.cache import FeatureCache
 from app.common.dto import FeatureVector, MarketEvent
 
 logger = logging.getLogger("features.store")
@@ -54,6 +54,7 @@ class FeatureState:
         windows: Iterable[int] | None = None,
         aggregators: Iterable[str] | None = None,
         transformers: Iterable[str] | None = None,
+        cache: Optional[FeatureCache] = None,
     ) -> None:
         window_set = set(windows) if windows is not None else set()
         window_set.add(window)
@@ -66,12 +67,15 @@ class FeatureState:
         self.transformers = list(transformers) if transformers is not None else []
         # estado interno de agregadores (ej. EMA)
         self.agg_state: Dict[Tuple[str, str, int], float] = {}
+        self.cache = cache
 
     def reset(self) -> None:
         self.prices.clear()
         self.prev_valid_price.clear()
         self.dropped_invalid = 0
         self.agg_state.clear()
+        if self.cache:
+            self.cache.data.clear()
 
     def update(self, ev: MarketEvent) -> FeatureVector | None:
         if not _is_finite_price(ev.price):
@@ -120,6 +124,8 @@ class FeatureState:
             if not t_fn:
                 raise ValueError(f"Transformer '{t_name}' not registered")
             fv = t_fn(fv)
+        if self.cache:
+            self.cache.put(fv)
         return fv
 
 
@@ -129,6 +135,7 @@ def compute_features(
     windows: Iterable[int] | None = None,
     aggregators: Iterable[str] | None = None,
     feature_set: Optional[FeatureSet] = None,
+    cache: Optional[FeatureCache] = None,
 ) -> List[FeatureVector]:
     """
     Calcula features incrementales sobre una lista de eventos.
@@ -145,7 +152,7 @@ def compute_features(
     else:
         transformers = None
 
-    state = FeatureState(window=window, windows=windows, aggregators=aggregators, transformers=transformers)
+    state = FeatureState(window=window, windows=windows, aggregators=aggregators, transformers=transformers, cache=cache)
     results: List[FeatureVector] = []
     # agrupar por símbolo y ordenar dentro para mantener determinismo
     by_symbol: Dict[str, List[MarketEvent]] = defaultdict(list)

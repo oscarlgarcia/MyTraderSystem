@@ -53,9 +53,17 @@ class FeatureRegistry:
 
     def build_feature_state(self, name: str, version: str):
         from app.features.store import FeatureState  # local import to avoid circular
+        from app.features.cache import FeatureCache
 
         fs = self.get(name, version)
         if not fs:
             raise KeyError(f"Feature set {name} v{version} no encontrado")
         window = fs.windows[0] if fs.windows else 5
-        return FeatureState(window=window, windows=fs.windows, aggregators=fs.aggregators, transformers=fs.transformers)
+        cache = FeatureCache()
+        return FeatureState(
+            window=window,
+            windows=fs.windows,
+            aggregators=fs.aggregators,
+            transformers=fs.transformers,
+            cache=cache,
+        )
