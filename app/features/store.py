@@ -23,7 +23,8 @@ def _is_finite_price(price: float) -> bool:
 def _sma(prices: Sequence[float], window: int) -> float | None:
     if len(prices) < window:
         return None
-    return sum(prices[-window:]) / window
+    data = prices if isinstance(prices, list) else list(prices)
+    return sum(data[-window:]) / window
 
 
 def _log_return(prev_price: float | None, current_price: float) -> float | None:
