@@ -4,8 +4,8 @@
 - **Ingestion**: normaliza `MarketEvent` desde WS/REST; escribe Parquet en modo live; provee fixtures dry.
 - **Backfill**: descarga klines REST para rangos históricos; deduplica y opcionalmente escribe Parquet.
 - **Feature Store (app/features/store.py)**:
-  - Entrada: lista de `MarketEvent` por símbolo.
-  - Proceso: ventana deslizante (tamaño configurable, default 5); cálculos `price`, `ret_1` (log-return seguro, omite si prev o actual <=0), agregadores registrados (`sma`, `ema`, `max`, `min` por ventana).
+  - Entrada: lista de `MarketEvent` por símbolo o llamadas incrementales.
+  - Proceso: ventana deslizante (tamaño configurable, default 5); cálculos `price`, `ret_1` (log-return seguro, omite si prev o actual <=0), agregadores registrados (`sma`, `ema`, `max`, `min` por ventana), transformers opcionales (clip, scale, drop).
   - Validación: claves requeridas (`price`) presentes y finitas; se añade metadato `window_max`; eventos inválidos se descartan y se loguea `features discarded` con conteo.
   - Salida: lista de `FeatureVector` alineados uno a uno con los eventos válidos.
   - Restricciones: sin IO, solo stdlib; descarta precios no finitos; limita memoria con `deque(maxlen)`; no numpy/pandas.
@@ -14,6 +14,10 @@
 - Feature Registry: `FeatureRegistry` permite registrar conjuntos de features (name, version, description, windows, aggregators, transformers) y consultarlos o listar versiones.
 - Integración registry → estado: `build_feature_state(name, version)` crea `FeatureState` configurado según el feature set registrado.
 - Feature Cache (app/features/cache.py): cache in-memory LRU por símbolo con índice temporal; APIs `put`, `get_latest(symbol)`, `get_at(symbol, ts, tolerance)` con expulsión por capacidad.
+- **Feature Engine (app/features/engine.py)**:
+  - Fachada pública con métodos `update(event)`, `update_batch(events)`, `get_latest(symbol)`, `get_at(symbol, ts, tolerance=None)`, `get_batch(symbol)`.
+  - Construye internamente `FeatureState` + `FeatureCache` y opcionalmente aplica un `FeatureSet` registrado (ventanas/aggregadores/transformers).
+  - No thread-safe por diseño (ingesta single-thread).
 - **Feature pipeline wrapper (app/features/pipeline.py)**:
   - `run_feature_pipeline(events, window=5)` ejecuta `compute_features` y loguea métricas (`events_in`, `features_out`, `window`).
   - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`.

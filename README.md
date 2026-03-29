@@ -90,7 +90,15 @@ El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 ### Feature Store inicial
 - Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).
 - Uso CLI: `python -m app --env dev --features-after-ingest` (solo logging de features tras ingesta).
-- Uso directo en código: `from app.features.pipeline import run_feature_pipeline`; pasar lista de `MarketEvent`.
+- Uso directo en código (batch): `from app.features.pipeline import run_feature_pipeline`; pasar lista de `MarketEvent`.
+- Uso incremental con caché: 
+  ```python
+  from app.features.engine import FeatureEngine
+  eng = FeatureEngine(window=3)
+  eng.update(ev)                      # devuelve FeatureVector o None
+  latest = eng.get_latest(ev.symbol)  # lookup rápido en memoria
+  historical = eng.get_at(ev.symbol, ev.event_ts)
+  ```
 - Test E2E mock: `python -m pytest tests/slow/test_e2e_features_pipeline.py`.
 - Registry: puedes registrar un feature set y crear el estado con `from app.features.registry import FeatureRegistry; state = FeatureRegistry().build_feature_state("default","1.0.0")` para calcular features incrementales.
 
