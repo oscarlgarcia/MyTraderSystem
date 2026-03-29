@@ -18,6 +18,7 @@
   - Fachada pública con métodos `update(event)`, `update_batch(events)`, `get_latest(symbol)`, `get_at(symbol, ts, tolerance=None)`, `get_batch(symbol)`.
   - Construye internamente `FeatureState` + `FeatureCache` y opcionalmente aplica un `FeatureSet` registrado (ventanas/aggregadores/transformers).
   - No thread-safe por diseño (ingesta single-thread).
+  - Observabilidad ligera: métricas internas (`events_in`, `features_out`, `dropped_non_finite`, `transform_errors`, `latency_max/avg`) y `log_metrics` para volcar resúmenes.
 - **Feature pipeline wrapper (app/features/pipeline.py)**:
   - `run_feature_pipeline(events, window=5, engine=None)` usa `FeatureEngine` (FeatureState+Cache) para calcular features ordenando por símbolo/ts y loguea métricas (`events_in`, `features_out`, `window`).
   - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`; acepta inyectar un engine existente para reusar cache/estado.

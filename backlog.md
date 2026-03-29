@@ -13,6 +13,7 @@
 - Fase 7: Feature Cache / index temporal in-memory con get_latest/get_at. [hecho]
 - Fase 8: FeatureEngine (API update/get_latest/get_at/get_batch) como fachada de consumo. [hecho]
 - Fase 9: Persistencia opcional de FeatureVector a JSON (save/load) para dumps offline. [hecho]
+- Fase 10: Observabilidad en FeatureEngine (contadores, latencia, drops) y logging resumido. [hecho]
 - Trazas pipeline opcionales (--trace-steps) para depuración visual. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.

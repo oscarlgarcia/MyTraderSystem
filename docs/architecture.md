@@ -6,6 +6,7 @@ flowchart LR
     B --> C[Aggregators/Transformers]
     C --> D[FeatureEngine<br/>API: update/get_*]
     D --> E[FeatureCache<br/>LRU por símbolo]
+    D --> L[Metrics<br/>events/latency/drop]
     E --> F[FeatureVector]
     F --> K[Feature Storage<br/>save/load JSON (offline)]
     F --> G[Strategy]

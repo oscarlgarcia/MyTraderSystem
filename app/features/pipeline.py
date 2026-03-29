@@ -24,6 +24,13 @@ def run_feature_pipeline(
     features = eng.update_batch(events_list)
     logger.info(
         "feature pipeline done",
-        extra={"events_in": len(events_list), "features_out": len(features), "window": window},
+        extra={
+            "events_in": len(events_list),
+            "features_out": len(features),
+            "window": window,
+            "dropped_non_finite": eng.metrics["dropped_non_finite"],
+            "latency_max": eng.metrics["compute_latency_max"],
+            "latency_avg": eng.avg_latency(),
+        },
     )
     return features

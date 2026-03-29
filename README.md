@@ -101,13 +101,14 @@ El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
   ```
 - Pipeline batch reutilizando engine/caché:
   ```python
-  from app.features.pipeline import run_feature_pipeline
-  features = run_feature_pipeline(events, window=3)              # engine interno
-  # o reutilizando uno existente para lookups posteriores
-  eng = FeatureEngine(window=3)
-  features = run_feature_pipeline(events, window=3, engine=eng)
-  latest = eng.get_latest("BTCUSDT")
-  ```
+from app.features.pipeline import run_feature_pipeline
+features = run_feature_pipeline(events, window=3)              # engine interno
+# o reutilizando uno existente para lookups posteriores
+eng = FeatureEngine(window=3)
+features = run_feature_pipeline(events, window=3, engine=eng)
+latest = eng.get_latest("BTCUSDT")
+eng.log_metrics()  # imprime métricas básicas (latencia, drops, etc.)
+```
 - Persistencia offline (opcional):
   ```python
   from app.features.storage import save, load
