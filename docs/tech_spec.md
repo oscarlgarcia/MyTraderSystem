@@ -10,6 +10,7 @@
   - Salida: lista de `FeatureVector` alineados uno a uno con los eventos válidos.
   - Restricciones: sin IO, solo stdlib; descarta precios no finitos; limita memoria con `deque(maxlen)`; no numpy/pandas.
 - Registro de agregadores: `register_aggregator(name, fn)` donde fn recibe (symbol, prices, window, state) y devuelve (valor, state_actualizado).
+- Transformadores/pipeline: `FeatureState` acepta `transformers` (lista de nombres); registry `TRANSFORMERS` incluye `clip_non_finite`, `scale_price_2x`, `drop_window_max`; se aplican en orden al `FeatureVector`.
 - **Feature pipeline wrapper (app/features/pipeline.py)**:
   - `run_feature_pipeline(events, window=5)` ejecuta `compute_features` y loguea métricas (`events_in`, `features_out`, `window`).
   - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`.

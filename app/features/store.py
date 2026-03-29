@@ -16,6 +16,8 @@ logger = logging.getLogger("features.store")
 REQUIRED_KEYS = {"price"}
 AggregatorFn = Callable[[str, Sequence[float], int, Dict[Tuple[str, str, int], float]], Tuple[float | None, Dict[Tuple[str, str, int], float]]]
 AGGREGATORS: Dict[str, AggregatorFn] = {}
+TransformerFn = Callable[[FeatureVector], FeatureVector]
+TRANSFORMERS: Dict[str, TransformerFn] = {}
 
 
 def _is_finite_price(price: float) -> bool:
@@ -44,7 +46,13 @@ def register_aggregator(name: str, fn: AggregatorFn) -> None:
 class FeatureState:
     """Mantiene ventanas por símbolo y calcula features incrementales."""
 
-    def __init__(self, window: int = 5, windows: Iterable[int] | None = None, aggregators: Iterable[str] | None = None) -> None:
+    def __init__(
+        self,
+        window: int = 5,
+        windows: Iterable[int] | None = None,
+        aggregators: Iterable[str] | None = None,
+        transformers: Iterable[str] | None = None,
+    ) -> None:
         window_set = set(windows) if windows is not None else set()
         window_set.add(window)
         self.window_set = sorted(window_set)
@@ -53,6 +61,7 @@ class FeatureState:
         self.prev_valid_price: Dict[str, float | None] = defaultdict(lambda: None)
         self.dropped_invalid = 0
         self.aggregators = list(aggregators) if aggregators is not None else ["sma", "ema", "max", "min"]
+        self.transformers = list(transformers) if transformers is not None else []
         # estado interno de agregadores (ej. EMA)
         self.agg_state: Dict[Tuple[str, str, int], float] = {}
 
@@ -102,6 +111,13 @@ class FeatureState:
 
         if ev.price > 0:
             self.prev_valid_price[ev.symbol] = ev.price
+
+        # aplicar transformadores en orden
+        for t_name in self.transformers:
+            t_fn = TRANSFORMERS.get(t_name)
+            if not t_fn:
+                raise ValueError(f"Transformer '{t_name}' not registered")
+            fv = t_fn(fv)
         return fv
 
 
@@ -165,8 +181,33 @@ def _agg_min(symbol: str, prices: Sequence[float], window: int, state: Dict[Tupl
     return min(data[-window:]), state
 
 
+def _t_clip_non_finite(fv: FeatureVector) -> FeatureVector:
+    clean = {k: v for k, v in fv.values.items() if _is_finite_price(v)}
+    return FeatureVector(symbol=fv.symbol, ts=fv.ts, values=clean)
+
+
+def _t_scale_price(fv: FeatureVector, factor: float = 1.0) -> FeatureVector:
+    new_vals = dict(fv.values)
+    if "price" in new_vals:
+        new_vals["price"] = new_vals["price"] * factor
+    return FeatureVector(symbol=fv.symbol, ts=fv.ts, values=new_vals)
+
+
+def _t_drop_keys(keys: Iterable[str]) -> TransformerFn:
+    def _inner(fv: FeatureVector) -> FeatureVector:
+        new_vals = {k: v for k, v in fv.values.items() if k not in keys}
+        return FeatureVector(symbol=fv.symbol, ts=fv.ts, values=new_vals)
+
+    return _inner
+
+
 # registro por defecto
 register_aggregator("sma", _agg_sma)
 register_aggregator("ema", _agg_ema)
 register_aggregator("max", _agg_max)
 register_aggregator("min", _agg_min)
+
+# registro de transformadores
+TRANSFORMERS["clip_non_finite"] = _t_clip_non_finite
+TRANSFORMERS["scale_price_2x"] = lambda fv: _t_scale_price(fv, factor=2.0)
+TRANSFORMERS["drop_window_max"] = _t_drop_keys(["window_max"])
