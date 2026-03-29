@@ -8,7 +8,9 @@ import math
 import logging
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Callable, Deque, Dict, Iterable, List, Sequence, Tuple
+from typing import Callable, Deque, Dict, Iterable, List, Sequence, Tuple, Optional
+
+from app.features.registry import FeatureSet
 
 from app.common.dto import FeatureVector, MarketEvent
 
@@ -126,6 +128,7 @@ def compute_features(
     window: int = 5,
     windows: Iterable[int] | None = None,
     aggregators: Iterable[str] | None = None,
+    feature_set: Optional[FeatureSet] = None,
 ) -> List[FeatureVector]:
     """
     Calcula features incrementales sobre una lista de eventos.
@@ -134,7 +137,15 @@ def compute_features(
     if not events:
         return []
 
-    state = FeatureState(window=window, windows=windows, aggregators=aggregators)
+    if feature_set:
+        window = feature_set.windows[0] if feature_set.windows else window
+        windows = feature_set.windows
+        aggregators = feature_set.aggregators
+        transformers = feature_set.transformers
+    else:
+        transformers = None
+
+    state = FeatureState(window=window, windows=windows, aggregators=aggregators, transformers=transformers)
     results: List[FeatureVector] = []
     # agrupar por símbolo y ordenar dentro para mantener determinismo
     by_symbol: Dict[str, List[MarketEvent]] = defaultdict(list)

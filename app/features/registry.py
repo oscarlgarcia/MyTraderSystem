@@ -50,3 +50,12 @@ class FeatureRegistry:
 
     def list_versions(self, name: str) -> Dict[str, FeatureSet]:
         return {ver: fs for (n, ver), fs in self._registry.items() if n == name}
+
+    def build_feature_state(self, name: str, version: str):
+        from app.features.store import FeatureState  # local import to avoid circular
+
+        fs = self.get(name, version)
+        if not fs:
+            raise KeyError(f"Feature set {name} v{version} no encontrado")
+        window = fs.windows[0] if fs.windows else 5
+        return FeatureState(window=window, windows=fs.windows, aggregators=fs.aggregators, transformers=fs.transformers)

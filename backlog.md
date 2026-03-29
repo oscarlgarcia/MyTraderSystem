@@ -9,6 +9,7 @@
 - Fase 4 (nuevo): Aggregation Engine extensible (SMA/EMA/max/min + registro custom). [hecho]
 - Fase 5: Transformers y pipeline declarativa en FeatureState. [hecho]
 - Fase 6: Feature Registry y versionado en memoria. [hecho]
+- Fase 6.1: Integración registry→FeatureState (build_feature_state helper). [hecho]
 - Trazas pipeline opcionales (--trace-steps) para depuración visual. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
