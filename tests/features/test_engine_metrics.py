@@ -36,7 +36,7 @@ def test_latency_monotonic(monkeypatch):
     eng = FeatureEngine(window=2)
     eng.update(_ev(0, 100))
     eng.update(_ev(60, 101))
-    assert eng.metrics["compute_latency_max"] >= 0.003
+    assert eng.metrics["compute_latency_max"] >= 0.0029  # tolerancia a float error
     assert eng.avg_latency() > 0
     # ensure max does not decrease
     prev_max = eng.metrics["compute_latency_max"]
