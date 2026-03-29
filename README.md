@@ -99,6 +99,15 @@ El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
   latest = eng.get_latest(ev.symbol)  # lookup rápido en memoria
   historical = eng.get_at(ev.symbol, ev.event_ts)
   ```
+- Pipeline batch reutilizando engine/caché:
+  ```python
+  from app.features.pipeline import run_feature_pipeline
+  features = run_feature_pipeline(events, window=3)              # engine interno
+  # o reutilizando uno existente para lookups posteriores
+  eng = FeatureEngine(window=3)
+  features = run_feature_pipeline(events, window=3, engine=eng)
+  latest = eng.get_latest("BTCUSDT")
+  ```
 - Test E2E mock: `python -m pytest tests/slow/test_e2e_features_pipeline.py`.
 - Registry: puedes registrar un feature set y crear el estado con `from app.features.registry import FeatureRegistry; state = FeatureRegistry().build_feature_state("default","1.0.0")` para calcular features incrementales.
 

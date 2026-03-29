@@ -19,8 +19,8 @@
   - Construye internamente `FeatureState` + `FeatureCache` y opcionalmente aplica un `FeatureSet` registrado (ventanas/aggregadores/transformers).
   - No thread-safe por diseño (ingesta single-thread).
 - **Feature pipeline wrapper (app/features/pipeline.py)**:
-  - `run_feature_pipeline(events, window=5)` ejecuta `compute_features` y loguea métricas (`events_in`, `features_out`, `window`).
-  - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`.
+  - `run_feature_pipeline(events, window=5, engine=None)` usa `FeatureEngine` (FeatureState+Cache) para calcular features ordenando por símbolo/ts y loguea métricas (`events_in`, `features_out`, `window`).
+  - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`; acepta inyectar un engine existente para reusar cache/estado.
 - **E2E mock (tests/slow/test_e2e_features_pipeline.py)**:
   - Verifica que 5 eventos mock producen 5 `FeatureVector` y se loguea `feature pipeline done`.
 - **Ingesta/Resilience**:

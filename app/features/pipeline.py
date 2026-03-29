@@ -6,17 +6,22 @@ Se mantiene sin efectos colaterales y sin dependencias externas.
 from __future__ import annotations
 
 import logging
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 from app.common.dto import FeatureVector, MarketEvent
-from app.features.store import compute_features
+from app.features.engine import FeatureEngine
 
 logger = logging.getLogger("features.pipeline")
 
 
-def run_feature_pipeline(events: Iterable[MarketEvent], window: int = 5) -> List[FeatureVector]:
-    events_list = list(events)
-    features = compute_features(events_list, window=window)
+def run_feature_pipeline(
+    events: Iterable[MarketEvent],
+    window: int = 5,
+    engine: Optional[FeatureEngine] = None,
+) -> List[FeatureVector]:
+    events_list = sorted(list(events), key=lambda e: (e.symbol, e.event_ts))
+    eng = engine or FeatureEngine(window=window)
+    features = eng.update_batch(events_list)
     logger.info(
         "feature pipeline done",
         extra={"events_in": len(events_list), "features_out": len(features), "window": window},

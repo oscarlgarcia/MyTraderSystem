@@ -16,7 +16,8 @@ from app.common.dto import MarketEvent, TraceContext
 from app.config import AppConfig, load_config, parse_args
 from app.observability.logger import get_logger, set_trace_id
 from app.ingestion.pipeline import collect_events
-from app.features.store import compute_features
+from app.features.pipeline import run_feature_pipeline
+from app.features.engine import FeatureEngine
 from app.strategy.basic import generate_signals
 from app.risk.rules import apply_risk
 from app.execution.paper import paper_execute
@@ -82,7 +83,8 @@ def run_cycle(
 
     # Features
     _trace(logger, trace_steps, "features", "start")
-    fvs = compute_features(events)
+    feature_engine = FeatureEngine()
+    fvs = run_feature_pipeline(events, engine=feature_engine)
     _trace(logger, trace_steps, "features", "done", {"count": len(fvs)})
     _mark(recorder, "features")
 
