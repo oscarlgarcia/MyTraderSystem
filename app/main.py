@@ -57,6 +57,8 @@ def _resolve_runtime_options(args) -> Dict[str, object]:
         "ingest_max_buffer": int(getattr(args, "ingest_max_buffer", 10_000)),
         "ingest_dedup": False if fast_path else bool(getattr(args, "ingest_dedup", True)),
         "ingest_batch_size": max(FAST_PATH_BATCH_SIZE, ingest_batch_size) if fast_path else ingest_batch_size,
+        "ingest_lag_warn": getattr(args, "ingest_lag_warn", None),
+        "ingest_buffer_warn": getattr(args, "ingest_buffer_warn", None),
         "snapshot_enabled": not fast_path,
         "summary_logging": not fast_path,
     }
@@ -77,6 +79,8 @@ def run_cycle(
     ingest_batch_size: int = 1,
     snapshot_enabled: bool = True,
     live_summary_logging: bool = True,
+    ingest_lag_warn: float | None = None,
+    ingest_buffer_warn: int | None = None,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -100,6 +104,8 @@ def run_cycle(
         batch_size=ingest_batch_size,
         snapshot_enabled=snapshot_enabled,
         summary_logging=live_summary_logging,
+        lag_warn_threshold=ingest_lag_warn,
+        buffer_warn_threshold=ingest_buffer_warn,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
@@ -171,6 +177,8 @@ def run() -> int:
         ingest_batch_size=runtime["ingest_batch_size"],
         snapshot_enabled=runtime["snapshot_enabled"],
         live_summary_logging=runtime["summary_logging"],
+        ingest_lag_warn=runtime["ingest_lag_warn"],
+        ingest_buffer_warn=runtime["ingest_buffer_warn"],
     )
 
     logger.info(

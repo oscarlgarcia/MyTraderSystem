@@ -41,11 +41,13 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - **Parquet dedup opcional**: sigue siendo una barrera final sobre particiones existentes, no el mecanismo principal de deduplicacion.
 - **Batching de IO en live**: el handler agrupa eventos antes de escribirlos para reducir llamadas al writer; el flush final fuerza la persistencia del lote incompleto.
 - **Modo fast-path (experimental)**: desactiva deduplicacion live, snapshot REST y trazas; usa batching grande y minimiza logs de cierre para priorizar eventos/s.
+- **Alertas experimentales de operacion**: `--ingest-lag-warn` y `--ingest-buffer-warn` emiten `WARNING` una vez por ciclo live si se supera el umbral configurado.
 
 ## Trade-offs
 - Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
 - El batching local reduce llamadas a `writer.add`, pero aumenta ligeramente la latencia de persistencia hasta completar el lote o cerrar el handler.
 - El fast-path mejora throughput sacrificando resync, filtrado de duplicados y trazabilidad operativa detallada.
+- Umbrales demasiado bajos pueden generar ruido; por defecto quedan desactivados (`None`).
 - La clave `(symbol, event_ts, price, size, source)` es simple y testeable, pero puede ser demasiado estricta o demasiado laxa segun la fuente si en el futuro aparecen ids nativos.
 - El backfill sin `--dedup` mantiene visibilidad completa del lote original a costa de permitir duplicados.
 

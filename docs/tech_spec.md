@@ -27,6 +27,7 @@
   - `batch_size` controla el lote local antes de escribir en live; el handler hace flush del lote incompleto al cerrar.
 - `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
+  - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
 - `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
   - Para tipos nuevos, requiere `register_stream_builder(...)` y un `register_normalizer(...)` compatible con `parse_message`.
@@ -43,6 +44,7 @@
   - El handler local puede agrupar eventos antes de llamar a `writer.add`.
   - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `batch_size`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
   - En `fast-path`, se omite el resumen de cierre de ingest live para reducir overhead de logging, pero se mantiene el log final de `pipeline ok`.
+  - Si `buffer_skipped > ingest_buffer_warn` o `max_latency_seconds > ingest_lag_warn`, `collect_events` emite un `WARNING` una vez por ciclo live.
 - **Backfill**:
   - `fetch_klines` pagina con manejo simple de `429`, `5xx` y timeout.
   - `normalize_kline_row` valida payload y genera `MarketEvent`.

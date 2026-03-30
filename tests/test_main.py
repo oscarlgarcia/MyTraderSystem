@@ -97,6 +97,8 @@ def test_fast_path_derives_runtime_flags():
         ingest_max_buffer=10_000,
         ingest_dedup=True,
         ingest_batch_size=4,
+        ingest_lag_warn=1.0,
+        ingest_buffer_warn=2,
     )
 
     runtime = main._resolve_runtime_options(args)
@@ -107,6 +109,8 @@ def test_fast_path_derives_runtime_flags():
     assert runtime["snapshot_enabled"] is False
     assert runtime["summary_logging"] is False
     assert runtime["ingest_batch_size"] >= main.FAST_PATH_BATCH_SIZE
+    assert runtime["ingest_lag_warn"] == 1.0
+    assert runtime["ingest_buffer_warn"] == 2
 
 
 def test_fast_path_mock_benchmark_improves_throughput():

@@ -67,6 +67,33 @@ def _build_snapshot_fn(cfg: AppConfig):
     return snapshot
 
 
+def _emit_runtime_warnings(
+    logger: logging.Logger,
+    runner: ResilientRunner,
+    *,
+    lag_warn_threshold: float | None,
+    buffer_warn_threshold: int | None,
+) -> None:
+    if buffer_warn_threshold is not None and runner.metrics.buffer_skipped > buffer_warn_threshold:
+        logger.warning(
+            "ingestion buffer pressure warning",
+            extra={
+                "buffer_skipped": runner.metrics.buffer_skipped,
+                "buffer_warn_threshold": buffer_warn_threshold,
+                "buffer_size": runner.metrics.buffer_size,
+            },
+        )
+    if lag_warn_threshold is not None and runner.metrics.max_latency_seconds > lag_warn_threshold:
+        logger.warning(
+            "ingestion latency warning",
+            extra={
+                "max_latency_seconds": runner.metrics.max_latency_seconds,
+                "lag_warn_threshold": lag_warn_threshold,
+                "last_latency_seconds": runner.metrics.last_latency_seconds,
+            },
+        )
+
+
 class _LiveBatchHandler:
     def __init__(
         self,
@@ -142,6 +169,8 @@ def collect_events(
     batch_size: int = 1,
     snapshot_enabled: bool = True,
     summary_logging: bool = True,
+    lag_warn_threshold: float | None = None,
+    buffer_warn_threshold: int | None = None,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
@@ -181,6 +210,12 @@ def collect_events(
         finally:
             handler.close()
             writer.flush()
+        _emit_runtime_warnings(
+            logger,
+            runner,
+            lag_warn_threshold=lag_warn_threshold,
+            buffer_warn_threshold=buffer_warn_threshold,
+        )
         if summary_logging:
             logger.info(
                 "ingestion live complete",

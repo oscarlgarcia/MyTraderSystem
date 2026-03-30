@@ -113,6 +113,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Tamano del lote local antes de escribir en live; reduce llamadas a writer.add/flush.",
     )
     parser.add_argument(
+        "--ingest-lag-warn",
+        type=float,
+        default=None,
+        help="Umbral experimental de WARNING para latencia de ingestion en segundos.",
+    )
+    parser.add_argument(
+        "--ingest-buffer-warn",
+        type=int,
+        default=None,
+        help="Umbral experimental de WARNING para eventos descartados por buffer.",
+    )
+    parser.add_argument(
         "--fast-path",
         action="store_true",
         help="Modo experimental de alto throughput: menos garantias, menos logs, mas batching.",

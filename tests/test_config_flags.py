@@ -8,6 +8,8 @@ def test_defaults_flags():
     assert args.features_after_ingest is False
     assert args.ingest_max_buffer == 10_000
     assert args.ingest_batch_size == 1
+    assert args.ingest_lag_warn is None
+    assert args.ingest_buffer_warn is None
     assert args.ingest_dedup is True
 
 
@@ -29,3 +31,9 @@ def test_ingest_batch_size_flag():
 def test_fast_path_flag():
     args = parse_args(["--fast-path"])
     assert args.fast_path is True
+
+
+def test_ingest_warn_flags():
+    args = parse_args(["--ingest-lag-warn", "1.5", "--ingest-buffer-warn", "3"])
+    assert args.ingest_lag_warn == 1.5
+    assert args.ingest_buffer_warn == 3
