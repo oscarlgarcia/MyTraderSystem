@@ -21,6 +21,7 @@
 - Modo experimental `--fast-path` para alto throughput (dedup off, snapshot off, logs minimos, batch grande). [hecho]
 - Alertas experimentales `--ingest-lag-warn` y `--ingest-buffer-warn` para backpressure/latencia. [hecho]
 - Observabilidad agregada de ingest con `ingestion summary` y claves consolidadas por ejecucion. [hecho]
+- Documentacion de altas tasas con recetas de flags, riesgos y ejemplo completo de stream nuevo. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.

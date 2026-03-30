@@ -87,6 +87,65 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Escribe el lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
 - Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 
+### Altas tasas
+- Receta conservadora:
+  ```bash
+  python -m app --env dev --mode live --duration 60 --max-events 5000 --ingest-batch-size 64
+  ```
+  Mantiene dedup y snapshot; reduce IO agrupando escrituras.
+- Receta throughput alto (experimental):
+  ```bash
+  python -m app --env dev --mode live --duration 60 --max-events 20000 --fast-path
+  ```
+  Activa batch grande, desactiva dedup live, snapshot, `trace_steps` y resumenes de ingest.
+- Receta manual equivalente a `fast-path`:
+  ```bash
+  python -m app --env dev --mode live --duration 60 --max-events 20000 --ingest-batch-size 256 --no-ingest-dedup
+  ```
+  Reduce coste por evento, pero no desactiva snapshot ni logs por si quieres comparar.
+- Alertas operativas:
+  ```bash
+  python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0
+  ```
+  Emite `WARNING` si hay lag alto o descartes por buffer.
+- Riesgos:
+  - `--no-ingest-dedup` o `--fast-path`: puede persistir duplicados.
+  - batch size alto: baja llamadas a IO, sube latencia de flush y riesgo de perder el lote en memoria si el proceso cae.
+  - `--fast-path`: pierde resync por snapshot y oculta resumenes de ingest para priorizar throughput.
+
+### Registrar una fuente/tipo nuevo
+```python
+from datetime import datetime, timezone
+
+from app.common.dto import MarketEvent
+from app.ingestion.client import (
+    build_ws_url,
+    register_normalizer,
+    register_stream_builder,
+)
+
+
+def normalize_foo(payload: dict) -> MarketEvent:
+    return MarketEvent(
+        symbol=str(payload["symbol"]).upper(),
+        event_ts=datetime.fromtimestamp(payload["ts"], tz=timezone.utc),
+        price=float(payload["price"]),
+        size=float(payload["size"]),
+        source="foo",
+        metadata={"raw_type": "foo"},
+    )
+
+
+register_stream_builder("foo", lambda symbol: f"{symbol.lower()}@foo")
+register_normalizer("foo", normalize_foo)
+
+url = build_ws_url("wss://stream.binance.com:9443", ["BTCUSDT"], stream_types=("trade", "foo"))
+print(url)
+```
+- El builder define el fragmento de URL del stream.
+- El normalizer debe devolver `MarketEvent`.
+- Si no pasas `stream_types`, se conserva el comportamiento por defecto (`trade` + `kline`).
+
 ### Documentacion
 - [Functional](docs/Functional.md)
 - [Use Cases](docs/useCase.md)

@@ -81,6 +81,16 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - Construir la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 - Si no se pasa `stream_types`, el comportamiento por defecto sigue siendo Binance-compatible: `trade` + `kline`.
 
+## Operacion a altas tasas
+- `--ingest-batch-size`: baja llamadas a `writer.add`; usar `32-128` para un punto medio razonable.
+- `--no-ingest-dedup`: elimina dos barreras de deduplicacion en live; solo aceptable si el consumidor tolera repetidos.
+- `--fast-path`: aplica la configuracion agresiva completa y debe tratarse como experimental.
+- `--ingest-lag-warn` y `--ingest-buffer-warn`: no corrigen el problema; solo hacen visible presion operativa.
+- Recomendacion practica:
+  - empezar con dedup on y batch medio;
+  - activar warnings;
+  - pasar a `fast-path` solo si el cuello real es CPU/IO del proceso y puedes tolerar duplicados o lag sin resync.
+
 ## Diagramas
 
 ### Componentes

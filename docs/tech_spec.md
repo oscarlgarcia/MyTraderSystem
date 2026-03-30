@@ -52,6 +52,31 @@
   - Con `--dedup`, aplica deduplicacion con `_key` antes del sink y registra `duplicates_dropped`.
   - Sin `--dedup`, conserva duplicados tras normalizar y ordenar.
 
+## Altas tasas y tuning operativo
+- **Flags relevantes**:
+  - `--ingest-batch-size N`: agrupa eventos antes de `writer.add`; reduce llamadas de IO.
+  - `--no-ingest-dedup`: desactiva dedup live en `ResilientRunner` y en la barrera previa al writer.
+  - `--fast-path`: modo experimental que fuerza `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False`, `trace_steps=False` y `ingest_batch_size >= 256`.
+  - `--ingest-lag-warn S`, `--ingest-buffer-warn N`: emiten `WARNING` una vez por ciclo si se superan los umbrales.
+- **Recetas**:
+  - perfil estable: batch medio (`32-128`), dedup on, snapshot on.
+  - perfil throughput: `--fast-path` o `--ingest-batch-size 256 --no-ingest-dedup`.
+- **Trade-offs**:
+  - batch alto reduce overhead por llamada pero retrasa flush.
+  - dedup off mejora eventos/s pero permite repetidos en logs y Parquet.
+  - snapshot off evita coste de resync pero deja huecos si el stream llega tarde o se corta.
+  - summary logging off reduce ruido y overhead, pero quita el cierre agregado de ingest.
+
+## Extension de tipos de stream
+- `register_stream_builder(stream_type, fn)` registra como construir el sufijo de stream por simbolo.
+- `register_normalizer(stream_type, fn)` registra como convertir el payload raw a `MarketEvent`.
+- Flujo minimo:
+  1. registrar builder (`foo -> {symbol}@foo`);
+  2. registrar normalizer `foo`;
+  3. construir URL con `build_ws_url(..., stream_types=("trade", "foo"))`;
+  4. dejar que `parse_message` enrute por el tipo registrado.
+- Restriccion actual: la extension es por tipo de stream, no por adaptadores completos de exchange; sigue siendo el mismo contrato Binance-compatible de URL multiplexada.
+
 ## Supuestos y limites
 - No se anaden dependencias externas adicionales.
 - La deduplicacion usa la tupla `(symbol, event_ts, price, size, source)` como identidad canonica.
