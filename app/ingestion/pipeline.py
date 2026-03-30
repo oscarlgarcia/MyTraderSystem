@@ -142,6 +142,7 @@ class _LiveBatchHandler:
         self.batch_size = max(1, batch_size)
         self.seen = set()
         self.pending: List[MarketEvent] = []
+        self.events: List[MarketEvent] = []
 
     def __call__(self, event: MarketEvent) -> None:
         if self.dedup_enabled:
@@ -150,6 +151,7 @@ class _LiveBatchHandler:
                 self.stats["duplicates_dropped"] += 1
                 return
             self.seen.add(event_key)
+        self.events.append(event)
         self.pending.append(event)
         if self.stats["written"] + len(self.pending) >= self.max_events:
             self._flush_pending()
@@ -202,6 +204,7 @@ def collect_events(
     summary_logging: bool = True,
     lag_warn_threshold: float | None = None,
     buffer_warn_threshold: int | None = None,
+    allow_live_fallback: bool = False,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
@@ -279,7 +282,7 @@ def collect_events(
                 mode="live",
                 cfg=cfg,
                 events_in=runner.metrics.events_in,
-                events_out=stats["written"],
+                events_out=len(handler.events),
                 reconnects=runner.metrics.reconnects,
                 buffer_skipped=runner.metrics.buffer_skipped,
                 max_latency_seconds=runner.metrics.max_latency_seconds,
@@ -287,11 +290,13 @@ def collect_events(
                 batch_size=batch_size,
                 duplicates_dropped=runner.metrics.dedup_skipped + stats["duplicates_dropped"],
             )
-        events_out = _read_from_writer_buffer(writer, stats["written"])
+        events_out = list(handler.events)
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out
     except Exception as exc:  # pragma: no cover - live path is not fully unit tested
+        if not allow_live_fallback:
+            raise
         logger.warning("live ingestion failed; falling back to dry", extra={"error": str(exc)})
         events_out = _synthetic_events(max_events)
         if summary_logging:
@@ -311,11 +316,3 @@ def collect_events(
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out
-
-
-def _read_from_writer_buffer(writer: ParquetWriter, limit: int) -> List[MarketEvent]:
-    events: List[MarketEvent] = []
-    buf = getattr(writer, "buffer", None)
-    if isinstance(buf, list):
-        events.extend(buf[:limit])
-    return events

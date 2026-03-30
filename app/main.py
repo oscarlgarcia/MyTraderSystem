@@ -59,6 +59,7 @@ def _resolve_runtime_options(args) -> Dict[str, object]:
         "ingest_batch_size": max(FAST_PATH_BATCH_SIZE, ingest_batch_size) if fast_path else ingest_batch_size,
         "ingest_lag_warn": getattr(args, "ingest_lag_warn", None),
         "ingest_buffer_warn": getattr(args, "ingest_buffer_warn", None),
+        "allow_live_fallback": bool(getattr(args, "allow_live_fallback", False)),
         "snapshot_enabled": not fast_path,
         "summary_logging": not fast_path,
     }
@@ -81,6 +82,7 @@ def run_cycle(
     live_summary_logging: bool = True,
     ingest_lag_warn: float | None = None,
     ingest_buffer_warn: int | None = None,
+    allow_live_fallback: bool = False,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -106,6 +108,7 @@ def run_cycle(
         summary_logging=live_summary_logging,
         lag_warn_threshold=ingest_lag_warn,
         buffer_warn_threshold=ingest_buffer_warn,
+        allow_live_fallback=allow_live_fallback,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
@@ -179,6 +182,7 @@ def run() -> int:
         live_summary_logging=runtime["summary_logging"],
         ingest_lag_warn=runtime["ingest_lag_warn"],
         ingest_buffer_warn=runtime["ingest_buffer_warn"],
+        allow_live_fallback=runtime["allow_live_fallback"],
     )
 
     logger.info(

@@ -22,6 +22,7 @@ python -m app --env dev --mode live --features-after-ingest        # ejecuta fea
 python -m app --env dev --mode live --ingest-max-buffer 20000      # ajusta buffer del runner (escalabilidad)
 python -m app --env dev --mode live --ingest-batch-size 50         # agrupa escrituras al writer en lotes locales
 python -m app --env dev --mode live --no-ingest-dedup              # desactiva dedup para throughput (riesgo duplicados)
+python -m app --env dev --mode live --allow-live-fallback          # permite fallback explicito a dry si live falla
 python -m app --env dev --mode live --fast-path                    # experimental: throughput alto, menos garantias
 python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0  # experimental: WARNINGs de presion/latencia
 python -m app.ingestion.runner --env dev --duration 600     # ingesta puntual WS con flush
@@ -69,6 +70,8 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Pipeline live limitado: WS/REST + escritura Parquet acotada por eventos/duracion.
 - `python -m app --env dev --mode live --ingest-batch-size 50`  
   Agrupa eventos en lotes locales antes de llamar al writer; reduce IO a costa de algo mas de latencia por lote.
+- `python -m app --env dev --mode live --allow-live-fallback`  
+  Permite fallback explicito a `dry` si la ingesta real falla. Sin este flag, live ahora falla fuerte por defecto.
 - `python -m app --env dev --mode live --fast-path`  
   Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos (sin resumen agregado de ingest), `trace_steps` off y batch size grande.
 - `python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0`  
@@ -165,7 +168,7 @@ Ejemplo de salida:
 ```
 El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 
-En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on` y `batch_size`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead.
+En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size` y `duplicates_dropped`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: si la fuente real falla, aborta salvo que se haya activado `--allow-live-fallback`.
 
 ### Feature Store inicial
 - Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).

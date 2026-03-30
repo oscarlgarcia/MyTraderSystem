@@ -100,6 +100,7 @@ def test_fast_path_derives_runtime_flags():
         ingest_batch_size=4,
         ingest_lag_warn=1.0,
         ingest_buffer_warn=2,
+        allow_live_fallback=True,
     )
 
     runtime = main._resolve_runtime_options(args)
@@ -112,6 +113,7 @@ def test_fast_path_derives_runtime_flags():
     assert runtime["ingest_batch_size"] >= main.FAST_PATH_BATCH_SIZE
     assert runtime["ingest_lag_warn"] == 1.0
     assert runtime["ingest_buffer_warn"] == 2
+    assert runtime["allow_live_fallback"] is True
 
 
 def test_fast_path_mock_benchmark_improves_throughput():

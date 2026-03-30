@@ -135,6 +135,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_false",
         help="Desactiva la deduplicacion en vivo para maximizar throughput (riesgo de duplicados).",
     )
+    parser.add_argument(
+        "--allow-live-fallback",
+        action="store_true",
+        help="Permite fallback explicito de live a dry si la ingesta real falla (solo para debugging).",
+    )
     parser.set_defaults(ingest_dedup=True)
     args, _unknown = parser.parse_known_args(argv)
     return args

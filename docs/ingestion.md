@@ -10,7 +10,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - Expone `_key(event)` como identidad canonica del evento.
   - Permite registrar `stream_builder` por tipo para nuevas fuentes o canales sin tocar el core.
 - `ingestion.resilience`
-  - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de lag/latencia/buffer.
+  - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de entrada/salida/duplicados/lag/latencia/buffer.
 - `ingestion.pipeline`
   - `collect_events`: orquesta dry/live, crea el handler live, aplica una segunda barrera de deduplicacion antes de `writer.add`, soporta batching local de IO y emite un resumen agregado final de la ejecucion.
 - `ingestion.backfill`
@@ -43,6 +43,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - **Modo fast-path (experimental)**: desactiva deduplicacion live, snapshot REST y trazas; usa batching grande y minimiza logs de cierre para priorizar eventos/s.
 - **Alertas experimentales de operacion**: `--ingest-lag-warn` y `--ingest-buffer-warn` emiten `WARNING` una vez por ciclo live si se supera el umbral configurado.
 - **Observabilidad agregada de cierre**: en modo normal se emite `ingestion summary` con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on` y `batch_size`; en live se conserva `ingestion live complete` por compatibilidad.
+- **Fail-fast por defecto en live**: si la ingesta real falla, `collect_events` propaga el error. El fallback a `dry` solo existe cuando se activa explicitamente `--allow-live-fallback`.
 
 ## Trade-offs
 - Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
@@ -68,6 +69,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - No debe:
   - convertirse en una capa de negocio,
   - asumir guarantees exactly-once,
+  - degradar silenciosamente a datos sinteticos cuando live falla,
   - depender de caches distribuidas o filtros probabilisticos para esta fase.
 
 ## Posibles mejoras

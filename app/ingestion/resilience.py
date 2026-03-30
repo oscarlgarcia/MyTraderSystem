@@ -24,8 +24,11 @@ Sleeper = Callable[[float], None]
 
 @dataclass
 class ResilienceMetrics:
+    # events_in counts source/snapshot events observed before runner-level dedup.
     events_in: int = 0
+    # events_out counts events delivered to the handler after runner-level dedup.
     events_out: int = 0
+    # dedup_skipped counts duplicates filtered by the runner or snapshot re-sync path.
     dedup_skipped: int = 0
     reconnects: int = 0
     last_lag_seconds: float = 0.0
@@ -97,9 +100,9 @@ class ResilientRunner:
 
     def _process_event(self, ev: MarketEvent, handler: Callable[[MarketEvent], None]) -> None:
         self.metrics.events_in += 1
+        k = _key(ev)
         # dedup
         if self.dedup_enabled:
-            k = _key(ev)
             if k in self.seen:
                 self.metrics.dedup_skipped += 1
                 return
