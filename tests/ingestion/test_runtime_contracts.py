@@ -8,6 +8,7 @@ import pytest
 
 from app.common.dto import MarketEvent
 from app.ingestion import pipeline
+from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sources import StaticSource
 from app.observability.logger import get_logger
@@ -72,9 +73,10 @@ def test_live_failure_fail_fast_by_default(monkeypatch):
         def snapshot(self):
             return None
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(IngestionError) as exc_info:
         pipeline.collect_events(mode="live", cfg=cfg, duration_s=0, logger=mock.Mock(), source=BrokenSource(), sink=DummySink())
 
+    assert exc_info.value.category == "source"
     synthetic.assert_not_called()
 
 

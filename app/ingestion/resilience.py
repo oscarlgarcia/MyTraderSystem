@@ -16,6 +16,7 @@ from typing import Callable, Deque, Iterable, List, Optional, Set, Tuple
 
 from app.common.dto import MarketEvent
 from app.ingestion.client import _key
+from app.ingestion.errors import IngestionError, classify_error
 
 
 SnapshotFn = Callable[[], Iterable[MarketEvent]]
@@ -72,7 +73,10 @@ class ResilientRunner:
                     self.metrics.buffer_size = len(buffer)
                     while buffer:
                         current = buffer.popleft()
-                        self._process_event(current, handler)
+                        try:
+                            self._process_event(current, handler)
+                        except Exception as exc:
+                            raise classify_error(exc, default_category="sink") from exc
                         handled_this_cycle += 1
                     backoff = self.backoff_base  # reset on success
                 if stop_on_complete:
@@ -86,9 +90,12 @@ class ResilientRunner:
                 # as a clean completion when stop_on_complete is requested.
                 if stop_on_complete and isinstance(exc, RuntimeError) and "StopIteration" in str(exc):
                     break
+                err = classify_error(exc, default_category="source")
+                if not err.retryable:
+                    raise err
                 self.metrics.reconnects += 1
                 if max_retries is not None and self.metrics.reconnects > max_retries:
-                    raise
+                    raise err
                 self.sleeper(min(backoff, self.backoff_max))
                 backoff = min(backoff * 2, self.backoff_max)
                 continue

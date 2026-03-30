@@ -140,6 +140,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Permite fallback explicito de live a dry si la ingesta real falla (solo para debugging).",
     )
+    parser.add_argument(
+        "--error-policy",
+        choices=["fail_fast", "allow_fallback", "degraded"],
+        default=None,
+        help="Politica explicita de error para ingestion live: fail_fast, allow_fallback o degraded.",
+    )
     parser.set_defaults(ingest_dedup=True)
     args, _unknown = parser.parse_known_args(argv)
     return args

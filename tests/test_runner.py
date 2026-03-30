@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.ingestion import runner
+from app.ingestion.errors import IngestionError
 from app.common.dto import MarketEvent
 from app.ingestion.storage import read_parquet
 from app.observability.logger import get_logger as base_logger
@@ -47,10 +48,13 @@ def test_ws_endpoint_invalid_raises(monkeypatch, tmp_path):
     def fail_stream(url, end_time=None):
         raise ConnectionError("invalid endpoint")
 
+    original_runner = runner.ResilientRunner
     monkeypatch.setattr(runner, "load_config", lambda env=None: cfg)
     monkeypatch.setattr(runner, "BinanceSource", lambda cfg: original_source(cfg, ws_stream=fail_stream))
-    with pytest.raises(ConnectionError):
+    monkeypatch.setattr(runner, "ResilientRunner", lambda **kwargs: original_runner(sleeper=lambda _seconds: None, **kwargs))
+    with pytest.raises(IngestionError) as exc_info:
         runner.run(["--env", "dev", "--duration", "0.1"])
+    assert exc_info.value.category == "source"
 
 
 def test_timer_stops_infinite_stream(monkeypatch, tmp_path):

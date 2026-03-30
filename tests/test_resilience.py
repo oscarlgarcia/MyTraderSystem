@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.common.dto import MarketEvent
+from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
 
 
@@ -78,12 +79,11 @@ def test_backoff_capped():
         raise RuntimeError("drop")
 
     runner = ResilientRunner(stream_fn=stream, sleeper=lambda s: sleeps.append(s), backoff_base=5, backoff_max=8)
-    try:
+    with pytest.raises(IngestionError) as exc_info:
         runner.run(lambda ev: None, max_retries=2, stop_on_complete=True)
-    except RuntimeError:
-        pass
     assert sleeps
     assert all(s <= 8 for s in sleeps)
+    assert exc_info.value.category == "source"
 
 
 def test_max_retries_raises_after_limit():
@@ -91,8 +91,9 @@ def test_max_retries_raises_after_limit():
         raise RuntimeError("always")
 
     runner = ResilientRunner(stream_fn=stream, sleeper=lambda s: None)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(IngestionError) as exc_info:
         runner.run(lambda ev: None, max_retries=1, stop_on_complete=True)
+    assert exc_info.value.category == "source"
 
 
 def test_last_lag_updates():

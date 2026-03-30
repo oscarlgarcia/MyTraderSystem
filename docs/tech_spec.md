@@ -31,7 +31,11 @@
 - `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, compute_features_after, max_buffer, dedup_enabled) -> list[MarketEvent]`
   - `dedup_enabled=True` activa deduplicacion live en `ResilientRunner` y una segunda barrera defensiva antes de `writer.add`.
   - `batch_size` controla el lote local antes de escribir en live; el handler hace flush del lote incompleto al cerrar.
-  - `allow_live_fallback=False` hace que live falle fuerte por defecto; el fallback a `dry` solo es opt-in.
+  - `error_policy` define el comportamiento de fallo de live:
+    - `fail_fast`: propaga el error
+    - `allow_fallback`: solo errores `source` degradan a `dry`
+    - `degraded`: solo errores `source` devuelven `[]`
+  - `allow_live_fallback=False` se conserva como compatibilidad; internamente resuelve a `allow_fallback` si no se pasa `error_policy`.
   - `source` y `sink` permiten ejecutar el pipeline contra mocks sin tocar Binance ni Parquet.
 - `app.ingestion.sources.BinanceSource(cfg).stream(end_time) -> Iterable[MarketEvent]`
   - Reutiliza `build_ws_url` y `parse_message`, preservando el comportamiento Binance actual.
@@ -52,6 +56,8 @@
 - **Live**:
   - `ResilientRunner` maneja reconexion, buffer y lag.
   - `collect_events` ya no depende directamente de Binance ni de `ParquetWriter`; consume un `Source` y un `EventSink`.
+  - Los errores se clasifican como `source`, `parse`, `validation` o `sink`, y como `transient` o `permanent`.
+  - Solo `source/transient` se reintentan en `ResilientRunner`.
   - La deduplicacion se aplica con la misma clave `_key` en dos puntos:
     - al procesar el stream para evitar reprocesado;
     - justo antes de `writer.add` para evitar duplicados en Parquet live si llegan por una ruta no filtrada.
@@ -62,7 +68,7 @@
     - `events_out`: eventos unicos realmente entregados al pipeline y devueltos por `collect_events`
     - `duplicates_dropped`: suma de duplicados filtrados por runner y por la barrera defensiva previa al writer
     - `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size`
-  - Si live falla, el comportamiento por defecto es fail-fast. Solo con `allow_live_fallback=True` degrada explicitamente a `dry`.
+  - Si live falla, el comportamiento depende de `error_policy`. Errores `sink` nunca se convierten en fallback/degraded.
   - En `fast-path`, se omite el resumen de cierre de ingest live para reducir overhead de logging, pero se mantiene el log final de `pipeline ok`.
   - Si `buffer_skipped > ingest_buffer_warn` o `max_latency_seconds > ingest_lag_warn`, `collect_events` emite un `WARNING` una vez por ciclo live.
 - **Backfill**:

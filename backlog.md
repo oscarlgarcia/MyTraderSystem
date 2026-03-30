@@ -24,6 +24,7 @@
 - Documentacion de altas tasas con recetas de flags, riesgos y ejemplo completo de stream nuevo. [hecho]
 - Fase 1 hardening de produccion: contrato live correcto, fail-fast por defecto y runner seguro con dedup off. [hecho]
 - Fase 2 arquitectura de produccion: contrato `Source/Sink` y eliminacion de duplicacion WS/REST entre pipeline y runner. [hecho]
+- Fase 3 politica explicita de errores: `fail_fast` / `allow_fallback` / `degraded`, clasificacion source/parse/validation/sink. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.

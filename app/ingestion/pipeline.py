@@ -13,6 +13,7 @@ from app.common.dto import MarketEvent, normalize_symbol
 from app.config import AppConfig
 from app.features.pipeline import run_feature_pipeline
 from app.ingestion.client import _key
+from app.ingestion.errors import ErrorPolicy, IngestionError, resolve_error_policy
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
@@ -79,21 +80,32 @@ def _emit_ingestion_summary(
     dedup_on: bool,
     batch_size: int,
     duplicates_dropped: int = 0,
+    result: str = "ok",
+    error_policy: str = "fail_fast",
+    error_category: str | None = None,
+    error_severity: str | None = None,
 ) -> None:
+    payload = {
+        "mode": mode,
+        "env": cfg.env,
+        "events_in": int(events_in),
+        "events_out": int(events_out),
+        "reconnects": int(reconnects),
+        "buffer_skipped": int(buffer_skipped),
+        "max_latency_seconds": float(max_latency_seconds),
+        "dedup_on": bool(dedup_on),
+        "batch_size": int(max(1, batch_size)),
+        "duplicates_dropped": int(duplicates_dropped),
+        "result": result,
+        "error_policy": error_policy,
+    }
+    if error_category is not None:
+        payload["error_category"] = error_category
+    if error_severity is not None:
+        payload["error_severity"] = error_severity
     logger.info(
         "ingestion summary",
-        extra={
-            "mode": mode,
-            "env": cfg.env,
-            "events_in": int(events_in),
-            "events_out": int(events_out),
-            "reconnects": int(reconnects),
-            "buffer_skipped": int(buffer_skipped),
-            "max_latency_seconds": float(max_latency_seconds),
-            "dedup_on": bool(dedup_on),
-            "batch_size": int(max(1, batch_size)),
-            "duplicates_dropped": int(duplicates_dropped),
-        },
+        extra=payload,
     )
 
 
@@ -179,8 +191,10 @@ def collect_events(
     allow_live_fallback: bool = False,
     source: Source | None = None,
     sink: EventSink | None = None,
+    error_policy: ErrorPolicy | None = None,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
+    effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
     if mode == "dry":
         events_out = _synthetic_events(max_events)
         if summary_logging:
@@ -196,6 +210,7 @@ def collect_events(
                 dedup_on=dedup_enabled,
                 batch_size=batch_size,
                 duplicates_dropped=0,
+                error_policy=effective_error_policy,
             )
         if compute_features_after:
             run_feature_pipeline(events_out)
@@ -265,15 +280,63 @@ def collect_events(
                 dedup_on=dedup_enabled,
                 batch_size=batch_size,
                 duplicates_dropped=runner.metrics.dedup_skipped + stats["duplicates_dropped"],
+                error_policy=effective_error_policy,
             )
         events_out = list(handler.events)
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out
-    except Exception as exc:  # pragma: no cover - live path is not fully unit tested
-        if not allow_live_fallback:
-            raise
-        logger.warning("live ingestion failed; falling back to dry", extra={"error": str(exc)})
+    except Exception as exc:  # pragma: no cover - explicit policy validated by unit tests
+        err = exc if isinstance(exc, IngestionError) else IngestionError("source", "permanent", str(exc))
+        if err.category == "sink" or effective_error_policy == "fail_fast":
+            logger.error(
+                "ingestion failed",
+                extra={
+                    "error": str(err),
+                    "error_category": err.category,
+                    "error_severity": err.severity,
+                    "error_policy": effective_error_policy,
+                },
+            )
+            raise err
+        if effective_error_policy == "degraded":
+            logger.warning(
+                "ingestion degraded",
+                extra={
+                    "error": str(err),
+                    "error_category": err.category,
+                    "error_severity": err.severity,
+                    "error_policy": effective_error_policy,
+                },
+            )
+            if summary_logging:
+                _emit_ingestion_summary(
+                    logger,
+                    mode="live",
+                    cfg=cfg,
+                    events_in=0,
+                    events_out=0,
+                    reconnects=0,
+                    buffer_skipped=0,
+                    max_latency_seconds=0.0,
+                    dedup_on=dedup_enabled,
+                    batch_size=batch_size,
+                    duplicates_dropped=0,
+                    result="degraded",
+                    error_policy=effective_error_policy,
+                    error_category=err.category,
+                    error_severity=err.severity,
+                )
+            return []
+        logger.warning(
+            "live ingestion failed; falling back to dry",
+            extra={
+                "error": str(err),
+                "error_category": err.category,
+                "error_severity": err.severity,
+                "error_policy": effective_error_policy,
+            },
+        )
         events_out = _synthetic_events(max_events)
         if summary_logging:
             _emit_ingestion_summary(
@@ -288,6 +351,10 @@ def collect_events(
                 dedup_on=dedup_enabled,
                 batch_size=batch_size,
                 duplicates_dropped=0,
+                result="fallback",
+                error_policy=effective_error_policy,
+                error_category=err.category,
+                error_severity=err.severity,
             )
         if compute_features_after:
             run_feature_pipeline(events_out)

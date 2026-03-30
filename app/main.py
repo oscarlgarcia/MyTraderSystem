@@ -60,6 +60,7 @@ def _resolve_runtime_options(args) -> Dict[str, object]:
         "ingest_lag_warn": getattr(args, "ingest_lag_warn", None),
         "ingest_buffer_warn": getattr(args, "ingest_buffer_warn", None),
         "allow_live_fallback": bool(getattr(args, "allow_live_fallback", False)),
+        "error_policy": getattr(args, "error_policy", None),
         "snapshot_enabled": not fast_path,
         "summary_logging": not fast_path,
     }
@@ -83,6 +84,7 @@ def run_cycle(
     ingest_lag_warn: float | None = None,
     ingest_buffer_warn: int | None = None,
     allow_live_fallback: bool = False,
+    error_policy: str | None = None,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -109,6 +111,7 @@ def run_cycle(
         lag_warn_threshold=ingest_lag_warn,
         buffer_warn_threshold=ingest_buffer_warn,
         allow_live_fallback=allow_live_fallback,
+        error_policy=error_policy,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
@@ -183,6 +186,7 @@ def run() -> int:
         ingest_lag_warn=runtime["ingest_lag_warn"],
         ingest_buffer_warn=runtime["ingest_buffer_warn"],
         allow_live_fallback=runtime["allow_live_fallback"],
+        error_policy=runtime["error_policy"],
     )
 
     logger.info(
@@ -193,6 +197,7 @@ def run() -> int:
             "trace_id": trace_id,
             "mode": args.mode,
             "fast_path": runtime["fast_path"],
+            "error_policy": runtime["error_policy"] or ("allow_fallback" if runtime["allow_live_fallback"] else "fail_fast"),
             "metrics": metrics,
         },
     )

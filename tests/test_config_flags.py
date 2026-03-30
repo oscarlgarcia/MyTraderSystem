@@ -12,6 +12,7 @@ def test_defaults_flags():
     assert args.ingest_buffer_warn is None
     assert args.ingest_dedup is True
     assert args.allow_live_fallback is False
+    assert args.error_policy is None
 
 
 def test_features_after_ingest_flag():
@@ -43,3 +44,8 @@ def test_ingest_warn_flags():
 def test_allow_live_fallback_flag():
     args = parse_args(["--allow-live-fallback"])
     assert args.allow_live_fallback is True
+
+
+def test_error_policy_flag():
+    args = parse_args(["--error-policy", "degraded"])
+    assert args.error_policy == "degraded"

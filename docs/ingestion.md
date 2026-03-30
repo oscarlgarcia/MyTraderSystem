@@ -53,6 +53,11 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - **Alertas experimentales de operacion**: `--ingest-lag-warn` y `--ingest-buffer-warn` emiten `WARNING` una vez por ciclo live si se supera el umbral configurado.
 - **Observabilidad agregada de cierre**: en modo normal se emite `ingestion summary` con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on` y `batch_size`; en live se conserva `ingestion live complete` por compatibilidad.
 - **Fail-fast por defecto en live**: si la ingesta real falla, `collect_events` propaga el error. El fallback a `dry` solo existe cuando se activa explicitamente `--allow-live-fallback`.
+- **Politica explicita de error en live**:
+  - `fail_fast`: propaga el error
+  - `allow_fallback`: solo errores de `source` degradan a `dry`
+  - `degraded`: solo errores de `source` devuelven `[]` y quedan logueados como degradacion
+  - Errores `sink`, `parse` y `validation` no se enmascaran como `source`.
 
 ## Trade-offs
 - Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
@@ -72,6 +77,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - Hace:
   - normaliza eventos,
   - maneja reconexion basica,
+  - clasifica errores de source/parse/validation/sink,
   - deduplica con una clave compartida,
   - escribe Parquet local,
   - expone metricas y logs resumidos, incluido un resumen agregado de cierre por ejecucion.
