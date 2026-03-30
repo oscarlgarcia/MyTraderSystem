@@ -60,26 +60,43 @@ NORMALIZERS: Dict[str, Callable[[dict], MarketEvent]] = {
     "trade": normalize_trade,
     "kline": normalize_kline,
 }
+STREAM_BUILDERS: Dict[str, Callable[[str], str]] = {
+    "trade": lambda symbol: f"{symbol}@trade",
+    "kline": lambda symbol: f"{symbol}@kline_1m",
+}
+DEFAULT_STREAM_TYPES: Tuple[str, ...] = ("trade", "kline")
 
 
 def register_normalizer(event_type: str, fn: Callable[[dict], MarketEvent]) -> None:
     NORMALIZERS[event_type] = fn
 
 
-def build_streams(symbols: Iterable[str]) -> List[str]:
+def register_stream_builder(stream_type: str, fn: Callable[[str], str]) -> None:
+    STREAM_BUILDERS[stream_type] = fn
+
+
+def build_streams(symbols: Iterable[str], stream_types: Iterable[str] | None = None) -> List[str]:
     seen = set()
     syms = []
-    for s in symbols:
-        norm = normalize_symbol(s).lower()
+    for symbol in symbols:
+        norm = normalize_symbol(symbol).lower()
         if norm in seen:
             continue
         seen.add(norm)
         syms.append(norm)
-    return [f"{sym}@trade" for sym in syms] + [f"{sym}@kline_1m" for sym in syms]
+    stream_type_list = list(stream_types) if stream_types is not None else list(DEFAULT_STREAM_TYPES)
+    streams: List[str] = []
+    for stream_type in stream_type_list:
+        builder = STREAM_BUILDERS.get(stream_type)
+        if builder is None:
+            raise KeyError(f"Unknown stream type: {stream_type}")
+        for symbol in syms:
+            streams.append(builder(symbol))
+    return streams
 
 
-def build_ws_url(ws_base: str, symbols: Iterable[str]) -> str:
-    streams = "/".join(build_streams(symbols))
+def build_ws_url(ws_base: str, symbols: Iterable[str], stream_types: Iterable[str] | None = None) -> str:
+    streams = "/".join(build_streams(symbols, stream_types=stream_types))
     if not ws_base.endswith("/stream"):
         base = ws_base.rstrip("/") + "/stream"
     else:

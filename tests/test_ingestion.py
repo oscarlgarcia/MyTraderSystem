@@ -2,7 +2,15 @@ import pytest
 from datetime import datetime, timezone
 
 from app.common.dto import MarketEvent
-from app.ingestion.client import build_ws_url, normalize_kline, normalize_trade, parse_message, register_normalizer
+from app.ingestion.client import (
+    build_streams,
+    build_ws_url,
+    normalize_kline,
+    normalize_trade,
+    parse_message,
+    register_normalizer,
+    register_stream_builder,
+)
 
 
 def test_normalize_trade_symbol_and_utc():
@@ -85,3 +93,33 @@ def test_register_normalizer_used_by_parse_message():
     msg = {"stream": "foo@bar", "data": {"e": "foo"}}
     ev = parse_message(json_dumps(msg))
     assert ev.source == "foo"
+
+
+def test_register_stream_builder_generates_custom_stream_and_parse_message():
+    def build_foo(symbol: str) -> str:
+        return f"{symbol}@foo"
+
+    def normalize_foo(payload):
+        return MarketEvent(
+            symbol="FOO",
+            event_ts=datetime.fromtimestamp(1700000000, tz=timezone.utc),
+            price=1.0,
+            size=1.0,
+            source="foo",
+        )
+
+    register_stream_builder("foo", build_foo)
+    register_normalizer("foo", normalize_foo)
+
+    streams = build_streams(["BTCUSDT"], stream_types=("foo",))
+    url = build_ws_url("wss://example/stream", ["BTCUSDT"], stream_types=("foo",))
+    event = parse_message(json_dumps({"stream": "btcusdt@foo", "data": {"e": "foo"}}))
+
+    assert streams == ["btcusdt@foo"]
+    assert "btcusdt@foo" in url
+    assert event.source == "foo"
+
+
+def test_default_streams_unchanged_without_custom_types():
+    streams = build_streams(["BTCUSDT"])
+    assert streams == ["btcusdt@trade", "btcusdt@kline_1m"]

@@ -4,6 +4,7 @@
 - **Ingestion**: normaliza `MarketEvent` desde WS/REST, escribe Parquet en modo live y provee fixtures dry.
 - **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
+- **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
 - **Feature Store (`app/features/store.py`)**:
   - Entrada: lista de `MarketEvent` por simbolo o llamadas incrementales.
   - Proceso: ventana deslizante configurable; calculos `price`, `ret_1`, agregadores registrados (`sma`, `ema`, `max`, `min`) y transformers opcionales.
@@ -23,6 +24,9 @@
 ## Interfaces relevantes
 - `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, compute_features_after, max_buffer, dedup_enabled) -> list[MarketEvent]`
   - `dedup_enabled=True` activa deduplicacion live en `ResilientRunner` y una segunda barrera defensiva antes de `writer.add`.
+- `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
+  - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
+  - Para tipos nuevos, requiere `register_stream_builder(...)` y un `register_normalizer(...)` compatible con `parse_message`.
 - `app.ingestion.backfill.run(argv=None, sink=None) -> int`
   - `--dedup` activa deduplicacion previa a sink con la misma clave `_key`.
 - `app.features.store.compute_features(events, window=5, windows=None, aggregators=None, feature_set=None, cache=None) -> list[FeatureVector]`

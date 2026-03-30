@@ -16,6 +16,7 @@
 - Fase 10: Observabilidad en FeatureEngine (contadores, latencia, drops) y logging resumido. [hecho]
 - Trazas pipeline opcionales (`--trace-steps`) para depuracion visual. [hecho]
 - Deduplicacion compartida live/backfill con `_key`, `--dedup` en backfill y barrera previa a `writer.add` en live. [hecho]
+- Streams registrables para nuevas fuentes con `register_stream_builder` y compatibilidad Binance por defecto. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.

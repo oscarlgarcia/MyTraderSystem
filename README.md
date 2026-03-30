@@ -76,6 +76,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Deduplica por la misma clave de ingest live y escribe Parquet ordenado para el rango indicado.
 - `python -m app.ingestion.backfill ...` (sin `--dry-run` ni `--dedup`)  
   Escribe el lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
+- Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 
 ### Documentacion
 - [Functional](docs/Functional.md)

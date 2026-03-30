@@ -8,6 +8,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - Construye URLs de stream (`build_streams`, `build_ws_url`).
   - Parsea mensajes (`parse_message`) y normaliza payloads (`normalize_trade`, `normalize_kline`).
   - Expone `_key(event)` como identidad canonica del evento.
+  - Permite registrar `stream_builder` por tipo para nuevas fuentes o canales sin tocar el core.
 - `ingestion.resilience`
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de lag/latencia/buffer.
 - `ingestion.pipeline`
@@ -64,6 +65,12 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - Sustituir `_key` por ids nativos cuando la fuente los provea.
 - Persistir estado minimo de deduplicacion para reinicios.
 - Hacer atomicas las escrituras Parquet y anadir retencion/rehidratacion.
+
+## Extension rapida de streams
+- Registrar el builder del tipo nuevo con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")`.
+- Registrar el normalizer correspondiente con `register_normalizer("foo", normalize_foo)`.
+- Construir la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
+- Si no se pasa `stream_types`, el comportamiento por defecto sigue siendo Binance-compatible: `trade` + `kline`.
 
 ## Diagramas
 
