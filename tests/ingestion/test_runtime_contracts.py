@@ -9,6 +9,7 @@ import pytest
 from app.common.dto import MarketEvent
 from app.ingestion import pipeline
 from app.ingestion.resilience import ResilientRunner
+from app.ingestion.sources import StaticSource
 from app.observability.logger import get_logger
 
 
@@ -26,23 +27,23 @@ def _json_lines(buffer: io.StringIO) -> list[dict[str, object]]:
     return [json.loads(line) for line in buffer.getvalue().splitlines() if line.strip()]
 
 
+class DummySink:
+    def __init__(self):
+        self.items = []
+
+    def add(self, batch):
+        if isinstance(batch, list):
+            self.items.extend(batch)
+            return
+        self.items.append(batch)
+
+    def close(self):
+        return None
+
+
 def test_live_collect_events_returns_processed_events_after_flush(monkeypatch):
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     events = [_ev(0, 100), _ev(60, 101)]
-
-    class DummyWriter:
-        def __init__(self):
-            self.buffer = []
-
-        def add(self, batch):
-            self.buffer.extend(batch)
-
-        def flush(self):
-            self.buffer.clear()
-
-    monkeypatch.setattr(pipeline, "build_ws_url", lambda *_args, **_kwargs: "wss://x/stream")
-    monkeypatch.setattr(pipeline, "_ws_stream", lambda *_args, **_kwargs: events)
-    monkeypatch.setattr(pipeline, "ParquetWriter", lambda **_kwargs: DummyWriter())
 
     out = pipeline.collect_events(
         mode="live",
@@ -51,6 +52,8 @@ def test_live_collect_events_returns_processed_events_after_flush(monkeypatch):
         duration_s=0,
         logger=mock.Mock(),
         snapshot_enabled=False,
+        source=StaticSource(events=events),
+        sink=DummySink(),
     )
 
     assert out == events
@@ -59,13 +62,18 @@ def test_live_collect_events_returns_processed_events_after_flush(monkeypatch):
 def test_live_failure_fail_fast_by_default(monkeypatch):
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     synthetic = mock.Mock(return_value=[_ev(0, 100)])
-
-    monkeypatch.setattr(pipeline, "build_ws_url", lambda *_args, **_kwargs: "wss://x/stream")
-    monkeypatch.setattr(pipeline, "_ws_stream", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("ws down")))
     monkeypatch.setattr(pipeline, "_synthetic_events", synthetic)
 
+    class BrokenSource:
+        def stream(self, end_time=None):
+            del end_time
+            raise RuntimeError("ws down")
+
+        def snapshot(self):
+            return None
+
     with pytest.raises(RuntimeError):
-        pipeline.collect_events(mode="live", cfg=cfg, duration_s=0, logger=mock.Mock())
+        pipeline.collect_events(mode="live", cfg=cfg, duration_s=0, logger=mock.Mock(), source=BrokenSource(), sink=DummySink())
 
     synthetic.assert_not_called()
 
@@ -105,20 +113,6 @@ def test_summary_metrics_match_processed_events(monkeypatch):
     buffer = io.StringIO()
     logger = get_logger(name="test.ingest.runtime.summary", level="INFO", stream=buffer)
 
-    class DummyWriter:
-        def __init__(self):
-            self.buffer = []
-
-        def add(self, batch):
-            self.buffer.extend(batch)
-
-        def flush(self):
-            self.buffer.clear()
-
-    monkeypatch.setattr(pipeline, "build_ws_url", lambda *_args, **_kwargs: "wss://x/stream")
-    monkeypatch.setattr(pipeline, "_ws_stream", lambda *_args, **_kwargs: events)
-    monkeypatch.setattr(pipeline, "ParquetWriter", lambda **_kwargs: DummyWriter())
-
     out = pipeline.collect_events(
         mode="live",
         cfg=cfg,
@@ -128,6 +122,8 @@ def test_summary_metrics_match_processed_events(monkeypatch):
         dedup_enabled=True,
         snapshot_enabled=False,
         summary_logging=True,
+        source=StaticSource(events=events),
+        sink=DummySink(),
     )
 
     assert out == [event_a, event_b]

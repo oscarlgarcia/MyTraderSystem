@@ -9,31 +9,40 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - Parsea mensajes (`parse_message`) y normaliza payloads (`normalize_trade`, `normalize_kline`).
   - Expone `_key(event)` como identidad canonica del evento.
   - Permite registrar `stream_builder` por tipo para nuevas fuentes o canales sin tocar el core.
+- `ingestion.sources`
+  - Define el contrato `Source` (`stream`, `snapshot`).
+  - Implementa `BinanceSource` como adaptador por defecto para WS/REST.
+  - Implementa `StaticSource` para tests y ejecucion controlada sin red.
 - `ingestion.resilience`
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de entrada/salida/duplicados/lag/latencia/buffer.
 - `ingestion.pipeline`
-  - `collect_events`: orquesta dry/live, crea el handler live, aplica una segunda barrera de deduplicacion antes de `writer.add`, soporta batching local de IO y emite un resumen agregado final de la ejecucion.
+  - `collect_events`: orquesta dry/live, ejecuta un `Source`, consume un `EventSink`, aplica una segunda barrera de deduplicacion antes de persistir, soporta batching local de IO y emite un resumen agregado final de la ejecucion.
 - `ingestion.backfill`
   - Descarga klines historicos, normaliza filas, ordena y opcionalmente deduplica con `--dedup` antes del sink.
 - `ingestion.storage`
   - `ParquetWriter`: persiste eventos particionados por simbolo y fecha; puede deduplicar contra datos ya existentes.
+- `ingestion.sinks`
+  - Define `EventSink` y `ParquetEventSink`.
+  - Permite desacoplar live del writer concreto en pruebas y futuros destinos.
 
 ## Relaciones entre modulos
-- `pipeline.collect_events` usa `client.build_ws_url` y `_ws_stream`, crea `ResilientRunner` y delega la persistencia a `ParquetWriter`.
+- `pipeline.collect_events` usa un `Source`, crea `ResilientRunner` y delega la persistencia a un `EventSink`.
 - `ResilientRunner` usa `client._key` para filtrar duplicados del stream.
 - `pipeline._build_live_handler` usa la misma `_key` para evitar que un evento duplicado llegue a `writer.add`.
-- `pipeline._LiveBatchHandler` acumula eventos y llama a `writer.add` por lote (`--ingest-batch-size`), manteniendo `max_buffer` en `ResilientRunner`.
+- `pipeline._LiveBatchHandler` acumula eventos y llama a `sink.add` por lote (`--ingest-batch-size`), manteniendo `max_buffer` en `ResilientRunner`.
 - `backfill.run` usa `deduplicate_events` con `_key` antes de escribir.
+- `runner.run` reutiliza `BinanceSource`/`StaticSource` y `ParquetEventSink`, evitando duplicar la logica WS/REST del pipeline.
 
 ## Flujo de datos
 ### Live
-`WS -> parse_message -> MarketEvent -> ResilientRunner(dedup/lag) -> handler live(dedup defensiva) -> ParquetWriter -> logs/features opcionales`
+`Source.stream -> MarketEvent -> ResilientRunner(dedup/lag) -> handler live(dedup defensiva) -> EventSink -> logs/features opcionales`
 
 ### Backfill
 `REST klines -> normalize_kline_row -> MarketEvent -> sort(event_ts) -> deduplicate_events(opcional) -> sink/Parquet -> logs`
 
 ## Decisiones arquitectonicas
 - **Clave compartida `_key`**: evita divergencia entre la deduplicacion de live, backfill y persistencia.
+- **Contrato minimo `Source/Sink`**: desacopla la orquestacion de ingestion de Binance y de Parquet sin introducir una jerarquia compleja.
 - **Dedup defensiva en dos capas para live**:
   - en `ResilientRunner`, para no reprocesar duplicados;
   - en el handler previo a sink, para no persistirlos aunque entren por una ruta no filtrada.
@@ -98,10 +107,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 ### Componentes
 ```mermaid
 flowchart LR
-  WS[WS/REST source] --> C[ingestion.client]
-  C --> R[ResilientRunner]
+  WS[BinanceSource] --> R[ResilientRunner]
   R --> H[live handler]
-  H --> P[ParquetWriter]
+  H --> S[EventSink]
+  S --> P[ParquetWriter]
   REST[REST backfill] --> B[backfill.run]
   B --> D[deduplicate_events]
   D --> P

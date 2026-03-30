@@ -7,6 +7,7 @@ import logging
 import io
 import json
 
+from app.ingestion.sources import StaticSource
 from app.observability.logger import get_logger
 
 
@@ -22,6 +23,20 @@ def _ev(ts_offset: int, price: float) -> MarketEvent:
 
 def _json_lines(buffer: io.StringIO) -> list[dict[str, object]]:
     return [json.loads(line) for line in buffer.getvalue().splitlines() if line.strip()]
+
+
+class DummySink:
+    def __init__(self):
+        self.items = []
+
+    def add(self, batch):
+        if isinstance(batch, list):
+            self.items.extend(batch)
+            return
+        self.items.append(batch)
+
+    def close(self):
+        return None
 
 
 def test_compute_features_after_flag_off(monkeypatch):
@@ -134,19 +149,6 @@ def test_buffer_warn_emitted_once(monkeypatch, caplog):
     logger = logging.getLogger("test.ingest.buffer_warn")
     caplog.set_level("WARNING")
 
-    class DummyWriter:
-        buffer = []
-
-        def add(self, batch):
-            return None
-
-        def flush(self):
-            return None
-
-    monkeypatch.setattr(pipeline, "build_ws_url", lambda *_args, **_kwargs: "wss://x/stream")
-    monkeypatch.setattr(pipeline, "_ws_stream", lambda *_args, **_kwargs: [_ev(0, 100)])
-    monkeypatch.setattr(pipeline, "ParquetWriter", lambda **_kwargs: DummyWriter())
-
     pipeline.collect_events(
         mode="live",
         cfg=cfg,
@@ -156,6 +158,8 @@ def test_buffer_warn_emitted_once(monkeypatch, caplog):
         max_buffer=0,
         buffer_warn_threshold=0,
         summary_logging=False,
+        source=StaticSource(events=[_ev(0, 100)]),
+        sink=DummySink(),
     )
 
     warnings = [record for record in caplog.records if record.message == "ingestion buffer pressure warning"]
@@ -174,19 +178,6 @@ def test_latency_warn_emitted_once(monkeypatch, caplog):
         source="trade",
     )
 
-    class DummyWriter:
-        buffer = []
-
-        def add(self, batch):
-            return None
-
-        def flush(self):
-            return None
-
-    monkeypatch.setattr(pipeline, "build_ws_url", lambda *_args, **_kwargs: "wss://x/stream")
-    monkeypatch.setattr(pipeline, "_ws_stream", lambda *_args, **_kwargs: [old_event])
-    monkeypatch.setattr(pipeline, "ParquetWriter", lambda **_kwargs: DummyWriter())
-
     pipeline.collect_events(
         mode="live",
         cfg=cfg,
@@ -195,6 +186,8 @@ def test_latency_warn_emitted_once(monkeypatch, caplog):
         duration_s=0,
         lag_warn_threshold=0.0,
         summary_logging=False,
+        source=StaticSource(events=[old_event]),
+        sink=DummySink(),
     )
 
     warnings = [record for record in caplog.records if record.message == "ingestion latency warning"]
@@ -231,20 +224,6 @@ def test_live_keeps_original_log_and_adds_aggregated_summary(monkeypatch):
     logger = get_logger(name="test.ingest.summary.live", level="INFO", stream=buffer)
     events = [_ev(0, 100), _ev(60, 101)]
 
-    class DummyWriter:
-        def __init__(self):
-            self.buffer = []
-
-        def add(self, batch):
-            self.buffer.extend(batch)
-
-        def flush(self):
-            return None
-
-    monkeypatch.setattr(pipeline, "build_ws_url", lambda *_args, **_kwargs: "wss://x/stream")
-    monkeypatch.setattr(pipeline, "_ws_stream", lambda *_args, **_kwargs: events)
-    monkeypatch.setattr(pipeline, "ParquetWriter", lambda **_kwargs: DummyWriter())
-
     out = pipeline.collect_events(
         mode="live",
         cfg=cfg,
@@ -255,6 +234,8 @@ def test_live_keeps_original_log_and_adds_aggregated_summary(monkeypatch):
         batch_size=4,
         snapshot_enabled=False,
         summary_logging=True,
+        source=StaticSource(events=events),
+        sink=DummySink(),
     )
 
     assert out == events

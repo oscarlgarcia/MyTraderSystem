@@ -89,6 +89,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - `python -m app.ingestion.backfill ...` (sin `--dry-run` ni `--dedup`)  
   Escribe el lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
 - Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
+- Contrato de fuentes/sinks: live ahora se ejecuta sobre un `Source` (`BinanceSource` por defecto) y un `EventSink` (`ParquetEventSink` por defecto), lo que permite tests con mocks sin tocar Binance ni Parquet.
 
 ### Altas tasas
 - Receta conservadora:
@@ -148,6 +149,16 @@ print(url)
 - El builder define el fragmento de URL del stream.
 - El normalizer debe devolver `MarketEvent`.
 - Si no pasas `stream_types`, se conserva el comportamiento por defecto (`trade` + `kline`).
+
+Ejemplo de uso con contratos `Source/Sink` en tests:
+```python
+from app.ingestion.pipeline import collect_events
+from app.ingestion.sources import StaticSource
+
+source = StaticSource(events=[ev1, ev2], snapshot_events=None)
+sink = RecordingSink()
+events = collect_events("live", cfg, duration_s=0, source=source, sink=sink)
+```
 
 ### Documentacion
 - [Functional](docs/Functional.md)

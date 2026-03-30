@@ -1,3 +1,5 @@
+import io
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -165,7 +167,7 @@ def test_buffer_skip_when_overflow():
     assert runner.metrics.buffer_size <= 0
 
 
-def test_warning_when_lag_exceeds(monkeypatch, caplog):
+def test_warning_when_lag_exceeds():
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
     events = [make_ev(base), make_ev(base + timedelta(seconds=20))]
 
@@ -173,10 +175,19 @@ def test_warning_when_lag_exceeds(monkeypatch, caplog):
         for ev in events:
             yield ev
 
-    caplog.set_level("WARNING")
-    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_lag_seconds=5, sleeper=lambda s: None)
-    runner.run(lambda ev: None, stop_on_complete=True)
-    assert any("Lag exceeds max_lag_seconds" in rec.message for rec in caplog.records)
+    buffer = io.StringIO()
+    logger = logging.getLogger("ingest.resilience")
+    handler = logging.StreamHandler(buffer)
+    logger.handlers = [handler]
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    try:
+        runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_lag_seconds=5, sleeper=lambda s: None)
+        runner.run(lambda ev: None, stop_on_complete=True)
+    finally:
+        logger.handlers = []
+        logger.propagate = True
+    assert "Lag exceeds max_lag_seconds" in buffer.getvalue()
 
 
 def test_latency_metrics_updated():

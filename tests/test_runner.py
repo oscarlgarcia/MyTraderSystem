@@ -42,12 +42,13 @@ def test_dry_run_writes_parquet(monkeypatch, tmp_path):
 def test_ws_endpoint_invalid_raises(monkeypatch, tmp_path):
     cfg = make_cfg(tmp_path)
     cfg.ws_base = "ftp://bad"  # invalid scheme, will still build URL but connect will fail; mock to force raise
+    original_source = runner.BinanceSource
 
     def fail_stream(url, end_time=None):
         raise ConnectionError("invalid endpoint")
 
     monkeypatch.setattr(runner, "load_config", lambda env=None: cfg)
-    monkeypatch.setattr(runner, "_ws_stream", fail_stream)
+    monkeypatch.setattr(runner, "BinanceSource", lambda cfg: original_source(cfg, ws_stream=fail_stream))
     with pytest.raises(ConnectionError):
         runner.run(["--env", "dev", "--duration", "0.1"])
 
@@ -55,11 +56,25 @@ def test_ws_endpoint_invalid_raises(monkeypatch, tmp_path):
 def test_timer_stops_infinite_stream(monkeypatch, tmp_path):
     cfg = make_cfg(tmp_path)
     monkeypatch.setattr(runner, "load_config", lambda env=None: cfg)
+    original_source = runner.BinanceSource
+
+    class DummyResponse:
+        status_code = 200
+
+        def json(self):
+            return []
+
+        def raise_for_status(self):
+            return None
 
     def infinite_stream(url, end_time=None):
         while True:
             yield MarketEvent(symbol="BTCUSDT", event_ts=datetime.now(timezone.utc), price=1.0, size=1.0, source="trade")
 
-    monkeypatch.setattr(runner, "_ws_stream", infinite_stream)
+    monkeypatch.setattr(
+        runner,
+        "BinanceSource",
+        lambda cfg: original_source(cfg, ws_stream=infinite_stream, http_get=lambda *args, **kwargs: DummyResponse()),
+    )
     rc = runner.run(["--env", "dev", "--duration", "0.01"])
     assert rc == 0

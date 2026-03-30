@@ -7,16 +7,15 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Callable, Iterable, List, Optional
-
-import httpx
-from websockets.sync.client import connect
+from typing import List, Optional
 
 from app.common.dto import MarketEvent, normalize_symbol
 from app.config import AppConfig
 from app.features.pipeline import run_feature_pipeline
-from app.ingestion.client import _key, build_ws_url, normalize_kline, parse_message
+from app.ingestion.client import _key
 from app.ingestion.resilience import ResilientRunner
+from app.ingestion.sinks import EventSink, ParquetEventSink
+from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
 
 
@@ -38,33 +37,6 @@ def _synthetic_events(max_events: int) -> List[MarketEvent]:
             )
         )
     return events
-
-
-def _ws_stream(url: str, end_time: float | None = None) -> Iterable[MarketEvent]:
-    with connect(url) as ws:
-        while True:
-            if end_time and time.time() >= end_time:
-                break
-            try:
-                raw = ws.recv(timeout=1)
-            except TimeoutError:
-                continue
-            yield parse_message(raw)
-
-
-def _build_snapshot_fn(cfg: AppConfig):
-    def snapshot():
-        events: List[MarketEvent] = []
-        for symbol in cfg.symbols:
-            url = f"{cfg.rest_base.rstrip('/')}/api/v3/klines"
-            resp = httpx.get(url, params={"symbol": symbol, "interval": "1m", "limit": 5}, timeout=5.0)
-            resp.raise_for_status()
-            for row in resp.json():
-                payload = {"s": symbol, "E": int(row[6]), "k": {"c": row[4], "q": row[5]}}
-                events.append(normalize_kline(payload))
-        return events
-
-    return snapshot
 
 
 def _emit_runtime_warnings(
@@ -128,14 +100,14 @@ def _emit_ingestion_summary(
 class _LiveBatchHandler:
     def __init__(
         self,
-        writer: ParquetWriter,
+        sink: EventSink,
         stats: dict[str, int],
         *,
         max_events: int,
         dedup_enabled: bool,
         batch_size: int,
     ) -> None:
-        self.writer = writer
+        self.sink = sink
         self.stats = stats
         self.max_events = max_events
         self.dedup_enabled = dedup_enabled
@@ -169,12 +141,12 @@ class _LiveBatchHandler:
             return
         batch = list(self.pending)
         self.pending.clear()
-        self.writer.add(batch)
+        self.sink.add(batch)
         self.stats["written"] += len(batch)
 
 
 def _build_live_handler(
-    writer: ParquetWriter,
+    sink: EventSink,
     stats: dict[str, int],
     *,
     max_events: int,
@@ -182,7 +154,7 @@ def _build_live_handler(
     batch_size: int = 1,
 ) -> _LiveBatchHandler:
     return _LiveBatchHandler(
-        writer,
+        sink,
         stats,
         max_events=max_events,
         dedup_enabled=dedup_enabled,
@@ -205,6 +177,8 @@ def collect_events(
     lag_warn_threshold: float | None = None,
     buffer_warn_threshold: int | None = None,
     allow_live_fallback: bool = False,
+    source: Source | None = None,
+    sink: EventSink | None = None,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
@@ -228,17 +202,19 @@ def collect_events(
         return events_out
 
     try:
-        url = build_ws_url(cfg.ws_base, cfg.symbols)
+        source_impl = source or BinanceSource(cfg)
         end_time = time.time() + duration_s if duration_s else None
 
         def stream():
-            yield from _ws_stream(url, end_time=end_time)
+            yield from source_impl.stream(end_time=end_time)
 
-        snapshot_fn = _build_snapshot_fn(cfg) if snapshot_enabled else None
-        writer = ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=max_events, dedup=dedup_enabled)
+        snapshot_fn = source_snapshot_fn(source_impl) if snapshot_enabled else None
+        sink_impl = sink or ParquetEventSink(
+            ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=max_events, dedup=dedup_enabled)
+        )
         stats = {"written": 0, "duplicates_dropped": 0}
         handler = _build_live_handler(
-            writer,
+            sink_impl,
             stats,
             max_events=max_events,
             dedup_enabled=dedup_enabled,
@@ -257,7 +233,7 @@ def collect_events(
             runner.run(handler, stop_on_complete=stop_on_complete, max_retries=1)
         finally:
             handler.close()
-            writer.flush()
+            sink_impl.close()
         _emit_runtime_warnings(
             logger,
             runner,

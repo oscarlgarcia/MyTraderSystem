@@ -5,6 +5,12 @@
 - **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
+- **Sources/Sinks de ingestion**:
+  - `app.ingestion.sources.Source`: contrato minimo `stream(end_time)` / `snapshot()`.
+  - `app.ingestion.sources.BinanceSource`: implementacion por defecto WS/REST.
+  - `app.ingestion.sources.StaticSource`: fuente en memoria para tests.
+  - `app.ingestion.sinks.EventSink`: contrato de salida.
+  - `app.ingestion.sinks.ParquetEventSink`: adaptador del writer actual.
 - **Feature Store (`app/features/store.py`)**:
   - Entrada: lista de `MarketEvent` por simbolo o llamadas incrementales.
   - Proceso: ventana deslizante configurable; calculos `price`, `ret_1`, agregadores registrados (`sma`, `ema`, `max`, `min`) y transformers opcionales.
@@ -26,6 +32,11 @@
   - `dedup_enabled=True` activa deduplicacion live en `ResilientRunner` y una segunda barrera defensiva antes de `writer.add`.
   - `batch_size` controla el lote local antes de escribir en live; el handler hace flush del lote incompleto al cerrar.
   - `allow_live_fallback=False` hace que live falle fuerte por defecto; el fallback a `dry` solo es opt-in.
+  - `source` y `sink` permiten ejecutar el pipeline contra mocks sin tocar Binance ni Parquet.
+- `app.ingestion.sources.BinanceSource(cfg).stream(end_time) -> Iterable[MarketEvent]`
+  - Reutiliza `build_ws_url` y `parse_message`, preservando el comportamiento Binance actual.
+- `app.ingestion.sources.BinanceSource(cfg).snapshot() -> Iterable[MarketEvent]`
+  - Reutiliza el snapshot REST de klines en un unico punto.
 - `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
@@ -40,6 +51,7 @@
 ## Ingestion y backfill
 - **Live**:
   - `ResilientRunner` maneja reconexion, buffer y lag.
+  - `collect_events` ya no depende directamente de Binance ni de `ParquetWriter`; consume un `Source` y un `EventSink`.
   - La deduplicacion se aplica con la misma clave `_key` en dos puntos:
     - al procesar el stream para evitar reprocesado;
     - justo antes de `writer.add` para evitar duplicados en Parquet live si llegan por una ruta no filtrada.
