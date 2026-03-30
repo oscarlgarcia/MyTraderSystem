@@ -20,6 +20,7 @@ python -m app --env dev --mode live --duration 30 --max-events 200  # pipeline l
 python -m app --env dev --mode dry --trace-steps                   # pipeline con trazas start/done por fase
 python -m app --env dev --mode live --features-after-ingest        # ejecuta feature pipeline tras ingesta (solo log)
 python -m app --env dev --mode live --ingest-max-buffer 20000      # ajusta buffer del runner (escalabilidad)
+python -m app --env dev --mode live --ingest-batch-size 50         # agrupa escrituras al writer en lotes locales
 python -m app --env dev --mode live --no-ingest-dedup              # desactiva dedup para throughput (riesgo duplicados)
 python -m app.ingestion.runner --env dev --duration 600     # ingesta puntual WS con flush
 python -m app.ingestion.inspect --env dev --limit 10        # inspeccion rapida de Parquet
@@ -64,6 +65,8 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Pipeline completo en memoria (determinista, sin IO). Usa `config.dev.yaml`.
 - `python -m app --env dev --mode live --duration 30 --max-events 200`  
   Pipeline live limitado: WS/REST + escritura Parquet acotada por eventos/duracion.
+- `python -m app --env dev --mode live --ingest-batch-size 50`  
+  Agrupa eventos en lotes locales antes de llamar al writer; reduce IO a costa de algo mas de latencia por lote.
 - `python -m app --env test --mode dry`  
   Igual que arriba pero leyendo `config.test.yaml`.
 - `python -m app.ingestion.runner --env dev --duration 600`  

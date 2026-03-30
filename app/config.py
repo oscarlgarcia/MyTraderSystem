@@ -31,8 +31,8 @@ class AppConfig:
 def _load_file(path: Path) -> Dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
     return data
 
 
@@ -48,11 +48,10 @@ def load_config(env: str | None = None) -> AppConfig:
     if log_level not in ALLOWED_LOG_LEVELS:
         raise ValueError(f"log_level must be one of {sorted(ALLOWED_LOG_LEVELS)}")
 
-    # Env var override example
     data_dir_override = os.getenv("APP_DATA_DIR")
     data_dir = Path(data_dir_override) if data_dir_override else Path(raw["data_dir"])
 
-    symbols = [str(sym).upper() for sym in raw.get("symbols", [])]
+    symbols = [str(symbol).upper() for symbol in raw.get("symbols", [])]
     if not symbols:
         raise ValueError("symbols list cannot be empty")
 
@@ -83,13 +82,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-events",
         type=int,
         default=50,
-        help="Límite de eventos a procesar en run_cycle (aplica a dry y live)",
+        help="Limite de eventos a procesar en run_cycle (aplica a dry y live)",
     )
     parser.add_argument(
         "--duration",
         type=float,
         default=None,
-        help="Duración máxima en segundos para live; ignora en dry si no se indica",
+        help="Duracion maxima en segundos para live; ignora en dry si no se indica",
     )
     parser.add_argument(
         "--trace-steps",
@@ -105,13 +104,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--ingest-max-buffer",
         type=int,
         default=10_000,
-        help="Tamaño máximo del buffer en ResilientRunner (control de memoria/throughput).",
+        help="Tamano maximo del buffer en ResilientRunner (control de memoria/throughput).",
+    )
+    parser.add_argument(
+        "--ingest-batch-size",
+        type=int,
+        default=1,
+        help="Tamano del lote local antes de escribir en live; reduce llamadas a writer.add/flush.",
     )
     parser.add_argument(
         "--no-ingest-dedup",
         dest="ingest_dedup",
         action="store_false",
-        help="Desactiva la deduplicación en vivo para maximizar throughput (riesgo de duplicados).",
+        help="Desactiva la deduplicacion en vivo para maximizar throughput (riesgo de duplicados).",
     )
     parser.set_defaults(ingest_dedup=True)
     args, _unknown = parser.parse_known_args(argv)

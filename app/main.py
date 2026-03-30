@@ -57,6 +57,7 @@ def run_cycle(
     compute_features_after_ingest: bool = False,
     ingest_max_buffer: int = 10_000,
     ingest_dedup: bool = True,
+    ingest_batch_size: int = 1,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -77,6 +78,7 @@ def run_cycle(
         compute_features_after=compute_features_after_ingest,
         max_buffer=ingest_max_buffer,
         dedup_enabled=ingest_dedup,
+        batch_size=ingest_batch_size,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
@@ -144,6 +146,7 @@ def run() -> int:
         compute_features_after_ingest=args.features_after_ingest,
         ingest_max_buffer=args.ingest_max_buffer,
         ingest_dedup=args.ingest_dedup,
+        ingest_batch_size=args.ingest_batch_size,
     )
 
     logger.info(

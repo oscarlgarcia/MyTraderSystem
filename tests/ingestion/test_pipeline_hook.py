@@ -1,3 +1,4 @@
+import pytest
 from unittest import mock
 from app.ingestion import pipeline
 from app.common.dto import MarketEvent
@@ -56,7 +57,7 @@ def test_live_handler_dedups_before_writer_add():
     handler(event)
     handler(event)
 
-    writer.add.assert_called_once_with(event)
+    writer.add.assert_called_once_with([event])
     assert stats["written"] == 1
     assert stats["duplicates_dropped"] == 1
 
@@ -73,3 +74,47 @@ def test_live_handler_keeps_duplicates_when_flag_off():
     assert writer.add.call_count == 2
     assert stats["written"] == 2
     assert stats["duplicates_dropped"] == 0
+
+
+def test_live_handler_batches_writer_add_calls():
+    writer = mock.Mock()
+    stats = {"written": 0, "duplicates_dropped": 0}
+    handler = pipeline._build_live_handler(writer, stats, max_events=20, dedup_enabled=False, batch_size=4)
+
+    for index in range(10):
+        handler(_ev(index * 60, 100 + index))
+    handler.close()
+
+    assert writer.add.call_count == 3
+    assert stats["written"] == 10
+
+
+def test_live_handler_flushes_partial_batch_on_close():
+    writer = mock.Mock()
+    stats = {"written": 0, "duplicates_dropped": 0}
+    handler = pipeline._build_live_handler(writer, stats, max_events=10, dedup_enabled=False, batch_size=4)
+
+    handler(_ev(0, 100))
+    handler(_ev(60, 101))
+    handler.close()
+
+    writer.add.assert_called_once()
+    batch = writer.add.call_args[0][0]
+    assert len(batch) == 2
+    assert stats["written"] == 2
+
+
+def test_live_handler_flushes_partial_batch_when_max_events_reached():
+    writer = mock.Mock()
+    stats = {"written": 0, "duplicates_dropped": 0}
+    handler = pipeline._build_live_handler(writer, stats, max_events=3, dedup_enabled=False, batch_size=4)
+
+    handler(_ev(0, 100))
+    handler(_ev(60, 101))
+    with pytest.raises(StopIteration):
+        handler(_ev(120, 102))
+
+    writer.add.assert_called_once()
+    batch = writer.add.call_args[0][0]
+    assert len(batch) == 3
+    assert stats["written"] == 3

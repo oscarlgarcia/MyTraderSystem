@@ -7,6 +7,7 @@ def test_defaults_flags():
     assert args.trace_steps is False
     assert args.features_after_ingest is False
     assert args.ingest_max_buffer == 10_000
+    assert args.ingest_batch_size == 1
     assert args.ingest_dedup is True
 
 
@@ -18,3 +19,8 @@ def test_features_after_ingest_flag():
 def test_trace_steps_flag():
     args = parse_args(["--trace-steps"])
     assert args.trace_steps is True
+
+
+def test_ingest_batch_size_flag():
+    args = parse_args(["--ingest-batch-size", "4"])
+    assert args.ingest_batch_size == 4

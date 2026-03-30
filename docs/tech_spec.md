@@ -24,6 +24,7 @@
 ## Interfaces relevantes
 - `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, compute_features_after, max_buffer, dedup_enabled) -> list[MarketEvent]`
   - `dedup_enabled=True` activa deduplicacion live en `ResilientRunner` y una segunda barrera defensiva antes de `writer.add`.
+  - `batch_size` controla el lote local antes de escribir en live; el handler hace flush del lote incompleto al cerrar.
 - `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
   - Para tipos nuevos, requiere `register_stream_builder(...)` y un `register_normalizer(...)` compatible con `parse_message`.
@@ -37,7 +38,8 @@
   - La deduplicacion se aplica con la misma clave `_key` en dos puntos:
     - al procesar el stream para evitar reprocesado;
     - justo antes de `writer.add` para evitar duplicados en Parquet live si llegan por una ruta no filtrada.
-  - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
+  - El handler local puede agrupar eventos antes de llamar a `writer.add`.
+  - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `batch_size`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
 - **Backfill**:
   - `fetch_klines` pagina con manejo simple de `429`, `5xx` y timeout.
   - `normalize_kline_row` valida payload y genera `MarketEvent`.

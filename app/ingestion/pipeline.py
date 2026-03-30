@@ -67,28 +67,67 @@ def _build_snapshot_fn(cfg: AppConfig):
     return snapshot
 
 
+class _LiveBatchHandler:
+    def __init__(
+        self,
+        writer: ParquetWriter,
+        stats: dict[str, int],
+        *,
+        max_events: int,
+        dedup_enabled: bool,
+        batch_size: int,
+    ) -> None:
+        self.writer = writer
+        self.stats = stats
+        self.max_events = max_events
+        self.dedup_enabled = dedup_enabled
+        self.batch_size = max(1, batch_size)
+        self.seen = set()
+        self.pending: List[MarketEvent] = []
+
+    def __call__(self, event: MarketEvent) -> None:
+        if self.dedup_enabled:
+            event_key = _key(event)
+            if event_key in self.seen:
+                self.stats["duplicates_dropped"] += 1
+                return
+            self.seen.add(event_key)
+        self.pending.append(event)
+        if self.stats["written"] + len(self.pending) >= self.max_events:
+            self._flush_pending()
+            if self.stats["written"] >= self.max_events:
+                raise StopIteration
+            return
+        if len(self.pending) >= self.batch_size:
+            self._flush_pending()
+
+    def close(self) -> None:
+        self._flush_pending()
+
+    def _flush_pending(self) -> None:
+        if not self.pending:
+            return
+        batch = list(self.pending)
+        self.pending.clear()
+        self.writer.add(batch)
+        self.stats["written"] += len(batch)
+
+
 def _build_live_handler(
     writer: ParquetWriter,
     stats: dict[str, int],
     *,
     max_events: int,
     dedup_enabled: bool,
-) -> Callable[[MarketEvent], None]:
-    seen = set()
-
-    def handler(event: MarketEvent) -> None:
-        if dedup_enabled:
-            event_key = _key(event)
-            if event_key in seen:
-                stats["duplicates_dropped"] += 1
-                return
-            seen.add(event_key)
-        writer.add(event)
-        stats["written"] += 1
-        if stats["written"] >= max_events:
-            raise StopIteration
-
-    return handler
+    batch_size: int = 1,
+) -> _LiveBatchHandler:
+    return _LiveBatchHandler(
+        writer,
+        stats,
+        max_events=max_events,
+        dedup_enabled=dedup_enabled,
+        batch_size=batch_size,
+    )
 
 
 def collect_events(
@@ -100,6 +139,7 @@ def collect_events(
     compute_features_after: bool = False,
     max_buffer: int = 10_000,
     dedup_enabled: bool = True,
+    batch_size: int = 1,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
@@ -118,7 +158,13 @@ def collect_events(
         snapshot_fn = _build_snapshot_fn(cfg)
         writer = ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=max_events, dedup=dedup_enabled)
         stats = {"written": 0, "duplicates_dropped": 0}
-        handler = _build_live_handler(writer, stats, max_events=max_events, dedup_enabled=dedup_enabled)
+        handler = _build_live_handler(
+            writer,
+            stats,
+            max_events=max_events,
+            dedup_enabled=dedup_enabled,
+            batch_size=batch_size,
+        )
 
         runner = ResilientRunner(
             stream_fn=stream,
@@ -128,13 +174,17 @@ def collect_events(
             dedup_enabled=dedup_enabled,
         )
         stop_on_complete = duration_s is not None
-        runner.run(handler, stop_on_complete=stop_on_complete, max_retries=1)
-        writer.flush()
+        try:
+            runner.run(handler, stop_on_complete=stop_on_complete, max_retries=1)
+        finally:
+            handler.close()
+            writer.flush()
         logger.info(
             "ingestion live complete",
             extra={
                 "events_written": stats["written"],
                 "duplicates_dropped": stats["duplicates_dropped"],
+                "batch_size": max(1, batch_size),
                 "env": cfg.env,
                 "reconnects": runner.metrics.reconnects,
                 "buffer_skipped": runner.metrics.buffer_skipped,

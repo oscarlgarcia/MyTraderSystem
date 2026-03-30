@@ -12,7 +12,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - `ingestion.resilience`
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de lag/latencia/buffer.
 - `ingestion.pipeline`
-  - `collect_events`: orquesta dry/live, crea el handler live y aplica una segunda barrera de deduplicacion antes de `writer.add`.
+  - `collect_events`: orquesta dry/live, crea el handler live, aplica una segunda barrera de deduplicacion antes de `writer.add` y soporta batching local de IO.
 - `ingestion.backfill`
   - Descarga klines historicos, normaliza filas, ordena y opcionalmente deduplica con `--dedup` antes del sink.
 - `ingestion.storage`
@@ -22,6 +22,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - `pipeline.collect_events` usa `client.build_ws_url` y `_ws_stream`, crea `ResilientRunner` y delega la persistencia a `ParquetWriter`.
 - `ResilientRunner` usa `client._key` para filtrar duplicados del stream.
 - `pipeline._build_live_handler` usa la misma `_key` para evitar que un evento duplicado llegue a `writer.add`.
+- `pipeline._LiveBatchHandler` acumula eventos y llama a `writer.add` por lote (`--ingest-batch-size`), manteniendo `max_buffer` en `ResilientRunner`.
 - `backfill.run` usa `deduplicate_events` con `_key` antes de escribir.
 
 ## Flujo de datos
@@ -38,9 +39,11 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - en el handler previo a sink, para no persistirlos aunque entren por una ruta no filtrada.
 - **Backfill opt-in**: `--dedup` permite inspeccionar lotes con duplicados o sanearlos explicitamente segun el caso operativo.
 - **Parquet dedup opcional**: sigue siendo una barrera final sobre particiones existentes, no el mecanismo principal de deduplicacion.
+- **Batching de IO en live**: el handler agrupa eventos antes de escribirlos para reducir llamadas al writer; el flush final fuerza la persistencia del lote incompleto.
 
 ## Trade-offs
 - Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
+- El batching local reduce llamadas a `writer.add`, pero aumenta ligeramente la latencia de persistencia hasta completar el lote o cerrar el handler.
 - La clave `(symbol, event_ts, price, size, source)` es simple y testeable, pero puede ser demasiado estricta o demasiado laxa segun la fuente si en el futuro aparecen ids nativos.
 - El backfill sin `--dedup` mantiene visibilidad completa del lote original a costa de permitir duplicados.
 
@@ -48,6 +51,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - Si la clave `_key` no representa bien la identidad real del exchange, puede haber falsos positivos o falsos negativos.
 - La deduplicacion en memoria no persiste estado entre ejecuciones.
 - `ParquetWriter` sigue dependiendo de merge/dedup en memoria cuando la particion ya existe.
+- Si el proceso cae antes del cierre del handler, el lote en memoria aun no persistido se pierde.
 
 ## Que hace y que no debe hacer
 - Hace:

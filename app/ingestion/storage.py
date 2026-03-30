@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Iterable, List
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -27,8 +27,11 @@ class ParquetWriter:
     dedup: bool = False
     buffer: List[MarketEvent] = field(default_factory=list)
 
-    def add(self, event: MarketEvent) -> None:
-        self.buffer.append(event)
+    def add(self, event: MarketEvent | Iterable[MarketEvent]) -> None:
+        if isinstance(event, MarketEvent):
+            self.buffer.append(event)
+        else:
+            self.buffer.extend(list(event))
         if len(self.buffer) >= self.flush_size:
             self.flush()
 
