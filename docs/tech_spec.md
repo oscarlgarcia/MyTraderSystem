@@ -25,6 +25,8 @@
 - `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, compute_features_after, max_buffer, dedup_enabled) -> list[MarketEvent]`
   - `dedup_enabled=True` activa deduplicacion live en `ResilientRunner` y una segunda barrera defensiva antes de `writer.add`.
   - `batch_size` controla el lote local antes de escribir en live; el handler hace flush del lote incompleto al cerrar.
+- `app.main._resolve_runtime_options(args) -> dict[str, object]`
+  - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
 - `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
   - Para tipos nuevos, requiere `register_stream_builder(...)` y un `register_normalizer(...)` compatible con `parse_message`.
@@ -40,6 +42,7 @@
     - justo antes de `writer.add` para evitar duplicados en Parquet live si llegan por una ruta no filtrada.
   - El handler local puede agrupar eventos antes de llamar a `writer.add`.
   - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `batch_size`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
+  - En `fast-path`, se omite el resumen de cierre de ingest live para reducir overhead de logging, pero se mantiene el log final de `pipeline ok`.
 - **Backfill**:
   - `fetch_klines` pagina con manejo simple de `429`, `5xx` y timeout.
   - `normalize_kline_row` valida payload y genera `MarketEvent`.

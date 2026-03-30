@@ -140,6 +140,8 @@ def collect_events(
     max_buffer: int = 10_000,
     dedup_enabled: bool = True,
     batch_size: int = 1,
+    snapshot_enabled: bool = True,
+    summary_logging: bool = True,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
@@ -155,7 +157,7 @@ def collect_events(
         def stream():
             yield from _ws_stream(url, end_time=end_time)
 
-        snapshot_fn = _build_snapshot_fn(cfg)
+        snapshot_fn = _build_snapshot_fn(cfg) if snapshot_enabled else None
         writer = ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=max_events, dedup=dedup_enabled)
         stats = {"written": 0, "duplicates_dropped": 0}
         handler = _build_live_handler(
@@ -179,18 +181,19 @@ def collect_events(
         finally:
             handler.close()
             writer.flush()
-        logger.info(
-            "ingestion live complete",
-            extra={
-                "events_written": stats["written"],
-                "duplicates_dropped": stats["duplicates_dropped"],
-                "batch_size": max(1, batch_size),
-                "env": cfg.env,
-                "reconnects": runner.metrics.reconnects,
-                "buffer_skipped": runner.metrics.buffer_skipped,
-                "max_latency_seconds": runner.metrics.max_latency_seconds,
-            },
-        )
+        if summary_logging:
+            logger.info(
+                "ingestion live complete",
+                extra={
+                    "events_written": stats["written"],
+                    "duplicates_dropped": stats["duplicates_dropped"],
+                    "batch_size": max(1, batch_size),
+                    "env": cfg.env,
+                    "reconnects": runner.metrics.reconnects,
+                    "buffer_skipped": runner.metrics.buffer_skipped,
+                    "max_latency_seconds": runner.metrics.max_latency_seconds,
+                },
+            )
         events_out = _read_from_writer_buffer(writer, stats["written"])
         if compute_features_after:
             run_feature_pipeline(events_out)

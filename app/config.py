@@ -113,6 +113,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Tamano del lote local antes de escribir en live; reduce llamadas a writer.add/flush.",
     )
     parser.add_argument(
+        "--fast-path",
+        action="store_true",
+        help="Modo experimental de alto throughput: menos garantias, menos logs, mas batching.",
+    )
+    parser.add_argument(
         "--no-ingest-dedup",
         dest="ingest_dedup",
         action="store_false",

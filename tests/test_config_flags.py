@@ -24,3 +24,8 @@ def test_trace_steps_flag():
 def test_ingest_batch_size_flag():
     args = parse_args(["--ingest-batch-size", "4"])
     assert args.ingest_batch_size == 4
+
+
+def test_fast_path_flag():
+    args = parse_args(["--fast-path"])
+    assert args.fast_path is True

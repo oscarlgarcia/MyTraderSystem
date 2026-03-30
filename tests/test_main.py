@@ -1,7 +1,12 @@
 import json
+import time
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from app import main
+from app.common.dto import MarketEvent
 from app.config import load_config
 from app.observability.logger import get_logger
+from app.ingestion import pipeline
 
 
 def test_run_cycle_order_and_metrics():
@@ -82,3 +87,75 @@ def test_features_after_ingest_runs_pipeline(monkeypatch, caplog):
         compute_features_after_ingest=True,
     )
     assert any("feature pipeline done" in rec.message for rec in caplog.records)
+
+
+def test_fast_path_derives_runtime_flags():
+    args = SimpleNamespace(
+        fast_path=True,
+        trace_steps=True,
+        features_after_ingest=False,
+        ingest_max_buffer=10_000,
+        ingest_dedup=True,
+        ingest_batch_size=4,
+    )
+
+    runtime = main._resolve_runtime_options(args)
+
+    assert runtime["fast_path"] is True
+    assert runtime["trace_steps"] is False
+    assert runtime["ingest_dedup"] is False
+    assert runtime["snapshot_enabled"] is False
+    assert runtime["summary_logging"] is False
+    assert runtime["ingest_batch_size"] >= main.FAST_PATH_BATCH_SIZE
+
+
+def test_fast_path_mock_benchmark_improves_throughput():
+    class DummyWriter:
+        def __init__(self):
+            self.calls = 0
+
+        def add(self, batch):
+            self.calls += 1
+            for _ in range(1000):
+                pass
+
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [
+        MarketEvent(
+            symbol="BTCUSDT",
+            event_ts=base + timedelta(seconds=index),
+            price=100 + index,
+            size=1.0,
+            source="trade",
+        )
+        for index in range(10_000)
+    ]
+
+    default_writer = DummyWriter()
+    default_stats = {"written": 0, "duplicates_dropped": 0}
+    default_handler = pipeline._build_live_handler(default_writer, default_stats, max_events=20_000, dedup_enabled=True, batch_size=1)
+
+    start = time.perf_counter()
+    for event in events:
+        default_handler(event)
+    default_handler.close()
+    default_elapsed = time.perf_counter() - start
+
+    fast_writer = DummyWriter()
+    fast_stats = {"written": 0, "duplicates_dropped": 0}
+    fast_handler = pipeline._build_live_handler(
+        fast_writer,
+        fast_stats,
+        max_events=20_000,
+        dedup_enabled=False,
+        batch_size=main.FAST_PATH_BATCH_SIZE,
+    )
+
+    start = time.perf_counter()
+    for event in events:
+        fast_handler(event)
+    fast_handler.close()
+    fast_elapsed = time.perf_counter() - start
+
+    assert fast_writer.calls < default_writer.calls
+    assert fast_elapsed < default_elapsed * 0.7

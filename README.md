@@ -22,6 +22,7 @@ python -m app --env dev --mode live --features-after-ingest        # ejecuta fea
 python -m app --env dev --mode live --ingest-max-buffer 20000      # ajusta buffer del runner (escalabilidad)
 python -m app --env dev --mode live --ingest-batch-size 50         # agrupa escrituras al writer en lotes locales
 python -m app --env dev --mode live --no-ingest-dedup              # desactiva dedup para throughput (riesgo duplicados)
+python -m app --env dev --mode live --fast-path                    # experimental: throughput alto, menos garantias
 python -m app.ingestion.runner --env dev --duration 600     # ingesta puntual WS con flush
 python -m app.ingestion.inspect --env dev --limit 10        # inspeccion rapida de Parquet
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
@@ -67,6 +68,8 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Pipeline live limitado: WS/REST + escritura Parquet acotada por eventos/duracion.
 - `python -m app --env dev --mode live --ingest-batch-size 50`  
   Agrupa eventos en lotes locales antes de llamar al writer; reduce IO a costa de algo mas de latencia por lote.
+- `python -m app --env dev --mode live --fast-path`  
+  Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos, `trace_steps` off y batch size grande.
 - `python -m app --env test --mode dry`  
   Igual que arriba pero leyendo `config.test.yaml`.
 - `python -m app.ingestion.runner --env dev --duration 600`  

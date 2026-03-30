@@ -23,6 +23,8 @@ from app.risk.rules import apply_risk
 from app.execution.paper import paper_execute
 from app.portfolio.state import update_portfolio
 
+FAST_PATH_BATCH_SIZE = 256
+
 
 def _trace(logger, enabled: bool, phase: str, status: str, extra: Optional[Dict[str, object]] = None) -> None:
     if not enabled:
@@ -45,6 +47,21 @@ def _price_map_from_events(events: List[MarketEvent]) -> Dict[str, float]:
     return price_by_symbol
 
 
+def _resolve_runtime_options(args) -> Dict[str, object]:
+    fast_path = bool(getattr(args, "fast_path", False))
+    ingest_batch_size = int(getattr(args, "ingest_batch_size", 1))
+    return {
+        "fast_path": fast_path,
+        "trace_steps": False if fast_path else bool(getattr(args, "trace_steps", False)),
+        "compute_features_after_ingest": bool(getattr(args, "features_after_ingest", False)),
+        "ingest_max_buffer": int(getattr(args, "ingest_max_buffer", 10_000)),
+        "ingest_dedup": False if fast_path else bool(getattr(args, "ingest_dedup", True)),
+        "ingest_batch_size": max(FAST_PATH_BATCH_SIZE, ingest_batch_size) if fast_path else ingest_batch_size,
+        "snapshot_enabled": not fast_path,
+        "summary_logging": not fast_path,
+    }
+
+
 def run_cycle(
     cfg: Optional[AppConfig] = None,
     logger=None,
@@ -58,6 +75,8 @@ def run_cycle(
     ingest_max_buffer: int = 10_000,
     ingest_dedup: bool = True,
     ingest_batch_size: int = 1,
+    snapshot_enabled: bool = True,
+    live_summary_logging: bool = True,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -79,6 +98,8 @@ def run_cycle(
         max_buffer=ingest_max_buffer,
         dedup_enabled=ingest_dedup,
         batch_size=ingest_batch_size,
+        snapshot_enabled=snapshot_enabled,
+        summary_logging=live_summary_logging,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
@@ -130,6 +151,7 @@ def run() -> int:
     """Bootstrap principal; devuelve 0 en éxito."""
     args = parse_args()
     config = load_config(args.env)
+    runtime = _resolve_runtime_options(args)
     trace_id = str(uuid4())
     set_trace_id(trace_id)
     logger = get_logger(level=config.log_level)
@@ -142,11 +164,13 @@ def run() -> int:
         max_events=args.max_events,
         duration_s=args.duration,
         recorder=[],
-        trace_steps=args.trace_steps,
-        compute_features_after_ingest=args.features_after_ingest,
-        ingest_max_buffer=args.ingest_max_buffer,
-        ingest_dedup=args.ingest_dedup,
-        ingest_batch_size=args.ingest_batch_size,
+        trace_steps=runtime["trace_steps"],
+        compute_features_after_ingest=runtime["compute_features_after_ingest"],
+        ingest_max_buffer=runtime["ingest_max_buffer"],
+        ingest_dedup=runtime["ingest_dedup"],
+        ingest_batch_size=runtime["ingest_batch_size"],
+        snapshot_enabled=runtime["snapshot_enabled"],
+        live_summary_logging=runtime["summary_logging"],
     )
 
     logger.info(
@@ -156,6 +180,7 @@ def run() -> int:
             "data_dir": str(config.data_dir),
             "trace_id": trace_id,
             "mode": args.mode,
+            "fast_path": runtime["fast_path"],
             "metrics": metrics,
         },
     )

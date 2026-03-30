@@ -18,6 +18,7 @@
 - Deduplicacion compartida live/backfill con `_key`, `--dedup` en backfill y barrera previa a `writer.add` en live. [hecho]
 - Streams registrables para nuevas fuentes con `register_stream_builder` y compatibilidad Binance por defecto. [hecho]
 - Batching de IO en live con `--ingest-batch-size` y flush final del lote incompleto. [hecho]
+- Modo experimental `--fast-path` para alto throughput (dedup off, snapshot off, logs minimos, batch grande). [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.
