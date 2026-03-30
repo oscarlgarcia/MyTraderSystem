@@ -36,16 +36,28 @@ backfill-dev-write:
 	poetry run python -m app.ingestion.backfill --env dev --symbol $(SYMBOL) --start $(START) --end $(END) --interval $(INTERVAL) --batch $(BATCH)
 
 # Docker helpers
-.PHONY: docker-build docker-shell docker-test
+.PHONY: docker-build docker-up docker-down docker-shell docker-exec docker-test docker-test-all
 
 docker-build:
 	docker compose build
 
+docker-up:
+	docker compose up -d app
+
+docker-down:
+	docker compose down
+
 docker-shell:
 	docker compose run --rm app bash
 
+docker-exec:
+	docker compose exec app bash
+
 docker-test:
 	docker compose run --rm app sh -c "poetry install && poetry run pytest"
+
+docker-test-all:
+	docker compose exec app poetry run pytest
 
 demo-ingest:
 	poetry run python -m app.ingestion.demo --env dev --duration 30 --max-events 200

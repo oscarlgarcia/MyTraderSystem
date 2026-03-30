@@ -1,13 +1,16 @@
-version: "3.9"
-
 services:
   app:
     build: .
+    container_name: mytradersystem-app
     working_dir: /workspace
     volumes:
       - ./:/workspace
-    command: tail -f /dev/null
+      - poetry_venv:/workspace/.venv
+    command: sh -c "poetry install && tail -f /dev/null"
     environment:
       - POETRY_VIRTUALENVS_IN_PROJECT=true
       - POETRY_NO_INTERACTION=1
     tty: true
+
+volumes:
+  poetry_venv:

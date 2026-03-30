@@ -1,5 +1,6 @@
 param(
-    [switch] $Shell
+    [switch] $Shell,
+    [switch] $Persistent
 )
 
 # Runs tests inside the docker-compose service on Windows hosts.
@@ -9,6 +10,11 @@ $composeCmd = "docker compose"
 
 if ($Shell) {
     & $composeCmd exec app bash
+    exit $LASTEXITCODE
+}
+
+if ($Persistent) {
+    & $composeCmd exec app poetry run pytest
     exit $LASTEXITCODE
 }
 

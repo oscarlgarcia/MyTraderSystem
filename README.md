@@ -37,19 +37,26 @@ python -m app.ingestion.demo --env dev --duration 30 --max-events 200  # demo en
 
 ## Sandbox Docker
 - Construir imagen: `make docker-build`
-- Shell interactiva con codigo bind-mount: `make docker-shell`
+- Levantar contenedor persistente listo para pruebas: `make docker-up`
+- Shell contra el contenedor persistente: `make docker-exec`
+- Bajar contenedor persistente: `make docker-down`
+- Shell efimera con codigo bind-mount: `make docker-shell`
 - Ejecutar tests dentro del contenedor: `make docker-test` (instala proyecto en editable y corre pytest)
+- Ejecutar la suite completa en el contenedor persistente: `make docker-test-all`
 
-El `docker-compose.yml` monta el repo en `/workspace`, por lo que cualquier cambio local se refleja inmediatamente dentro del contenedor para ejecutar pruebas.
+El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un volumen dedicado, de modo que el contenedor persistente queda vivo y con dependencias reutilizables entre ejecuciones.
 
 ### Usuarios Windows (sin Make)
 - Build: `pwsh scripts/docker-build.ps1`
-- Tests: `pwsh scripts/docker-test.ps1`
-- Shell interactiva: `pwsh scripts/docker-test.ps1 -Shell` (abre bash dentro del contenedor ya levantado con `docker compose up -d`)
+- Levantar/bajar contenedor persistente: `pwsh scripts/docker-up.ps1` / `pwsh scripts/docker-up.ps1 -Down`
+- Tests efimeros: `pwsh scripts/docker-test.ps1`
+- Tests en contenedor persistente: `pwsh scripts/docker-test.ps1 -Persistent`
+- Shell interactiva: `pwsh scripts/docker-test.ps1 -Shell` (abre bash dentro del contenedor ya levantado)
 
 ## Como probar la app
 - Local: `make install && make test` y `make run-dev` (debe imprimir "pipeline ok").
 - Docker: `make docker-test` o `docker compose run --rm app sh -c "poetry install && poetry run pytest"`; validar `docker compose exec app python -m app --env dev`.
+- Docker persistente: `make docker-up`, luego `make docker-test-all` y `make docker-exec` para iterar sin recrear el contenedor.
 - Prueba completa (suite entera): `python -m pytest` desde la raiz del repo.
 
 ### Ejecutar con configuracion (detalle)
