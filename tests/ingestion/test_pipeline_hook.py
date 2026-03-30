@@ -4,6 +4,10 @@ from app.ingestion import pipeline
 from app.common.dto import MarketEvent
 from datetime import datetime, timezone
 import logging
+import io
+import json
+
+from app.observability.logger import get_logger
 
 
 def _ev(ts_offset: int, price: float) -> MarketEvent:
@@ -14,6 +18,10 @@ def _ev(ts_offset: int, price: float) -> MarketEvent:
         size=1.0,
         source="trade",
     )
+
+
+def _json_lines(buffer: io.StringIO) -> list[dict[str, object]]:
+    return [json.loads(line) for line in buffer.getvalue().splitlines() if line.strip()]
 
 
 def test_compute_features_after_flag_off(monkeypatch):
@@ -191,3 +199,74 @@ def test_latency_warn_emitted_once(monkeypatch, caplog):
 
     warnings = [record for record in caplog.records if record.message == "ingestion latency warning"]
     assert len(warnings) == 1
+
+
+def test_dry_emits_aggregated_ingestion_summary(monkeypatch):
+    cfg = mock.Mock(env="dev", ws_base="", rest_base="", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    events = [_ev(0, 100), _ev(60, 101)]
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.summary.dry", level="INFO", stream=buffer)
+
+    monkeypatch.setattr(pipeline, "_synthetic_events", lambda n: events)
+
+    out = pipeline.collect_events(mode="dry", cfg=cfg, max_events=2, logger=logger)
+
+    assert out == events
+    logs = _json_lines(buffer)
+    summary = next(record for record in logs if record["message"] == "ingestion summary")
+    assert summary["mode"] == "dry"
+    assert summary["env"] == "dev"
+    assert summary["events_in"] == 2
+    assert summary["events_out"] == 2
+    assert summary["reconnects"] == 0
+    assert summary["buffer_skipped"] == 0
+    assert summary["max_latency_seconds"] == 0.0
+    assert summary["dedup_on"] is True
+    assert summary["batch_size"] == 1
+
+
+def test_live_keeps_original_log_and_adds_aggregated_summary(monkeypatch):
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.summary.live", level="INFO", stream=buffer)
+    events = [_ev(0, 100), _ev(60, 101)]
+
+    class DummyWriter:
+        def __init__(self):
+            self.buffer = []
+
+        def add(self, batch):
+            self.buffer.extend(batch)
+
+        def flush(self):
+            return None
+
+    monkeypatch.setattr(pipeline, "build_ws_url", lambda *_args, **_kwargs: "wss://x/stream")
+    monkeypatch.setattr(pipeline, "_ws_stream", lambda *_args, **_kwargs: events)
+    monkeypatch.setattr(pipeline, "ParquetWriter", lambda **_kwargs: DummyWriter())
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        logger=logger,
+        max_events=10,
+        duration_s=0,
+        dedup_enabled=True,
+        batch_size=4,
+        snapshot_enabled=False,
+        summary_logging=True,
+    )
+
+    assert out == events
+    logs = _json_lines(buffer)
+    assert any(record["message"] == "ingestion live complete" for record in logs)
+    summary = next(record for record in logs if record["message"] == "ingestion summary")
+    assert summary["mode"] == "live"
+    assert summary["env"] == "dev"
+    assert summary["events_in"] == 2
+    assert summary["events_out"] == 2
+    assert summary["reconnects"] == 0
+    assert summary["buffer_skipped"] == 0
+    assert isinstance(summary["max_latency_seconds"], float)
+    assert summary["dedup_on"] is True
+    assert summary["batch_size"] == 4

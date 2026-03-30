@@ -24,6 +24,9 @@ Sleeper = Callable[[float], None]
 
 @dataclass
 class ResilienceMetrics:
+    events_in: int = 0
+    events_out: int = 0
+    dedup_skipped: int = 0
     reconnects: int = 0
     last_lag_seconds: float = 0.0
     buffer_size: int = 0
@@ -93,10 +96,12 @@ class ResilientRunner:
                 break
 
     def _process_event(self, ev: MarketEvent, handler: Callable[[MarketEvent], None]) -> None:
+        self.metrics.events_in += 1
         # dedup
         if self.dedup_enabled:
             k = _key(ev)
             if k in self.seen:
+                self.metrics.dedup_skipped += 1
                 return
 
         # gap detection
@@ -117,6 +122,7 @@ class ResilientRunner:
                 )
 
         handler(ev)
+        self.metrics.events_out += 1
         if self.dedup_enabled:
             self.seen.add(k)
         self.last_event_ts = ev.event_ts
@@ -132,9 +138,12 @@ class ResilientRunner:
         if not self.snapshot_fn:
             return
         for ev in self.snapshot_fn():
+            self.metrics.events_in += 1
             k = _key(ev)
             if k in self.seen:
+                self.metrics.dedup_skipped += 1
                 continue
             handler(ev)
+            self.metrics.events_out += 1
             self.seen.add(k)
             self.last_event_ts = max(self.last_event_ts or ev.event_ts, ev.event_ts)

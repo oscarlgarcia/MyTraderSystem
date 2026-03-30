@@ -94,6 +94,37 @@ def _emit_runtime_warnings(
         )
 
 
+def _emit_ingestion_summary(
+    logger: logging.Logger,
+    *,
+    mode: str,
+    cfg: AppConfig,
+    events_in: int,
+    events_out: int,
+    reconnects: int,
+    buffer_skipped: int,
+    max_latency_seconds: float,
+    dedup_on: bool,
+    batch_size: int,
+    duplicates_dropped: int = 0,
+) -> None:
+    logger.info(
+        "ingestion summary",
+        extra={
+            "mode": mode,
+            "env": cfg.env,
+            "events_in": int(events_in),
+            "events_out": int(events_out),
+            "reconnects": int(reconnects),
+            "buffer_skipped": int(buffer_skipped),
+            "max_latency_seconds": float(max_latency_seconds),
+            "dedup_on": bool(dedup_on),
+            "batch_size": int(max(1, batch_size)),
+            "duplicates_dropped": int(duplicates_dropped),
+        },
+    )
+
+
 class _LiveBatchHandler:
     def __init__(
         self,
@@ -175,6 +206,20 @@ def collect_events(
     logger = logger or logging.getLogger("ingest")
     if mode == "dry":
         events_out = _synthetic_events(max_events)
+        if summary_logging:
+            _emit_ingestion_summary(
+                logger,
+                mode="dry",
+                cfg=cfg,
+                events_in=len(events_out),
+                events_out=len(events_out),
+                reconnects=0,
+                buffer_skipped=0,
+                max_latency_seconds=0.0,
+                dedup_on=dedup_enabled,
+                batch_size=batch_size,
+                duplicates_dropped=0,
+            )
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out
@@ -229,6 +274,19 @@ def collect_events(
                     "max_latency_seconds": runner.metrics.max_latency_seconds,
                 },
             )
+            _emit_ingestion_summary(
+                logger,
+                mode="live",
+                cfg=cfg,
+                events_in=runner.metrics.events_in,
+                events_out=stats["written"],
+                reconnects=runner.metrics.reconnects,
+                buffer_skipped=runner.metrics.buffer_skipped,
+                max_latency_seconds=runner.metrics.max_latency_seconds,
+                dedup_on=dedup_enabled,
+                batch_size=batch_size,
+                duplicates_dropped=runner.metrics.dedup_skipped + stats["duplicates_dropped"],
+            )
         events_out = _read_from_writer_buffer(writer, stats["written"])
         if compute_features_after:
             run_feature_pipeline(events_out)
@@ -236,6 +294,20 @@ def collect_events(
     except Exception as exc:  # pragma: no cover - live path is not fully unit tested
         logger.warning("live ingestion failed; falling back to dry", extra={"error": str(exc)})
         events_out = _synthetic_events(max_events)
+        if summary_logging:
+            _emit_ingestion_summary(
+                logger,
+                mode="dry",
+                cfg=cfg,
+                events_in=len(events_out),
+                events_out=len(events_out),
+                reconnects=0,
+                buffer_skipped=0,
+                max_latency_seconds=0.0,
+                dedup_on=dedup_enabled,
+                batch_size=batch_size,
+                duplicates_dropped=0,
+            )
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out

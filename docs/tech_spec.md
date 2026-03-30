@@ -43,6 +43,7 @@
     - justo antes de `writer.add` para evitar duplicados en Parquet live si llegan por una ruta no filtrada.
   - El handler local puede agrupar eventos antes de llamar a `writer.add`.
   - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `batch_size`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
+  - Ademas se emite `ingestion summary` como JSON consolidado con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size` y `duplicates_dropped`.
   - En `fast-path`, se omite el resumen de cierre de ingest live para reducir overhead de logging, pero se mantiene el log final de `pipeline ok`.
   - Si `buffer_skipped > ingest_buffer_warn` o `max_latency_seconds > ingest_lag_warn`, `collect_events` emite un `WARNING` una vez por ciclo live.
 - **Backfill**:
@@ -56,6 +57,7 @@
 - La deduplicacion usa la tupla `(symbol, event_ts, price, size, source)` como identidad canonica.
 - La deduplicacion de backfill es opt-in; la de live sigue controlada por `--ingest-dedup`.
 - `ParquetWriter(dedup=True)` sigue actuando como barrera defensiva sobre particiones ya existentes.
+- El resumen agregado de ingest no introduce un sistema nuevo de metricas; reutiliza los contadores ya disponibles en `ResilientRunner` y en el handler live.
 
 ## Relaciones
 `WS/REST -> MarketEvent -> dedup/Parquet -> FeatureVector -> Strategy -> Risk -> Execution -> Portfolio -> Logs/Metrics`

@@ -70,7 +70,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - `python -m app --env dev --mode live --ingest-batch-size 50`  
   Agrupa eventos en lotes locales antes de llamar al writer; reduce IO a costa de algo mas de latencia por lote.
 - `python -m app --env dev --mode live --fast-path`  
-  Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos, `trace_steps` off y batch size grande.
+  Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos (sin resumen agregado de ingest), `trace_steps` off y batch size grande.
 - `python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0`  
   Umbrales experimentales de WARNING para latencia y eventos descartados por buffer; por defecto no emiten alertas.
 - `python -m app --env test --mode dry`  
@@ -105,6 +105,8 @@ Ejemplo de salida:
 {"ts": "...Z", "level": "INFO", "logger": "app", "module": "main", "message": "pipeline ok", "trace_id": "<uuid>", "env": "dev", "mode": "dry", "metrics": {"events": 50, "features": 50, "signals": 50, "orders": 3, "fills": 3, "positions": {"BTCUSDT": 0.5}, "cash": 9950.0}}
 ```
 El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
+
+En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on` y `batch_size`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead.
 
 ### Feature Store inicial
 - Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).

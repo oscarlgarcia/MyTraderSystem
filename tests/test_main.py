@@ -33,7 +33,8 @@ def test_run_returns_zero(monkeypatch):
     assert rc == 0
     log_lines = [l for l in outputs if l.strip()]
     assert log_lines, "expected at least one log line"
-    payload = json.loads(log_lines[0])
+    payloads = [json.loads(line) for line in log_lines]
+    payload = next(item for item in payloads if item["message"] == "pipeline ok")
     assert payload["message"] == "pipeline ok"
     assert payload["trace_id"]
     assert payload["env"] == "dev"
