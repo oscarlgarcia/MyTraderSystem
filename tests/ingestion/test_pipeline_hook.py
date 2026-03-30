@@ -45,3 +45,31 @@ def test_compute_features_after_flag_on(monkeypatch, caplog):
     )
     assert out == events
     feats_mock.assert_called_once()
+
+
+def test_live_handler_dedups_before_writer_add():
+    writer = mock.Mock()
+    stats = {"written": 0, "duplicates_dropped": 0}
+    handler = pipeline._build_live_handler(writer, stats, max_events=10, dedup_enabled=True)
+    event = _ev(0, 100)
+
+    handler(event)
+    handler(event)
+
+    writer.add.assert_called_once_with(event)
+    assert stats["written"] == 1
+    assert stats["duplicates_dropped"] == 1
+
+
+def test_live_handler_keeps_duplicates_when_flag_off():
+    writer = mock.Mock()
+    stats = {"written": 0, "duplicates_dropped": 0}
+    handler = pipeline._build_live_handler(writer, stats, max_events=10, dedup_enabled=False)
+    event = _ev(0, 100)
+
+    handler(event)
+    handler(event)
+
+    assert writer.add.call_count == 2
+    assert stats["written"] == 2
+    assert stats["duplicates_dropped"] == 0

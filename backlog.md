@@ -3,26 +3,27 @@
 - Reemplazar stubs de `run_cycle` por implementaciones reales (ingestion WS/REST, features, estrategia, riesgo, ejecucion, portfolio). [hecho]
 - Fase 3.1 Feature Store: ventana deslizante en memoria + compute_features pura. [hecho]
 - Fase 3.2 Feature Store: SMA + retornos log en compute_features, ventanas configurables. [hecho]
-- Fase 3.3 Feature Store: validación/schema de salida + logging de descartes. [hecho]
-- Fase 3.4 Feature Store: wrapper integrado con ingest/backfill (--features-after-ingest). [hecho]
+- Fase 3.3 Feature Store: validacion/schema de salida + logging de descartes. [hecho]
+- Fase 3.4 Feature Store: wrapper integrado con ingest/backfill (`--features-after-ingest`). [hecho]
 - Fase 3.5 Feature Store: E2E mock + docs de uso CLI/hook. [hecho]
 - Fase 4 (nuevo): Aggregation Engine extensible (SMA/EMA/max/min + registro custom). [hecho]
 - Fase 5: Transformers y pipeline declarativa en FeatureState. [hecho]
 - Fase 6: Feature Registry y versionado en memoria. [hecho]
-- Fase 6.1: Integración registry→FeatureState (build_feature_state helper). [hecho]
-- Fase 7: Feature Cache / index temporal in-memory con get_latest/get_at. [hecho]
-- Fase 8: FeatureEngine (API update/get_latest/get_at/get_batch) como fachada de consumo. [hecho]
-- Fase 9: Persistencia opcional de FeatureVector a JSON (save/load) para dumps offline. [hecho]
+- Fase 6.1: Integracion registry->FeatureState (`build_feature_state` helper). [hecho]
+- Fase 7: Feature Cache / index temporal in-memory con `get_latest`/`get_at`. [hecho]
+- Fase 8: FeatureEngine (API `update`/`get_latest`/`get_at`/`get_batch`) como fachada de consumo. [hecho]
+- Fase 9: Persistencia opcional de FeatureVector a JSON (`save`/`load`) para dumps offline. [hecho]
 - Fase 10: Observabilidad en FeatureEngine (contadores, latencia, drops) y logging resumido. [hecho]
-- Trazas pipeline opcionales (--trace-steps) para depuración visual. [hecho]
+- Trazas pipeline opcionales (`--trace-steps`) para depuracion visual. [hecho]
+- Deduplicacion compartida live/backfill con `_key`, `--dedup` en backfill y barrera previa a `writer.add` en live. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.
 - Completar ingestion en vivo: conectar WS testnet real, manejo de reconexion y flush a Parquet (Fase 2.2/2.3).
-- Anadir pruebas de integracion usando websockets/httpx mockeados para asegurar compatibilidad con endpoints Binance.
+- Anadir pruebas de integracion usando `websockets`/`httpx` mockeados para asegurar compatibilidad con endpoints Binance.
 - Evaluar compresion snappy y optimizar tamano/velocidad en Parquet una vez establecida la ingesta.
 - Anadir tool de lectura rapida (CLI) para inspeccionar particiones y conteos.
-- Integrar ResilientRunner con WS real y snapshot REST (httpx) en flujo continuo; exponer metricas en logger/CLI.
+- Integrar `ResilientRunner` con WS real y snapshot REST (`httpx`) en flujo continuo; exponer metricas en logger/CLI.
 - Resiliencia operativa: metricas de buffer/lag y skips en Runner.
 - Backfill historico: F1 CLI + fetch paginado en memoria.
 - Backfill historico: F2 escribir Parquet + dedup + deteccion de huecos.

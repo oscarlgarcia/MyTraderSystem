@@ -1,38 +1,38 @@
 """
-Funciones reutilizables para recolectar eventos de mercado para run_cycle.
+Reusable helpers to collect market events for run_cycle.
 """
 
 from __future__ import annotations
 
-import time
 import logging
-from typing import Iterable, List, Optional
+import time
 from datetime import datetime, timezone
+from typing import Callable, Iterable, List, Optional
 
-from websockets.sync.client import connect
 import httpx
+from websockets.sync.client import connect
 
 from app.common.dto import MarketEvent, normalize_symbol
 from app.config import AppConfig
-from app.ingestion.client import build_ws_url, normalize_kline, normalize_trade, parse_message
+from app.features.pipeline import run_feature_pipeline
+from app.ingestion.client import _key, build_ws_url, normalize_kline, parse_message
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.storage import ParquetWriter
-from app.features.pipeline import run_feature_pipeline
 
 
 def _synthetic_events(max_events: int) -> List[MarketEvent]:
     now = time.time()
     events: List[MarketEvent] = []
     price = 100.0
-    for i in range(max_events):
-        ts = now + i
-        price += 0.1  # ligera tendencia positiva
+    for index in range(max_events):
+        ts = now + index
+        price += 0.1
         events.append(
             MarketEvent(
                 symbol=normalize_symbol("BTCUSDT"),
                 event_ts=datetime.fromtimestamp(ts, tz=timezone.utc),
                 price=price,
-                size=0.01 + i * 0.001,
+                size=0.01 + index * 0.001,
                 source="trade",
                 metadata={"mode": "dry"},
             )
@@ -55,16 +55,40 @@ def _ws_stream(url: str, end_time: float | None = None) -> Iterable[MarketEvent]
 def _build_snapshot_fn(cfg: AppConfig):
     def snapshot():
         events: List[MarketEvent] = []
-        for sym in cfg.symbols:
+        for symbol in cfg.symbols:
             url = f"{cfg.rest_base.rstrip('/')}/api/v3/klines"
-            resp = httpx.get(url, params={"symbol": sym, "interval": "1m", "limit": 5}, timeout=5.0)
+            resp = httpx.get(url, params={"symbol": symbol, "interval": "1m", "limit": 5}, timeout=5.0)
             resp.raise_for_status()
             for row in resp.json():
-                payload = {"s": sym, "E": int(row[6]), "k": {"c": row[4], "q": row[5]}}
+                payload = {"s": symbol, "E": int(row[6]), "k": {"c": row[4], "q": row[5]}}
                 events.append(normalize_kline(payload))
         return events
 
     return snapshot
+
+
+def _build_live_handler(
+    writer: ParquetWriter,
+    stats: dict[str, int],
+    *,
+    max_events: int,
+    dedup_enabled: bool,
+) -> Callable[[MarketEvent], None]:
+    seen = set()
+
+    def handler(event: MarketEvent) -> None:
+        if dedup_enabled:
+            event_key = _key(event)
+            if event_key in seen:
+                stats["duplicates_dropped"] += 1
+                return
+            seen.add(event_key)
+        writer.add(event)
+        stats["written"] += 1
+        if stats["written"] >= max_events:
+            raise StopIteration
+
+    return handler
 
 
 def collect_events(
@@ -84,7 +108,6 @@ def collect_events(
             run_feature_pipeline(events_out)
         return events_out
 
-    # modo live: intentar WS + snapshot, con fallback a datos sintéticos
     try:
         url = build_ws_url(cfg.ws_base, cfg.symbols)
         end_time = time.time() + duration_s if duration_s else None
@@ -93,14 +116,9 @@ def collect_events(
             yield from _ws_stream(url, end_time=end_time)
 
         snapshot_fn = _build_snapshot_fn(cfg)
-        writer = ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=max_events)
-        stats = {"written": 0}
-
-        def handler(ev: MarketEvent):
-            writer.add(ev)
-            stats["written"] += 1
-            if stats["written"] >= max_events:
-                raise StopIteration
+        writer = ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=max_events, dedup=dedup_enabled)
+        stats = {"written": 0, "duplicates_dropped": 0}
+        handler = _build_live_handler(writer, stats, max_events=max_events, dedup_enabled=dedup_enabled)
 
         runner = ResilientRunner(
             stream_fn=stream,
@@ -116,6 +134,7 @@ def collect_events(
             "ingestion live complete",
             extra={
                 "events_written": stats["written"],
+                "duplicates_dropped": stats["duplicates_dropped"],
                 "env": cfg.env,
                 "reconnects": runner.metrics.reconnects,
                 "buffer_skipped": runner.metrics.buffer_skipped,
@@ -126,7 +145,7 @@ def collect_events(
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out
-    except Exception as exc:  # pragma: no cover - ruta live no se prueba en unit tests
+    except Exception as exc:  # pragma: no cover - live path is not fully unit tested
         logger.warning("live ingestion failed; falling back to dry", extra={"error": str(exc)})
         events_out = _synthetic_events(max_events)
         if compute_features_after:
@@ -135,10 +154,8 @@ def collect_events(
 
 
 def _read_from_writer_buffer(writer: ParquetWriter, limit: int) -> List[MarketEvent]:
-    # ParquetWriter no expone buffer público; reutilizamos su buffer interno si existe,
-    # en caso contrario devolvemos lista vacía para mantener typing.
     events: List[MarketEvent] = []
-    buf = getattr(writer, "_buffer", None)
+    buf = getattr(writer, "buffer", None)
     if isinstance(buf, list):
         events.extend(buf[:limit])
     return events

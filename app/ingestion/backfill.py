@@ -1,7 +1,7 @@
 """
-Backfill histórico puntual (solo descarga en memoria; no escribe disco).
+Historical backfill for klines.
 
-Uso:
+Usage:
     python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01 --end 2024-01-02 --interval 1m --batch 1000 --dry-run
 """
 
@@ -10,23 +10,24 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import time
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 import httpx
 
-from app.common.dto import MarketEvent, normalize_symbol
 from app.common import validator
+from app.common.dto import MarketEvent, normalize_symbol
 from app.config import load_config
-from app.observability.logger import get_logger, set_trace_id
-from app.ingestion.storage import ParquetWriter
+from app.ingestion.client import _key
 from app.ingestion.sinks import EventSink, ParquetEventSink
+from app.ingestion.storage import ParquetWriter
+from app.observability.logger import get_logger, set_trace_id
 
 
 def parse_iso_utc(value: str) -> dt.datetime:
     try:
         ts = dt.datetime.fromisoformat(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"Fecha inválida: {value}") from exc
+        raise argparse.ArgumentTypeError(f"Fecha invalida: {value}") from exc
     if ts.tzinfo is None:
         raise argparse.ArgumentTypeError("Las fechas deben incluir zona horaria (ej: 2024-01-01T00:00:00+00:00)")
     return ts.astimezone(dt.timezone.utc)
@@ -37,14 +38,15 @@ def to_ms(ts: dt.datetime) -> int:
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backfill histórico (solo descarga, sin escritura)")
+    parser = argparse.ArgumentParser(description="Backfill historico (solo descarga, sin escritura)")
     parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
-    parser.add_argument("--symbol", required=True, help="Símbolo (ej: BTCUSDT)")
+    parser.add_argument("--symbol", required=True, help="Simbolo (ej: BTCUSDT)")
     parser.add_argument("--start", required=True, type=parse_iso_utc, help="Inicio (ISO UTC, ej: 2024-01-01T00:00:00+00:00)")
     parser.add_argument("--end", required=True, type=parse_iso_utc, help="Fin (ISO UTC)")
     parser.add_argument("--interval", default="1m", help="Intervalo kline (default 1m)")
-    parser.add_argument("--batch", type=int, default=1000, help="Límite por página (<=1000)")
-    parser.add_argument("--dry-run", action="store_true", help="No persiste, sólo descarga y resume")
+    parser.add_argument("--batch", type=int, default=1000, help="Limite por pagina (<=1000)")
+    parser.add_argument("--dedup", action="store_true", help="Deduplica eventos con la clave compartida de ingestion")
+    parser.add_argument("--dry-run", action="store_true", help="No persiste, solo descarga y resume")
     return parser.parse_args(argv)
 
 
@@ -113,7 +115,6 @@ def fetch_klines(
         if not batch:
             break
         out.extend(batch)
-        # kline format: [open time, open, high, low, close, volume, close time, ...]
         last_close_time = batch[-1][6]
         next_start = last_close_time + 1
         if len(batch) < limit:
@@ -127,6 +128,20 @@ def normalize_kline_row(symbol: str, row: list) -> MarketEvent:
     volume = float(row[5])
     validator.validate_market_payload(symbol, close_time, price_close, volume)
     return MarketEvent(symbol=symbol, event_ts=close_time, price=price_close, size=volume, source="kline")
+
+
+def deduplicate_events(events: List[MarketEvent]) -> tuple[List[MarketEvent], int]:
+    seen = set()
+    unique: List[MarketEvent] = []
+    dropped = 0
+    for event in events:
+        event_key = _key(event)
+        if event_key in seen:
+            dropped += 1
+            continue
+        seen.add(event_key)
+        unique.append(event)
+    return unique, dropped
 
 
 def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> int:
@@ -151,6 +166,7 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> i
             "end": args.end.isoformat(),
             "interval": args.interval,
             "batch": args.batch,
+            "dedup": args.dedup,
             "dry_run": args.dry_run,
         },
     )
@@ -166,18 +182,26 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> i
             limit=args.batch,
         )
     events = [normalize_kline_row(symbol, row) for row in klines]
-    events.sort(key=lambda e: e.event_ts)
+    events.sort(key=lambda event: event.event_ts)
+
+    duplicates_dropped = 0
+    if args.dedup:
+        events, duplicates_dropped = deduplicate_events(events)
+        if duplicates_dropped:
+            logger.info(
+                "backfill duplicates dropped",
+                extra={"trace_id": trace_id, "symbol": symbol, "duplicates_dropped": duplicates_dropped},
+            )
 
     expected = ((end_ms - start_ms) // interval_ms) + 1
-    received = len(events)
     gaps = _count_gaps(events, interval_ms)
 
     if not args.dry_run:
         sink_impl = sink or ParquetEventSink(
-            ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=True)
+            ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=args.dedup)
         )
-        for ev in events:
-            sink_impl.add(ev)
+        for event in events:
+            sink_impl.add(event)
         sink_impl.close()
 
     logger.info(
@@ -189,6 +213,8 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> i
             "rows": len(events),
             "expected": expected,
             "gaps": gaps,
+            "dedup": args.dedup,
+            "duplicates_dropped": duplicates_dropped,
             "start": args.start.isoformat(),
             "end": args.end.isoformat(),
             "interval": args.interval,
@@ -215,11 +241,11 @@ def _interval_to_ms(interval: str) -> int:
 def _count_gaps(events: List[MarketEvent], interval_ms: int) -> int:
     if len(events) < 2:
         return 0
-    events_sorted = sorted(events, key=lambda e: e.event_ts)
+    events_sorted = sorted(events, key=lambda event: event.event_ts)
     gap_count = 0
     expected_delta = dt.timedelta(milliseconds=interval_ms)
-    for prev, curr in zip(events_sorted, events_sorted[1:]):
-        delta = curr.event_ts - prev.event_ts
+    for previous, current in zip(events_sorted, events_sorted[1:]):
+        delta = current.event_ts - previous.event_ts
         if delta > expected_delta:
             gap_count += 1
     return gap_count

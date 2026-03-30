@@ -15,16 +15,12 @@ from datetime import datetime, timezone
 from typing import Callable, Deque, Iterable, List, Optional, Set, Tuple
 
 from app.common.dto import MarketEvent
+from app.ingestion.client import _key
 
 
 SnapshotFn = Callable[[], Iterable[MarketEvent]]
 StreamFn = Callable[[], Iterable[MarketEvent]]
 Sleeper = Callable[[float], None]
-
-
-def _key(ev: MarketEvent) -> Tuple[str, datetime, float, float, str]:
-    return (ev.symbol, ev.event_ts, ev.price, ev.size, ev.source)
-
 
 @dataclass
 class ResilienceMetrics:

@@ -1,55 +1,50 @@
-# Especificación técnica y funcional
+# Especificacion tecnica y funcional
 
 ## Componentes principales
-- **Ingestion**: normaliza `MarketEvent` desde WS/REST; escribe Parquet en modo live; provee fixtures dry.
-- **Backfill**: descarga klines REST para rangos históricos; deduplica y opcionalmente escribe Parquet.
-- **Feature Store (app/features/store.py)**:
-  - Entrada: lista de `MarketEvent` por símbolo o llamadas incrementales.
-  - Proceso: ventana deslizante (tamaño configurable, default 5); cálculos `price`, `ret_1` (log-return seguro, omite si prev o actual <=0), agregadores registrados (`sma`, `ema`, `max`, `min` por ventana), transformers opcionales (clip, scale, drop).
-  - Validación: claves requeridas (`price`) presentes y finitas; se añade metadato `window_max`; eventos inválidos se descartan y se loguea `features discarded` con conteo.
-  - Salida: lista de `FeatureVector` alineados uno a uno con los eventos válidos.
-  - Restricciones: sin IO, solo stdlib; descarta precios no finitos; limita memoria con `deque(maxlen)`; no numpy/pandas.
-- Registro de agregadores: `register_aggregator(name, fn)` donde fn recibe (symbol, prices, window, state) y devuelve (valor, state_actualizado).
-- Transformadores/pipeline: `FeatureState` acepta `transformers` (lista de nombres); registry `TRANSFORMERS` incluye `clip_non_finite`, `scale_price_2x`, `drop_window_max`; se aplican en orden al `FeatureVector`.
-- Feature Registry: `FeatureRegistry` permite registrar conjuntos de features (name, version, description, windows, aggregators, transformers) y consultarlos o listar versiones.
-- Integración registry → estado: `build_feature_state(name, version)` crea `FeatureState` configurado según el feature set registrado.
-- Feature Cache (app/features/cache.py): cache in-memory LRU por símbolo con índice temporal; APIs `put`, `get_latest(symbol)`, `get_at(symbol, ts, tolerance)` con expulsión por capacidad.
-- **Feature Engine (app/features/engine.py)**:
-  - Fachada pública con métodos `update(event)`, `update_batch(events)`, `get_latest(symbol)`, `get_at(symbol, ts, tolerance=None)`, `get_batch(symbol)`.
-  - Construye internamente `FeatureState` + `FeatureCache` y opcionalmente aplica un `FeatureSet` registrado (ventanas/aggregadores/transformers).
-  - No thread-safe por diseño (ingesta single-thread).
-  - Observabilidad ligera: métricas internas (`events_in`, `features_out`, `dropped_non_finite`, `transform_errors`, `latency_max/avg`) y `log_metrics` para volcar resúmenes.
-- **Feature pipeline wrapper (app/features/pipeline.py)**:
-  - `run_feature_pipeline(events, window=5, engine=None)` usa `FeatureEngine` (FeatureState+Cache) para calcular features ordenando por símbolo/ts y loguea métricas (`events_in`, `features_out`, `window`).
-  - Usado opcionalmente tras ingest/backfill cuando se habilita `--features-after-ingest`; acepta inyectar un engine existente para reusar cache/estado.
-- **Feature storage (app/features/storage.py)**:
-  - Persistencia batch opcional en JSON (`save`, `load`), incluye `storage_version` y metadatos de `feature_set`.
-  - No se usa en la ruta caliente; sólo para dumps/inspección offline. Extensiones soportadas: `.json/.jsonl`.
-- **E2E mock (tests/slow/test_e2e_features_pipeline.py)**:
-  - Verifica que 5 eventos mock producen 5 `FeatureVector` y se loguea `feature pipeline done`.
-- **Ingesta/Resilience**:
-  - Flags CLI: `--ingest-max-buffer` (default 10k), `--no-ingest-dedup` para throughput (riesgo de duplicados).
-  - Métricas: `reconnects`, `buffer_skipped`, `max_latency_seconds` se loguean al cerrar ingest live.
-- **Demo de ingesta**:
-  - `python -m app.ingestion.demo --env dev --duration 30 --max-events 200` corre stream real, escribe Parquet y ejecuta features, mostrando métricas (events, features, latency).
-- **Trazas de pipeline**:
-  - Flag CLI `--trace-steps` (default off) añade logs `pipeline step` con `phase` y `status` (start/done) y conteos.
-- **Strategy**: consume `FeatureVector` y genera `Signal` (reglas simples).
-- **Risk**: filtra señales y crea `OrderIntent` según límites.
-- **Execution (paper)**: simula fills inmediatos; produce `ExecutionReport`.
-- **Portfolio**: actualiza posiciones y cash a partir de reports.
-- **Observability**: logging estructurado JSON con `trace_id`.
+- **Ingestion**: normaliza `MarketEvent` desde WS/REST, escribe Parquet en modo live y provee fixtures dry.
+- **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
+- **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
+- **Feature Store (`app/features/store.py`)**:
+  - Entrada: lista de `MarketEvent` por simbolo o llamadas incrementales.
+  - Proceso: ventana deslizante configurable; calculos `price`, `ret_1`, agregadores registrados (`sma`, `ema`, `max`, `min`) y transformers opcionales.
+  - Validacion: `price` requerido y finito; eventos invalidos se descartan y se registra el conteo.
+  - Salida: lista de `FeatureVector` alineados con los eventos validos.
+- **Feature Engine (`app/features/engine.py`)**:
+  - API: `update`, `update_batch`, `get_latest`, `get_at`, `get_batch`.
+  - Internamente compone `FeatureState` + `FeatureCache`.
+  - Observabilidad ligera: `events_in`, `features_out`, `dropped_non_finite`, `transform_errors`, `latency_max/avg`.
+- **Feature pipeline wrapper (`app/features/pipeline.py`)**:
+  - `run_feature_pipeline(events, window=5, engine=None)` calcula features con `FeatureEngine` y loguea metricas.
+- **Feature storage (`app/features/storage.py`)**:
+  - Persistencia batch opcional en JSON (`save`, `load`) con `storage_version` y metadatos de `feature_set`.
+- **Strategy / Risk / Execution / Portfolio**:
+  - `FeatureVector -> Signal -> OrderIntent -> ExecutionReport -> PortfolioState`.
 
-## Interfaces
-- `compute_features(events: list[MarketEvent], window: int = 5, windows: Iterable[int] | None = None) -> list[FeatureVector]`
-  - Eventos vacíos → lista vacía.
-  - `price` siempre presente y finito; `ret_1` solo si prev>0 y precio actual>0; `sma_{w}` solo cuando hay al menos w precios; `window_max` siempre presente.
-  - Elementos inválidos (sin claves requeridas o con valores no finitos) se descartan y se registra el total descartado.
+## Interfaces relevantes
+- `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, compute_features_after, max_buffer, dedup_enabled) -> list[MarketEvent]`
+  - `dedup_enabled=True` activa deduplicacion live en `ResilientRunner` y una segunda barrera defensiva antes de `writer.add`.
+- `app.ingestion.backfill.run(argv=None, sink=None) -> int`
+  - `--dedup` activa deduplicacion previa a sink con la misma clave `_key`.
+- `app.features.store.compute_features(events, window=5, windows=None, aggregators=None, feature_set=None, cache=None) -> list[FeatureVector]`
 
-## Supuestos y límites
-- No se añaden dependencias externas.
-- Config YAML no cambia; el tamaño de ventana es argumento de función.
-- Memoria acotada por `deque(maxlen=window)` por símbolo.
+## Ingestion y backfill
+- **Live**:
+  - `ResilientRunner` maneja reconexion, buffer y lag.
+  - La deduplicacion se aplica con la misma clave `_key` en dos puntos:
+    - al procesar el stream para evitar reprocesado;
+    - justo antes de `writer.add` para evitar duplicados en Parquet live si llegan por una ruta no filtrada.
+  - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
+- **Backfill**:
+  - `fetch_klines` pagina con manejo simple de `429`, `5xx` y timeout.
+  - `normalize_kline_row` valida payload y genera `MarketEvent`.
+  - Con `--dedup`, aplica deduplicacion con `_key` antes del sink y registra `duplicates_dropped`.
+  - Sin `--dedup`, conserva duplicados tras normalizar y ordenar.
+
+## Supuestos y limites
+- No se anaden dependencias externas adicionales.
+- La deduplicacion usa la tupla `(symbol, event_ts, price, size, source)` como identidad canonica.
+- La deduplicacion de backfill es opt-in; la de live sigue controlada por `--ingest-dedup`.
+- `ParquetWriter(dedup=True)` sigue actuando como barrera defensiva sobre particiones ya existentes.
 
 ## Relaciones
-Ingesta/Backfill → MarketEvent → compute_features → FeatureVector → Strategy → Risk → Execution → Portfolio → Logs/Métricas.
+`WS/REST -> MarketEvent -> dedup/Parquet -> FeatureVector -> Strategy -> Risk -> Execution -> Portfolio -> Logs/Metrics`

@@ -28,7 +28,7 @@ python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
   --interval 1m --batch 500 --dry-run                       # backfill en memoria
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
   --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 \
-  --interval 1m --batch 500                                 # backfill escribiendo Parquet
+  --interval 1m --batch 500 --dedup                         # backfill escribiendo Parquet sin duplicados
 python -m app.ingestion.backfill --help                     # recordatorio de flags disponibles
 python -m app.ingestion.demo --env dev --duration 30 --max-events 200  # demo en vivo con resumen de métricas
 ```
@@ -65,8 +65,10 @@ El `docker-compose.yml` monta el repo en `/workspace`, por lo que cualquier camb
   Lista rapidamente filas de Parquet (filtros opcionales por simbolo/fecha).
 - `python -m app.ingestion.backfill ... --dry-run`  
   Descarga klines, calcula expected/gaps sin escribir disco.
-- `python -m app.ingestion.backfill ...` (sin `--dry-run`)  
-  Deduplica y escribe Parquet ordenado para el rango indicado.
+- `python -m app.ingestion.backfill ... --dedup`  
+  Deduplica por la misma clave de ingest live y escribe Parquet ordenado para el rango indicado.
+- `python -m app.ingestion.backfill ...` (sin `--dry-run` ni `--dedup`)  
+  Escribe el lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
 
 ### Documentacion
 - [Functional](docs/Functional.md)

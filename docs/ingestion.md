@@ -1,135 +1,131 @@
-# Módulo de Ingestión — Arquitectura Técnica
+# Modulo de Ingestion - Arquitectura tecnica
 
-## Visión general
-Ingesta eventos de mercado (WS/REST) y los normaliza a `MarketEvent`, con resiliencia, deduplicación opcional y escritura a Parquet. Se prioriza simplicidad (stdlib) y testabilidad, dejando el throughput extremo para una ruta “fast-path” configurable.
+## Vision general
+El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, aplica resiliencia basica, deduplicacion opcional y persistencia en Parquet. La deduplicacion se apoya en una clave compartida `app.ingestion.client._key(event)` para que live, backfill y escritura en Parquet utilicen la misma nocion de identidad.
 
-## Módulos principales y responsabilidades
-- `ingestion.client`  
-  - Construye URLs de stream (`build_streams`, `build_ws_url`).  
-  - Parsea mensajes (`parse_message`) y normaliza payloads (`normalize_trade`, `normalize_kline`).  
-  - Registro extensible de normalizers (tipos de evento) y, si se amplía, de stream builders.
-- `ingestion.resilience`  
-  - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup y métricas (lag, latencia, buffer).  
-  - Métricas operativas: `reconnects`, `buffer_skipped`, `max_latency_seconds`, `last_lag_seconds`, `dedup_resets` (si se añade).
-- `ingestion.pipeline`  
-  - `collect_events`: orquesta ingestión dry/live, aplica dedup y buffer, escribe Parquet (live), puede disparar `run_feature_pipeline` tras ingest.  
-  - Hook configurable para batch size, dedup on/off, buffer size.
-- `ingestion.storage`  
-  - `ParquetWriter`: escribe eventos en particiones locales.
-- `ingestion.demo`  
-  - Demo en vivo de punta a punta (stream → Parquet → features) con métricas resumidas.
+## Modulos principales y responsabilidades
+- `ingestion.client`
+  - Construye URLs de stream (`build_streams`, `build_ws_url`).
+  - Parsea mensajes (`parse_message`) y normaliza payloads (`normalize_trade`, `normalize_kline`).
+  - Expone `_key(event)` como identidad canonica del evento.
+- `ingestion.resilience`
+  - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de lag/latencia/buffer.
+- `ingestion.pipeline`
+  - `collect_events`: orquesta dry/live, crea el handler live y aplica una segunda barrera de deduplicacion antes de `writer.add`.
+- `ingestion.backfill`
+  - Descarga klines historicos, normaliza filas, ordena y opcionalmente deduplica con `--dedup` antes del sink.
+- `ingestion.storage`
+  - `ParquetWriter`: persiste eventos particionados por simbolo y fecha; puede deduplicar contra datos ya existentes.
 
-## Relaciones entre módulos
-- `pipeline.collect_events` usa `client.build_ws_url` + `_ws_stream` y alimenta a `ResilientRunner`.
-- `ResilientRunner` invoca `parse_message`/normalizers y pasa eventos al handler (writer + métricas).
-- `demo` reutiliza `collect_events` y luego `features.pipeline.run_feature_pipeline`.
+## Relaciones entre modulos
+- `pipeline.collect_events` usa `client.build_ws_url` y `_ws_stream`, crea `ResilientRunner` y delega la persistencia a `ParquetWriter`.
+- `ResilientRunner` usa `client._key` para filtrar duplicados del stream.
+- `pipeline._build_live_handler` usa la misma `_key` para evitar que un evento duplicado llegue a `writer.add`.
+- `backfill.run` usa `deduplicate_events` con `_key` antes de escribir.
 
-## Flujo de datos (live)
-WS → `_ws_stream` → `parse_message` → `MarketEvent` → `ResilientRunner` (dedup, lag/latency) → handler (`ParquetWriter.add` + stats) → opcional `run_feature_pipeline` → Parquet/logs.
+## Flujo de datos
+### Live
+`WS -> parse_message -> MarketEvent -> ResilientRunner(dedup/lag) -> handler live(dedup defensiva) -> ParquetWriter -> logs/features opcionales`
 
-## Decisiones arquitectónicas y razones
-- **Stdlib + libs mínimas (websockets/httpx)**: facilitar testeo, evitar dependencia de frameworks pesados.  
-- **Runner síncrono**: menos complejidad y fácil de cubrir con tests unitarios; trade-off en throughput.  
-- **Dedup en memoria**: evita duplicados de stream rápidamente; trade-off de memoria en sesiones largas (mitigable con reset opcional).  
-- **Snapshot REST opcional**: recupera gaps a costa de latencia en la reconexión; activable solo cuando se detecta lag.  
-- **Hooks configurables (buffer, dedup, batch, features-after-ingest)**: exponen controles sin cambiar código, para ajustar entre confiabilidad y throughput.
+### Backfill
+`REST klines -> normalize_kline_row -> MarketEvent -> sort(event_ts) -> deduplicate_events(opcional) -> sink/Parquet -> logs`
+
+## Decisiones arquitectonicas
+- **Clave compartida `_key`**: evita divergencia entre la deduplicacion de live, backfill y persistencia.
+- **Dedup defensiva en dos capas para live**:
+  - en `ResilientRunner`, para no reprocesar duplicados;
+  - en el handler previo a sink, para no persistirlos aunque entren por una ruta no filtrada.
+- **Backfill opt-in**: `--dedup` permite inspeccionar lotes con duplicados o sanearlos explicitamente segun el caso operativo.
+- **Parquet dedup opcional**: sigue siendo una barrera final sobre particiones existentes, no el mecanismo principal de deduplicacion.
 
 ## Trade-offs
-- Throughput vs. simplicidad: modelo síncrono limita 100k+/s; se prioriza claridad y resiliencia básica.  
-- Dedup vs. memoria: `seen` crece; se permite desactivarlo o limitarlo.  
-- Snapshot vs. latencia: resync puede pausar consumo; preferible en datos críticos, desactivable en fast-path.
+- Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
+- La clave `(symbol, event_ts, price, size, source)` es simple y testeable, pero puede ser demasiado estricta o demasiado laxa segun la fuente si en el futuro aparecen ids nativos.
+- El backfill sin `--dedup` mantiene visibilidad completa del lote original a costa de permitir duplicados.
 
-## Riesgos
-- Alto volumen: buffer/GC pueden ser cuellos si no se ajusta batch/buffer.  
-- Fuentes nuevas: aunque hay registro de normalizers, `build_streams` aún asume trade/kline.  
-- Data loss: solo se cuenta `buffer_skipped`; no hay métricas de parse errors.  
-- IO: escritura Parquet por evento si no se usa batching.
+## Riesgos actuales
+- Si la clave `_key` no representa bien la identidad real del exchange, puede haber falsos positivos o falsos negativos.
+- La deduplicacion en memoria no persiste estado entre ejecuciones.
+- `ParquetWriter` sigue dependiendo de merge/dedup en memoria cuando la particion ya existe.
 
-## Qué hace / qué no debe hacer
-- Hace: normaliza trades/klines, maneja reconexión con backoff, deduplica en vivo, escribe Parquet local, expone métricas básicas, puede disparar features tras ingest.  
-- No debe: asumir throughput ultra-alto sin tuning; mezclar lógica de estrategia/ejecución; depender de buses externos; almacenar `seen` indefinidamente sin límites en sesiones muy largas.
+## Que hace y que no debe hacer
+- Hace:
+  - normaliza eventos,
+  - maneja reconexion basica,
+  - deduplica con una clave compartida,
+  - escribe Parquet local,
+  - expone metricas y logs resumidos.
+- No debe:
+  - convertirse en una capa de negocio,
+  - asumir guarantees exactly-once,
+  - depender de caches distribuidas o filtros probabilisticos para esta fase.
 
 ## Posibles mejoras
-- Batching efectivo de IO (en curso) y flush seguro en excepciones.  
-- Dedup limitada/rotativa y dedup en backfill.  
-- Métricas adicionales: throughput (events/s), parse errors, dedup_resets.  
-- Registro de stream builders dinámicos para nuevas fuentes.  
-- Fast-path experimental (dedup off, snapshot off, batch grande, logging mínimo).
+- Sustituir `_key` por ids nativos cuando la fuente los provea.
+- Persistir estado minimo de deduplicacion para reinicios.
+- Hacer atomicas las escrituras Parquet y anadir retencion/rehidratacion.
 
----
-
-## Diagramas (Mermaid)
+## Diagramas
 
 ### Componentes
 ```mermaid
 flowchart LR
-  WS[WS/REST Source] --> C1[ingestion.client\n(parse_message, normalizers)]
-  C1 --> R1[ResilientRunner\nbackoff/dedup/metrics]
-  R1 --> H[Handler\nParquetWriter + stats]
-  H --> F[run_feature_pipeline (opcional)]
-  F --> LOG[Logs métricas]
+  WS[WS/REST source] --> C[ingestion.client]
+  C --> R[ResilientRunner]
+  R --> H[live handler]
+  H --> P[ParquetWriter]
+  REST[REST backfill] --> B[backfill.run]
+  B --> D[deduplicate_events]
+  D --> P
 ```
 
-### Secuencia (live, con features-after-ingest)
+### Secuencia live
 ```mermaid
 sequenceDiagram
-  participant WS as WS Stream
+  participant WS as WS stream
   participant Client as parse_message
   participant Runner as ResilientRunner
+  participant Handler as live handler
   participant Writer as ParquetWriter
-  participant Features as run_feature_pipeline
 
-  loop duración o max_events
-    WS->>Client: raw message
-    Client-->>Runner: MarketEvent
-    Runner-->>Writer: ev (dedup/buffer)
-  end
-  Runner-->>Writer: flush
-  Runner-->>Features: events (if enabled)
-  Features-->>Runner: metrics
+  WS->>Client: raw message
+  Client-->>Runner: MarketEvent
+  Runner-->>Runner: dedup by _key
+  Runner-->>Handler: event
+  Handler-->>Handler: defensive dedup by _key
+  Handler-->>Writer: add(event)
 ```
 
-### Estados del sistema (ingest live)
+### Estados del sistema
 ```mermaid
 stateDiagram-v2
   [*] --> Idle
   Idle --> Connecting
-  Connecting --> Streaming : connected
-  Streaming --> Snapshot : lag > threshold && snapshot_fn
+  Connecting --> Streaming
+  Streaming --> Snapshot : lag > threshold
   Snapshot --> Streaming
-  Streaming --> Backoff : error/reconnect
-  Backoff --> Connecting : retries ok
-  Streaming --> Draining : duration|max_events reached
-  Draining --> Done
-  Connecting --> Done : retries exceeded
+  Streaming --> Persisting
+  Persisting --> Streaming
+  Streaming --> Done : duration or max_events
 ```
 
-### Flujo (simplificado)
+### Flujo backfill
 ```mermaid
 flowchart TD
-  A[Start demo/collect] --> B{mode}
-  B -->|dry| S[_synthetic_events]
-  B -->|live| WS[WS stream + snapshot]
-  WS --> R[ResilientRunner]
-  R --> W[ParquetWriter + stats]
-  W --> C{features-after?}
-  S --> C
-  C -->|yes| FP[run_feature_pipeline]
-  C -->|no| End[Return events]
-  FP --> End
+  A[fetch_klines] --> B[normalize_kline_row]
+  B --> C[sort by event_ts]
+  C --> D{--dedup}
+  D -->|yes| E[deduplicate_events by _key]
+  D -->|no| F[keep duplicates]
+  E --> G[sink.add]
+  F --> G
 ```
 
-### API (funciones clave)
+### API
 ```mermaid
 flowchart LR
-  subgraph ingestion.pipeline
-    CE[collect_events(mode, cfg,\nmax_events, duration_s,\nlogger, compute_features_after,\nmax_buffer, dedup_enabled)] --> Events
-  end
-  subgraph ingestion.resilience
-    RR[ResilientRunner.run(handler,\nmax_retries, stop_on_complete)] --> Metrics
-  end
-  subgraph features.pipeline
-    FP[run_feature_pipeline(events, window)] --> FeatureVectors
-  end
-  Events --> FP
+  CE[collect_events(..., dedup_enabled)] --> LiveEvents
+  BF[backfill.run(... --dedup)] --> BackfillRows
+  K[_key(event)] --> LiveEvents
+  K --> BackfillRows
 ```

@@ -9,9 +9,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, List, Callable, Dict
+from typing import Iterable, List, Callable, Dict, Tuple
 
 from app.common.dto import MarketEvent, normalize_symbol
+
+
+def _key(event: MarketEvent) -> Tuple[str, datetime, float, float, str]:
+    return (event.symbol, event.event_ts, event.price, event.size, event.source)
 
 
 def _ts_from_ms(ms: int) -> datetime:

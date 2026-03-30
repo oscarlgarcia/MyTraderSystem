@@ -53,6 +53,23 @@ def test_invalid_date_raises():
         backfill.parse_args(["--env", "dev", "--symbol", "BTCUSDT", "--start", "bad", "--end", "2024-01-01T00:00:00+00:00"])
 
 
+def test_backfill_dedup_flag():
+    args = backfill.parse_args(
+        [
+            "--env",
+            "dev",
+            "--symbol",
+            "BTCUSDT",
+            "--start",
+            "2024-01-01T00:00:00+00:00",
+            "--end",
+            "2024-01-01T00:01:00+00:00",
+            "--dedup",
+        ]
+    )
+    assert args.dedup is True
+
+
 def test_429_retries_and_fails(monkeypatch):
     attempts = {"n": 0}
 
@@ -83,8 +100,8 @@ def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
     monkeypatch.setattr(backfill, "fetch_klines", lambda **kwargs: rows)
 
-    backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T01:00:00+00:00"])
-    backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T01:00:00+00:00"])
+    backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T01:00:00+00:00", "--dedup"])
+    backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T01:00:00+00:00", "--dedup"])
 
     files = list(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet"))
     assert files
@@ -93,6 +110,62 @@ def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     # ordenado por event_ts
     ts_list = table.column("event_ts").to_pylist()
     assert ts_list == sorted(ts_list)
+
+
+def test_backfill_dedup_drops_duplicates_and_logs(monkeypatch, tmp_path, capsys):
+    cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
+    rows = [
+        [1704067200000, "", "", "", "1", "10", 1704067260000],
+        [1704067200000, "", "", "", "1", "10", 1704067260000],
+    ]
+
+    monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(backfill, "fetch_klines", lambda **kwargs: rows)
+
+    backfill.run(
+        [
+            "--env",
+            "dev",
+            "--symbol",
+            "BTCUSDT",
+            "--start",
+            "2024-01-01T00:00:00+00:00",
+            "--end",
+            "2024-01-01T00:10:00+00:00",
+            "--dedup",
+        ]
+    )
+
+    table = read_parquet(next(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet")))
+    assert table.num_rows == 1
+    assert "backfill duplicates dropped" in capsys.readouterr().out
+
+
+def test_backfill_without_dedup_keeps_duplicates(monkeypatch, tmp_path):
+    cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
+    rows = [
+        [1704067200000, "", "", "", "1", "10", 1704067260000],
+        [1704067200000, "", "", "", "1", "10", 1704067260000],
+    ]
+
+    monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(backfill, "fetch_klines", lambda **kwargs: rows)
+
+    backfill.run(
+        [
+            "--env",
+            "dev",
+            "--symbol",
+            "BTCUSDT",
+            "--start",
+            "2024-01-01T00:00:00+00:00",
+            "--end",
+            "2024-01-01T00:10:00+00:00",
+        ]
+    )
+
+    table = read_parquet(next(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet")))
+    assert table.num_rows == 2
 
 
 def test_gap_detection(monkeypatch):
