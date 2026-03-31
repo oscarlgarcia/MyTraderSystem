@@ -9,20 +9,28 @@ from __future__ import annotations
 import math
 import time
 import logging
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Deque, Iterable, List, Literal, Optional
 
-from app.common.dto import MarketEvent
 from app.ingestion.client import _key
 from app.ingestion.checkpoints import CheckpointState
-from app.ingestion.dedup import Deduplicator
+from app.ingestion.dedup import DedupStateEntry, Deduplicator, EventIdentity
 from app.ingestion.errors import IngestionError, classify_error
+from app.marketdata.gaps import detect_gap
+from app.marketdata.models import BaseMarketEvent, IngestionEvent
+from app.marketdata.temporal_state import (
+    CursorState,
+    TemporalPartitionKey,
+    TemporalStateStore,
+    TemporalStreamState,
+    cursor_from_event,
+)
 
 
-SnapshotFn = Callable[[], Iterable[MarketEvent]]
-StreamFn = Callable[[], Iterable[MarketEvent]]
+SnapshotFn = Callable[[], Iterable[IngestionEvent]]
+StreamFn = Callable[[], Iterable[IngestionEvent]]
 Sleeper = Callable[[float], None]
 BackpressurePolicy = Literal["pause", "drop_oldest", "drop_newest", "fail"]
 TemporalPolicy = Literal["accept", "drop", "fail"]
@@ -55,8 +63,11 @@ class ResilienceMetrics:
     snapshot_runs: int = 0
     snapshot_rows: int = 0
     snapshot_duplicates_skipped: int = 0
+    gaps_total: int = 0
+    gap_irreparable_total: int = 0
     last_latency_seconds: float = 0.0
     max_latency_seconds: float = 0.0
+    temporal_streams: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass
@@ -75,30 +86,60 @@ class ResilientRunner:
     dedup_enabled: bool = True
     sleeper: Sleeper = time.sleep
     metrics: ResilienceMetrics = field(default_factory=ResilienceMetrics)
-    last_event_ts: Optional[datetime] = None
     deduplicator: Deduplicator = field(default_factory=Deduplicator)
+    temporal_state: TemporalStateStore = field(default_factory=TemporalStateStore)
+    checkpoint_last_event_ts: Optional[datetime] = None
+    stream_seen_entries: dict[TemporalPartitionKey, OrderedDict[EventIdentity, float]] = field(default_factory=dict)
+
+    @property
+    def last_event_ts(self) -> Optional[datetime]:
+        return self.temporal_state.max_last_event_ts() or self.checkpoint_last_event_ts
 
     def restore_checkpoint(self, state: CheckpointState | None) -> None:
         if state is None:
             return
-        self.last_event_ts = state.last_event_ts
+        self.checkpoint_last_event_ts = state.last_event_ts
+        if state.stream_cursors:
+            self.temporal_state.restore_cursor_states(state.stream_cursors)
+            self.stream_seen_entries = {}
+            restored_entries: list[DedupStateEntry] = []
+            for cursor_state in state.stream_cursors.values():
+                ordered = OrderedDict((entry.key, entry.seen_at) for entry in cursor_state.seen_entries)
+                self.stream_seen_entries[cursor_state.partition] = ordered
+                restored_entries.extend(cursor_state.seen_entries)
+            self.deduplicator.restore_entries(restored_entries)
+            return
         self.deduplicator.restore_entries(state.seen_entries)
 
     def export_checkpoint(self, *, metadata: dict[str, object] | None = None) -> CheckpointState:
+        stream_cursors = {
+            partition.label(): CursorState(
+                partition=partition,
+                last_event_ts=state.last_event_ts,
+                cursor_kind=state.cursor_kind,
+                cursor_value=state.cursor_value,
+                seen_entries=tuple(
+                    DedupStateEntry(key=key, seen_at=seen_at)
+                    for key, seen_at in self.stream_seen_entries.get(partition, OrderedDict()).items()
+                ),
+            )
+            for partition, state in self.temporal_state.states.items()
+        }
         return CheckpointState(
             last_event_ts=self.last_event_ts,
             seen_entries=self.deduplicator.export_entries(),
+            stream_cursors=stream_cursors,
             metadata=dict(metadata or {}),
         )
 
     def run(
         self,
-        handler: Callable[[MarketEvent], None],
+        handler: Callable[[IngestionEvent], None],
         max_retries: Optional[int] = None,
         stop_on_complete: bool = False,
     ) -> None:
         backoff = self.backoff_base
-        buffer: Deque[MarketEvent] = deque()
+        buffer: Deque[IngestionEvent] = deque()
         while True:
             handled_this_cycle = 0
             try:
@@ -151,9 +192,9 @@ class ResilientRunner:
 
     def _enqueue_event(
         self,
-        buffer: Deque[MarketEvent],
-        ev: MarketEvent,
-        handler: Callable[[MarketEvent], None],
+        buffer: Deque[IngestionEvent],
+        ev: IngestionEvent,
+        handler: Callable[[IngestionEvent], None],
     ) -> None:
         if len(buffer) < self.max_buffer:
             buffer.append(ev)
@@ -212,8 +253,8 @@ class ResilientRunner:
 
     def _drain_buffer(
         self,
-        buffer: Deque[MarketEvent],
-        handler: Callable[[MarketEvent], None],
+        buffer: Deque[IngestionEvent],
+        handler: Callable[[IngestionEvent], None],
         *,
         limit: int | None = None,
     ) -> int:
@@ -233,9 +274,12 @@ class ResilientRunner:
             handled += 1
         return handled
 
-    def _process_event(self, ev: MarketEvent, handler: Callable[[MarketEvent], None]) -> None:
+    def _process_event(self, ev: IngestionEvent, handler: Callable[[IngestionEvent], None]) -> None:
+        if isinstance(ev, BaseMarketEvent) and ev.process_ts is None:
+            ev.process_ts = datetime.now(timezone.utc)
         self.metrics.events_in += 1
         k = _key(ev)
+        partition_key, stream_state = self.temporal_state.state_for_event(ev)
         # dedup
         if self.dedup_enabled:
             if self.deduplicator.contains_key(k):
@@ -243,16 +287,29 @@ class ResilientRunner:
                 return
 
         # gap detection
-        if self.last_event_ts:
-            delta_seconds = (ev.event_ts - self.last_event_ts).total_seconds()
+        previous_ts = stream_state.last_event_ts or self.checkpoint_last_event_ts
+        if previous_ts:
+            delta_seconds = (ev.event_ts - previous_ts).total_seconds()
             if delta_seconds < 0:
-                if not self._handle_out_of_order(ev):
+                if not self._handle_out_of_order(ev, partition_key, stream_state):
                     return
-
-            self.metrics.last_event_gap_seconds = delta_seconds
-            if delta_seconds > self.metrics.max_event_gap_seconds:
-                self.metrics.max_event_gap_seconds = delta_seconds
-            self.metrics.last_lag_seconds = self.metrics.max_event_gap_seconds
+            else:
+                gap_observation = detect_gap(
+                    stream_state=stream_state,
+                    event=ev,
+                    lag_threshold_seconds=self.lag_threshold_seconds,
+                    has_snapshot=self.snapshot_fn is not None,
+                )
+                if gap_observation.detected:
+                    self._record_gap(partition_key, stream_state, gap_observation)
+                stream_state.last_event_gap_seconds = delta_seconds
+                if delta_seconds > stream_state.max_event_gap_seconds:
+                    stream_state.max_event_gap_seconds = delta_seconds
+                self.metrics.last_event_gap_seconds = delta_seconds
+                if delta_seconds > self.metrics.max_event_gap_seconds:
+                    self.metrics.max_event_gap_seconds = delta_seconds
+                self.metrics.last_lag_seconds = self.metrics.max_event_gap_seconds
+                self._update_temporal_metrics(partition_key, stream_state)
 
             if delta_seconds > self.lag_threshold_seconds and self.snapshot_fn:
                 self._resync(handler)
@@ -268,6 +325,7 @@ class ResilientRunner:
                     extra={
                         "event_gap_seconds": delta_seconds,
                         "max_lag_seconds": self.max_lag_seconds,
+                        "temporal_partition": partition_key.label(),
                     },
                 )
 
@@ -275,7 +333,13 @@ class ResilientRunner:
         self.metrics.events_out += 1
         if self.dedup_enabled:
             self.deduplicator.remember_key(k)
-        self.last_event_ts = ev.event_ts
+            self._remember_stream_key(partition_key, k)
+        cursor_kind, cursor_value = cursor_from_event(ev)
+        if cursor_kind is not None:
+            stream_state.cursor_kind = cursor_kind
+            stream_state.cursor_value = cursor_value
+        stream_state.last_event_ts = max(stream_state.last_event_ts or ev.event_ts, ev.event_ts)
+        self._update_temporal_metrics(partition_key, stream_state)
 
         # latency from event_ts to processing time
         now = datetime.now(timezone.utc)
@@ -284,11 +348,12 @@ class ResilientRunner:
         if latency > self.metrics.max_latency_seconds:
             self.metrics.max_latency_seconds = latency
 
-    def _resync(self, handler: Callable[[MarketEvent], None]) -> None:
+    def _resync(self, handler: Callable[[IngestionEvent], None]) -> None:
         if not self.snapshot_fn:
             return
         self.metrics.snapshot_runs += 1
         for ev in self.snapshot_fn():
+            partition_key, stream_state = self.temporal_state.state_for_event(ev)
             self.metrics.snapshot_rows += 1
             self.metrics.events_in += 1
             k = _key(ev)
@@ -300,17 +365,35 @@ class ResilientRunner:
             self.metrics.events_out += 1
             if self.dedup_enabled:
                 self.deduplicator.remember_key(k)
-            self.last_event_ts = max(self.last_event_ts or ev.event_ts, ev.event_ts)
+                self._remember_stream_key(partition_key, k)
+            cursor_kind, cursor_value = cursor_from_event(ev)
+            if cursor_kind is not None:
+                stream_state.cursor_kind = cursor_kind
+                stream_state.cursor_value = cursor_value
+            stream_state.last_event_ts = max(stream_state.last_event_ts or ev.event_ts, ev.event_ts)
+            self._update_temporal_metrics(partition_key, stream_state)
 
-    def _handle_out_of_order(self, ev: MarketEvent) -> bool:
-        if self.last_event_ts is None:
+    def _handle_out_of_order(
+        self,
+        ev: IngestionEvent,
+        partition_key: TemporalPartitionKey,
+        stream_state: TemporalStreamState,
+    ) -> bool:
+        previous_ts = stream_state.last_event_ts or self.checkpoint_last_event_ts
+        if previous_ts is None:
             return True
-        late_seconds = max(0.0, (self.last_event_ts - ev.event_ts).total_seconds())
+        late_seconds = max(0.0, (previous_ts - ev.event_ts).total_seconds())
+        stream_state.out_of_order_events += 1
+        stream_state.late_events += 1
+        stream_state.last_late_seconds = late_seconds
+        if late_seconds > stream_state.max_late_seconds:
+            stream_state.max_late_seconds = late_seconds
         self.metrics.out_of_order_events += 1
         self.metrics.late_events += 1
         self.metrics.last_late_seconds = late_seconds
         if late_seconds > self.metrics.max_late_seconds:
             self.metrics.max_late_seconds = late_seconds
+        self._update_temporal_metrics(partition_key, stream_state)
 
         logger = logging.getLogger("ingest.resilience")
         logger.warning(
@@ -318,18 +401,101 @@ class ResilientRunner:
             extra={
                 "temporal_policy": self.temporal_policy,
                 "late_seconds": late_seconds,
-                "last_event_ts": self.last_event_ts.isoformat(),
+                "last_event_ts": previous_ts.isoformat(),
                 "event_ts": ev.event_ts.isoformat(),
+                "temporal_partition": partition_key.label(),
             },
         )
 
         if self.temporal_policy == "accept":
             return True
         if self.temporal_policy == "drop":
+            stream_state.late_events_dropped += 1
             self.metrics.late_events_dropped += 1
+            self._update_temporal_metrics(partition_key, stream_state)
             return False
         raise IngestionError(
             "validation",
             "permanent",
             f"out-of-order event detected (late_seconds={late_seconds:.6f})",
         )
+
+    def _update_temporal_metrics(
+        self,
+        partition_key: TemporalPartitionKey,
+        stream_state: TemporalStreamState,
+    ) -> None:
+        self.metrics.temporal_streams[partition_key.label()] = {
+            "venue": partition_key.venue,
+            "symbol": partition_key.symbol,
+            "stream_type": partition_key.stream_type,
+            "last_event_ts": stream_state.last_event_ts.isoformat() if stream_state.last_event_ts else None,
+            "cursor_kind": stream_state.cursor_kind,
+            "cursor_value": stream_state.cursor_value,
+            "gap_detected": stream_state.gap_detected,
+            "gap_irreparable": stream_state.gap_irreparable,
+            "gaps_total": stream_state.gaps_total,
+            "gap_irreparable_total": stream_state.gap_irreparable_total,
+            "last_gap_detection_mode": stream_state.last_gap_detection_mode,
+            "last_gap_missing_count": stream_state.last_gap_missing_count,
+            "last_gap_seconds": stream_state.last_gap_seconds,
+            "last_event_gap_seconds": stream_state.last_event_gap_seconds,
+            "max_event_gap_seconds": stream_state.max_event_gap_seconds,
+            "late_events": stream_state.late_events,
+            "out_of_order_events": stream_state.out_of_order_events,
+            "late_events_dropped": stream_state.late_events_dropped,
+            "last_late_seconds": stream_state.last_late_seconds,
+            "max_late_seconds": stream_state.max_late_seconds,
+        }
+
+    def _remember_stream_key(self, partition_key: TemporalPartitionKey, key: EventIdentity) -> None:
+        now = self.deduplicator.now_fn()
+        entries = self.stream_seen_entries.setdefault(partition_key, OrderedDict())
+        if key in entries:
+            entries.move_to_end(key)
+        entries[key] = now
+        ttl_seconds = self.deduplicator.ttl_seconds
+        if ttl_seconds is not None:
+            while entries:
+                first_key = next(iter(entries))
+                if now - entries[first_key] <= ttl_seconds:
+                    break
+                entries.popitem(last=False)
+        max_entries = max(1, self.deduplicator.max_entries)
+        while len(entries) > max_entries:
+            entries.popitem(last=False)
+
+    def _record_gap(self, partition_key: TemporalPartitionKey, stream_state: TemporalStreamState, observation) -> None:
+        stream_state.gap_detected = True
+        stream_state.gaps_total += 1
+        stream_state.last_gap_detection_mode = observation.mode
+        stream_state.last_gap_missing_count = observation.missing_count
+        stream_state.last_gap_seconds = observation.gap_seconds
+        self.metrics.gaps_total += 1
+        if observation.irreparable:
+            stream_state.gap_irreparable = True
+            stream_state.gap_irreparable_total += 1
+            self.metrics.gap_irreparable_total += 1
+        logger = logging.getLogger("ingest.resilience")
+        logger.warning(
+            "gap detected",
+            extra={
+                "temporal_partition": partition_key.label(),
+                "gap_detection_mode": observation.mode,
+                "gap_missing_count": observation.missing_count,
+                "gap_seconds": observation.gap_seconds,
+                "gap_strong": observation.strong,
+                "gap_irreparable": observation.irreparable,
+            },
+        )
+        if observation.irreparable:
+            logger.error(
+                "gap irreparable",
+                extra={
+                    "temporal_partition": partition_key.label(),
+                    "gap_detection_mode": observation.mode,
+                    "gap_missing_count": observation.missing_count,
+                    "gap_seconds": observation.gap_seconds,
+                },
+            )
+        self._update_temporal_metrics(partition_key, stream_state)

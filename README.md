@@ -80,14 +80,27 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `fail`: aborta con error de `sink`
 - `python -m app --env dev --mode live --allow-live-fallback`  
   Permite fallback explicito a `dry` si la ingesta real falla. Sin este flag, live ahora falla fuerte por defecto.
-- Checkpoint live minimo: las ejecuciones reales de live persisten `last_event_ts` y una ventana corta de claves dedup en `<data_dir>/<env>/state/ingestion-checkpoint.json`. Si el checkpoint esta corrupto, live arranca con estado vacio y emite un warning explicito.
+- Checkpoint live minimo: las ejecuciones reales de live persisten en `<data_dir>/<env>/state/ingestion-checkpoint.json`:
+  - `last_event_ts` global maximo por compatibilidad
+  - cursores/watermarks por stream `(venue, symbol, stream_type)`
+  - una ventana corta de claves dedup por stream
+  - si el checkpoint esta corrupto, live arranca con estado vacio y emite un warning explicito
 - `python -m app --env dev --mode live --error-policy degraded`  
   Politica explicita de error para live:
   - `fail_fast` (default): propaga el error
   - `allow_fallback`: solo errores de fuente degradan a `dry`
   - `degraded`: solo errores de fuente devuelven `[]` y quedan logueados como degradacion
-- Deduplicacion live/backfill/sink: ahora comparten `Deduplicator`, con identidad por defecto `(symbol, event_ts, price, size, source)`, TTL corto y capacidad acotada para limitar memoria. El checkpoint persiste solo una ventana reciente de esta identidad.
-- Persistencia Parquet: cada particion se escribe con `tmp + rename`. Si una escritura falla, el `data.parquet` previo queda intacto y el writer conserva en memoria solo los eventos no confirmados.
+- Deduplicacion live/backfill/sink: ahora comparten `Deduplicator` con jerarquia explicita de identidad:
+  - primero IDs nativos (`trade_id`, `sequence_id`, `source_id`) si el feed los trae
+  - fallback heuristico `(symbol, event_ts, price, size, source)` solo cuando no existe identidad nativa
+  - TTL corto y capacidad acotada para limitar memoria
+  - el checkpoint persiste una ventana reciente de estas identidades
+- Persistencia Parquet normalized v2: cada particion se escribe con `tmp + rename`. Si una escritura falla, el `data.parquet` previo queda intacto y el writer conserva en memoria solo los eventos no confirmados.
+- Layout normalized v2:
+  - `data/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - `data/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - `data/normalized/books/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - cada dataset `v2` incluye `normalizer_version` como columna y como metadata de Parquet; la politica actual es global y fija `v1`
 - `python -m app --env dev --mode live --fast-path`  
   Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos (sin resumen agregado de ingest), `trace_steps` off y batch size grande.
 - `python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0`  
@@ -106,6 +119,18 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Escribe el lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
 - Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 - Contrato de fuentes/sinks: live ahora se ejecuta sobre un `Source` (`BinanceSource` por defecto) y un `EventSink` (`ParquetEventSink` por defecto), lo que permite tests con mocks sin tocar Binance ni Parquet.
+- Contrato canonico tipado: `app.marketdata.models` introduce `TradeEvent`, `BarEvent` y `BookEvent` con adapters temporales hacia `app.common.dto.MarketEvent`. La ingestion actual sigue siendo legacy-compatible, pero `Source` y `EventSink` ya aceptan eventos tipados durante la migracion.
+- Validacion explicita por tipo: `app.marketdata.validators` aplica checks por feed (`trade`, `kline`, `book`) para `NaN`, `inf`, signos, OHLC inconsistente y timestamps absurdos. En `BinanceSource`, los payloads raw invalidados van al DLQ; los eventos tipados invalidados inyectados desde fuentes custom fallan rapido.
+- Semantica temporal explicita: el contrato tipado usa `exchange_ts`, `receive_ts` y `process_ts`. En Binance:
+  - `trade.exchange_ts` <- payload `E`
+  - `bar.exchange_ts` <- `k.T` si existe, si no `E`
+  - `receive_ts` se captura en el borde WS/REST
+  - `process_ts` se fija al normalizar o, si falta, al aceptar el evento en el runner
+- Watermark temporal por stream: `ResilientRunner` ya no compara todos los eventos contra un unico `last_event_ts`. Mantiene estado temporal por `(venue, symbol, stream_type)` para evitar falsos `late` o gaps cuando se intercalan varios instrumentos en el mismo run.
+- Compatibilidad legacy: mientras exista `MarketEvent`, `event_ts` se interpreta temporalmente como `exchange_ts`; `receive_ts` y `process_ts` se conservan en `metadata` durante la migracion.
+- Raw landing append-only: el wiring live por defecto persiste cada mensaje raw valido en `data/raw/env=<env>/venue=<venue>/stream_type=<stream>/symbol=<symbol>/date=<yyyy-mm-dd>/events.jsonl` antes de entregarlo al sink normalized. El registro incluye `payload`, `venue`, `stream_type`, `symbol`, `exchange_ts`, `receive_ts` y `trace_id`.
+- Replay determinista: `app.marketdata.replay.ReplaySource` relee raw landing y re-normaliza en orden determinista para backtesting y debugging. Soporta filtros por `symbol`, `stream_type`, ventana temporal y modos `full-speed` / `step-by-step`.
+  - `ReplaySource` exige una `normalizer_version` explicita; hoy solo se soporta `v1`, compartida por todo el feed normalizado.
 - Payloads corruptos: `BinanceSource` valida por tipo antes de normalizar y escribe rechazos en un DLQ local JSONL (`<data_dir>/errors/ingestion-dlq.jsonl`) sin matar el stream por errores no fatales.
 
 ### Altas tasas
@@ -199,7 +224,10 @@ Ejemplo de salida:
 ```
 El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 
-En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `ingestion summary` e `ingestion health`. El summary consolida `source_events_in`, `events_valid`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`, `processing_latency_seconds`, `write_latency_seconds`, `event_gap_seconds`, `late_events`, `late_event_max_delay_seconds`, `temporal_policy` y `reconnects`, junto con los contadores legacy (`events_in`, `events_out`, `buffer_*`, `duplicates_dropped`, `result`, `error_policy`). `ingestion health` resume el estado operativo final de la ejecucion con el mismo `trace_id`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite estos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). La semantica temporal se controla con `--ingest-temporal-policy {accept,drop,fail}`: por defecto se aceptan eventos tardios/fuera de orden, se contabilizan por separado y no se mezclan con la latencia de proceso. Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
+En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `ingestion summary` e `ingestion health`. El summary consolida `source_events_in`, `events_valid`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`, `processing_latency_seconds`, `write_latency_seconds`, `event_gap_seconds`, `gaps_total`, `gap_irreparable_total`, `late_events`, `late_event_max_delay_seconds`, `temporal_policy` y `reconnects`, junto con los contadores legacy (`events_in`, `events_out`, `buffer_*`, `duplicates_dropped`, `result`, `error_policy`). `ingestion health` resume el estado operativo final de la ejecucion con el mismo `trace_id`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite estos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). La semantica temporal se controla con `--ingest-temporal-policy {accept,drop,fail}`: por defecto se aceptan eventos tardios/fuera de orden, se contabilizan por separado y no se mezclan con la latencia de proceso. El gap detection ahora distingue entre:
+- `sequence_gap_detection`: fuerte, cuando existe cursor numerico (`trade_id` o `sequence_id`) y se rompe la secuencia esperada.
+- `weak_gap_detection`: heuristico, cuando solo se observa un hueco temporal mayor que el umbral.
+Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Seguridad operativa minima
 - Los ficheros `config.<env>.yaml` no deben contener secretos. Si aparece una clave tipo `password`, `token`, `secret`, `api_key`, `authorization` o similar, `load_config()` falla.

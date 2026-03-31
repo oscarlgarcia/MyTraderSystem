@@ -305,6 +305,8 @@ def test_summary_metrics_reflect_real_pipeline_path():
     assert summary["reconnects"] == 0
     assert summary["temporal_policy"] == "accept"
     assert summary["event_gap_seconds"] == 0.0
+    assert summary["gaps_total"] == 0
+    assert summary["gap_irreparable_total"] == 0
 
 
 def test_sink_latency_metric_records_flush_cost(monkeypatch, tmp_path):
@@ -367,6 +369,8 @@ def test_late_event_metrics_are_reported_separately():
     summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
     assert summary["processing_latency_seconds"] >= 0.0
     assert summary["event_gap_seconds"] == 0.0
+    assert summary["gaps_total"] == 0
+    assert summary["gap_irreparable_total"] == 0
     assert summary["late_events"] == 1
     assert summary["out_of_order_events"] == 1
     assert summary["late_events_dropped"] == 0

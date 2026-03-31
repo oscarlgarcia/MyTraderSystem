@@ -10,10 +10,79 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - Valida payloads por tipo antes de normalizar (`trade`, `kline`).
   - Expone `_key(event)` como identidad canonica del evento.
   - Permite registrar `stream_builder` por tipo para nuevas fuentes o canales sin tocar el core.
+- `marketdata.models`
+  - Define el contrato canonico tipado:
+    - `TradeEvent`
+    - `BarEvent`
+    - `BookEvent`
+  - Expone adapters temporales de migracion:
+    - `legacy_market_event_to_trade`
+    - `legacy_market_event_to_bar`
+    - `typed_event_to_legacy`
+    - `ensure_legacy_market_event`
+  - Mantiene compatibilidad transitoria con `app.common.dto.MarketEvent` mientras el resto del pipeline sigue usando el modelo legacy internamente.
+- `marketdata.validators`
+  - Centraliza validacion explicita por tipo:
+    - `validate_trade_payload`, `validate_kline_payload`
+    - `validate_trade_event`, `validate_bar_event`, `validate_book_event`
+    - `validate_ingestion_event`
+  - Rechaza `NaN`, `inf`, signos invalidos, OHLC inconsistente, libros cruzados y timestamps demasiado adelantados respecto al reloj del proceso.
+  - En `BinanceSource`, los rechazos de payload raw se mandan al DLQ. En fuentes custom que inyectan eventos ya tipados, un evento invalido falla rapido y no se convierte en payload de DLQ.
+  - Semantica temporal oficial:
+    - `exchange_ts`: timestamp original del mercado/fuente normalizada
+    - `receive_ts`: instante de recepcion en el borde del conector
+    - `process_ts`: instante en el que el evento queda normalizado o es aceptado por el runner
+    - Regla de migracion legacy: `MarketEvent.event_ts` se interpreta como `exchange_ts`
+- `marketdata.raw_sink`
+  - Define `RawRecord`, `RawSink`, `NullRawSink` y `JsonlRawSink`.
+  - `JsonlRawSink` escribe append-only en:
+    - `<data_dir>/raw/env=<env>/venue=<venue>/stream_type=<stream_type>/symbol=<symbol>/date=<yyyy-mm-dd>/events.jsonl`
+  - Cada linea JSONL persiste:
+    - `payload`
+    - `venue`
+    - `stream_type`
+    - `symbol`
+    - `exchange_ts`
+    - `receive_ts`
+    - `trace_id`
+    - `source_id`
+- `marketdata.replay`
+  - Define `ReplaySource` compatible con el contrato `Source`.
+  - Lee raw landing en orden determinista usando:
+    - `receive_ts`
+    - path de particion
+    - numero de linea
+  - Re-normaliza payloads usando la version de normalizador solicitada (`normalizer_version`).
+  - La politica actual es global: toda normalizacion nueva usa `normalizer_version="v1"` hasta que se introduzca una migracion versionada.
+  - Soporta filtros por:
+    - `symbol`
+    - `stream_types`
+    - `venue`
+    - `start_ts`
+    - `end_ts`
+  - Soporta velocidades:
+    - `full-speed`
+    - `step-by-step`
 - `ingestion.dedup`
   - Define `Deduplicator` con TTL y limite de capacidad.
+  - Define la interfaz `IdentityProvider`.
   - Expone la identidad compartida por source/type (`identity_from_fields`, `identity_from_event`).
-  - Permite registrar una identidad custom por `source`.
+  - Jerarquia actual de identidad:
+    - `trade_id`
+    - `sequence_id`
+    - `source_id`
+    - fallback heuristico `(symbol, event_ts, price, size, source)`
+  - Permite registrar un `IdentityProvider` o un builder custom por `source`.
+- `marketdata.temporal_state`
+  - Define `TemporalPartitionKey` con la clave `(venue, symbol, stream_type)`.
+  - Define `TemporalStateStore` y `TemporalStreamState` para mantener watermarks y metricas temporales por stream.
+  - Evita comparar simbolos distintos contra un unico `last_event_ts` global cuando el feed llega intercalado.
+- `marketdata.gaps`
+  - Define `GapObservation` y `detect_gap(...)`.
+  - Orden de evaluacion:
+    - secuencia rota (`trade_id` / `sequence_id`) -> `sequence_gap_detection`
+    - si no hay secuencia usable, hueco temporal sobre umbral -> `weak_gap_detection`
+  - `weak_gap_detection` es deliberadamente heuristico; no se debe interpretar como garantia fuerte de perdida.
 - `ingestion.sources`
   - Define el contrato `Source` (`stream`, `snapshot`).
   - Implementa `BinanceSource` como adaptador por defecto para WS/REST.
@@ -23,15 +92,31 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de entrada/salida/duplicados/gap temporal/eventos tardios/latencia/buffer.
   - Gestiona una cola bounded y una politica explicita de saturacion: `pause`, `drop_oldest`, `drop_newest`, `fail`.
   - Gestiona una politica temporal explicita: `accept`, `drop`, `fail`.
+  - Mantiene watermarks por `(venue, symbol, stream_type)` via `TemporalStateStore`; las metricas agregadas siguen saliendo en el summary, pero se calculan sin mezclar streams distintos.
+  - Mantiene estado de gap por stream:
+    - `gap_detected`
+    - `gap_irreparable`
+    - `gaps_total`
+    - `gap_irreparable_total`
+    - `last_gap_detection_mode`
 - `ingestion.checkpoints`
-  - `CheckpointStore`: persiste `last_event_ts`, una ventana corta de claves dedup y metadata minima de ejecucion.
+  - `CheckpointStore`: persiste `last_event_ts`, metadata minima y estado por stream.
+  - Cada stream `(venue, symbol, stream_type)` guarda:
+    - watermark `last_event_ts`
+    - cursor conocido (`trade_id`, `sequence_id` o `source_id` si existe)
+    - una ventana corta de claves dedup del mismo stream
   - Se usa para reanudar live desde el ultimo estado local conocido sin pretender exactly-once.
 - `ingestion.pipeline`
   - `collect_events`: orquesta dry/live, ejecuta un `Source`, consume un `EventSink`, aplica una segunda barrera de deduplicacion antes de persistir, soporta batching local de IO, carga/guarda checkpoints live y emite un resumen agregado final de la ejecucion.
 - `ingestion.backfill`
   - Descarga klines historicos, normaliza filas, ordena y opcionalmente deduplica con `--dedup` antes del sink.
 - `ingestion.storage`
-  - `ParquetWriter`: persiste eventos particionados por simbolo y fecha; puede deduplicar contra datos ya existentes, escribe con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
+  - `ParquetWriter`: persiste eventos normalized v2 separados por tipo (`trades`, `bars`, `books`) y particionados por `env`, `venue`, `symbol`, `date`; puede deduplicar contra datos ya existentes, escribe con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
+  - Cada dataset normalized `v2` persiste `normalizer_version` como columna de datos y como metadata de Parquet.
+  - Helpers de layout:
+    - `normalized_partition_path(...)`
+    - `legacy_partition_path(...)`
+    - `list_normalized_parquet_files(...)`
   - `validate_output_path(...)`: valida que la ruta de escritura sea directorio valido y escribible; en modo estricto puede exigir ruta absoluta.
 - `ingestion.sinks`
   - Define `EventSink` y `ParquetEventSink`.
@@ -41,11 +126,23 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 
 ## Relaciones entre modulos
 - `pipeline.collect_events` usa un `Source`, crea `ResilientRunner` y delega la persistencia a un `EventSink`.
+- En el wiring live por defecto, `collect_events` crea `BinanceSource(..., raw_sink=JsonlRawSink(...))`, de modo que el raw valido queda persistido antes de que el sink normalized pueda fallar.
+- `Source` y `EventSink` ya aceptan eventos tipados (`TradeEvent`, `BarEvent`, `BookEvent`) o `MarketEvent` legacy; el handler live y el sink por defecto convierten a `MarketEvent` solo en el borde de compatibilidad.
 - Si el path live es el real (sin `source`/`sink` custom), `collect_events` carga `ingestion-checkpoint.json` al arrancar y lo reescribe tras un cierre limpio del sink.
-- `BinanceSource` valida payloads raw antes de normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.
+- `BinanceSource` valida payloads raw antes de normalizar y valida el evento resultante tras normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.
+- Mapping temporal actual para Binance:
+  - trade WS -> `exchange_ts = E`
+  - kline WS/REST -> `exchange_ts = k.T` si existe, si no `E`
+  - `receive_ts` se fija al recibir el frame WS o la respuesta REST
+  - `process_ts` se fija al normalizar; si una fuente custom no lo aporta, `ResilientRunner` lo completa al aceptar el evento
+- El raw valido se escribe inmediatamente despues de validar y normalizar el mensaje, antes de hacer `yield` al pipeline. Si el sink normalized falla despues, el raw ya queda preservado para diagnostico/replay.
+- `ReplaySource` se apoya en raw landing; no lee normalized Parquet. Esto permite re-ejecutar normalizacion de forma determinista para backtesting/debugging sin depender del layout final del sink.
+- `normalizer_version` queda fijada explicitamente tanto en replay como en normalized. Si mañana cambia la normalizacion, el contrato exige introducir una nueva version y no sobreescribir silenciosamente el significado de los datasets ya escritos.
 - `ResilientRunner` usa `client._key` para filtrar duplicados del stream.
 - `ResilientRunner`, el handler live, `backfill.run` y `ParquetWriter` usan ahora la misma semantica de identidad via `ingestion.dedup`.
 - `ResilientRunner` exporta el estado minimo necesario para checkpoint (`last_event_ts` + claves dedup recientes).
+- El watermark temporal runtime ya no es global: cada stream `(venue, symbol, stream_type)` mantiene su propio `last_event_ts`.
+- El checkpoint ya persiste cursor/watermark/dedup window por stream; ademas conserva el maximo global `last_event_ts` por compatibilidad con readers legacy.
 - `pipeline._build_live_handler` usa la misma `_key` para evitar que un evento duplicado llegue a `writer.add`.
 - `pipeline._LiveBatchHandler` acumula eventos y llama a `sink.add` por lote (`--ingest-batch-size`), manteniendo `max_buffer` en `ResilientRunner`.
 - `backfill.run` usa `deduplicate_events` con `_key` antes de escribir.
@@ -67,6 +164,11 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - en el handler previo a sink, para no persistirlos aunque entren por una ruta no filtrada.
 - **Backfill opt-in**: `--dedup` permite inspeccionar lotes con duplicados o sanearlos explicitamente segun el caso operativo.
 - **Parquet dedup opcional**: sigue siendo una barrera final sobre particiones existentes, no el mecanismo principal de deduplicacion.
+- **Persistencia normalized v2 por tipo**: trades, bars y books ya no comparten particion. El layout actual es:
+  - `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - `<data_dir>/normalized/books/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - Cada `data.parquet` `v2` incluye `schema_version=v2` y `normalizer_version=v1` en metadata, ademas de una columna `normalizer_version` para inspeccion directa del dataset.
 - **Persistencia atomica por particion**: cada `data.parquet` se reconstruye en un temporal y solo se publica con `replace` cuando la escritura completa termina bien.
 - **Batching de IO en live**: el handler agrupa eventos antes de escribirlos para reducir llamadas al writer; el flush final fuerza la persistencia del lote incompleto.
 - **Backpressure explicito**: el runner ya no usa un pseudo-buffer binario; usa una cola bounded y aplica una politica visible cuando la cola se llena.
@@ -89,9 +191,16 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - **Sanitizacion reforzada de logs**: el `JsonFormatter` elimina claves sensibles de primer nivel y redacta valores sensibles anidados en `payload`, `context` y estructuras JSON serializables.
 - **Semantica temporal explicita**:
   - `event_gap_seconds` mide huecos positivos entre timestamps consecutivos y decide si se dispara resync.
+  - `gaps_total` cuenta gaps detectados por stream; no implica que todos sean fuertes.
+  - `gap_irreparable_total` cuenta gaps detectados como irrecuperables con la informacion actual.
   - `processing_latency_seconds` mide edad del evento al procesarlo; no se usa para inferir huecos.
   - eventos tardios/fuera de orden se contabilizan como `late_events` / `out_of_order_events`.
   - `--ingest-temporal-policy=accept` los deja pasar, `drop` los descarta de forma visible y `fail` aborta el run.
+  - Los calculos anteriores ya se hacen por stream `(venue, symbol, stream_type)` y luego se agregan, evitando falsos positivos al intercalar simbolos.
+- Tipos de gap:
+  - **Fuerte**: `sequence_gap_detection`, solo cuando existe cursor numerico y faltan IDs esperados.
+  - **Heuristico**: `weak_gap_detection`, cuando solo hay un hueco temporal mayor que `lag_threshold_seconds`.
+  - La heuristica temporal no se presenta como garantia fuerte y no se promociona a `gap_irreparable` por si sola.
 
 ## Trade-offs
 - Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
@@ -106,7 +215,12 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - Si la clave `_key` no representa bien la identidad real del exchange, puede haber falsos positivos o falsos negativos.
 - La deduplicacion en memoria no persiste estado entre ejecuciones.
 - El checkpoint solo contiene una ventana corta de claves dedup; limita duplicados inmediatos tras reinicio, no garantiza replay perfecto ni exactly-once.
+- El checkpoint/cursor sigue siendo local:
+  - no es un offset transaccional del exchange
+  - no garantiza exactly-once
+  - la ventana dedup por stream esta acotada por TTL/capacidad del deduplicador
 - `ParquetWriter` sigue dependiendo de merge/dedup en memoria cuando la particion ya existe; la atomicidad protege el archivo final, no el coste de memoria del merge.
+- El writer ya escribe solo en layout normalized v2, pero el lector mantiene compatibilidad con Parquet legacy `v1` para no romper consumidores durante la migracion.
 - Si el proceso cae antes del cierre del handler, el lote en memoria aun no persistido se pierde.
 
 ## Que hace y que no debe hacer

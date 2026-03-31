@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 
 from app.common.dto import MarketEvent, normalize_symbol
@@ -20,6 +21,8 @@ from app.ingestion.resilience import BackpressurePolicy, ResilientRunner, Tempor
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
+from app.marketdata.models import IngestionEvent, ensure_legacy_market_event
+from app.marketdata.raw_sink import JsonlRawSink, NullRawSink
 
 
 def _safe_int(value: object, default: int = 0) -> int:
@@ -129,6 +132,8 @@ def _emit_ingestion_summary(
     write_latency_seconds: float = 0.0,
     temporal_policy: str = "accept",
     event_gap_seconds: float = 0.0,
+    gaps_total: int = 0,
+    gap_irreparable_total: int = 0,
     late_events: int = 0,
     out_of_order_events: int = 0,
     late_events_dropped: int = 0,
@@ -170,6 +175,8 @@ def _emit_ingestion_summary(
         "write_latency_seconds": float(write_latency_seconds),
         "temporal_policy": temporal_policy,
         "event_gap_seconds": float(event_gap_seconds),
+        "gaps_total": int(gaps_total),
+        "gap_irreparable_total": int(gap_irreparable_total),
         "late_events": int(late_events),
         "out_of_order_events": int(out_of_order_events),
         "late_events_dropped": int(late_events_dropped),
@@ -209,6 +216,8 @@ def _emit_health_summary(
     write_latency_seconds: float,
     temporal_policy: str,
     event_gap_seconds: float,
+    gaps_total: int,
+    gap_irreparable_total: int,
     late_events: int,
 ) -> None:
     logger.info(
@@ -228,6 +237,8 @@ def _emit_health_summary(
             "write_latency_seconds": float(write_latency_seconds),
             "temporal_policy": temporal_policy,
             "event_gap_seconds": float(event_gap_seconds),
+            "gaps_total": int(gaps_total),
+            "gap_irreparable_total": int(gap_irreparable_total),
             "late_events": int(late_events),
         },
     )
@@ -252,15 +263,16 @@ class _LiveBatchHandler:
         self.pending: List[MarketEvent] = []
         self.events: List[MarketEvent] = []
 
-    def __call__(self, event: MarketEvent) -> None:
+    def __call__(self, event: IngestionEvent) -> None:
+        legacy_event = ensure_legacy_market_event(event)
         if self.dedup_enabled:
-            event_key = _key(event)
+            event_key = _key(legacy_event)
             if self.deduplicator.contains_key(event_key):
                 self.stats["duplicates_dropped"] += 1
                 return
             self.deduplicator.remember_key(event_key)
-        self.events.append(event)
-        self.pending.append(event)
+        self.events.append(legacy_event)
+        self.pending.append(legacy_event)
         if self.stats["written"] + len(self.pending) >= self.max_events:
             self._flush_pending()
             if self.stats["written"] >= self.max_events:
@@ -359,6 +371,8 @@ def collect_events(
                 write_latency_seconds=0.0,
                 temporal_policy=temporal_policy,
                 event_gap_seconds=0.0,
+                gaps_total=0,
+                gap_irreparable_total=0,
                 late_events=0,
                 out_of_order_events=0,
                 late_events_dropped=0,
@@ -381,6 +395,8 @@ def collect_events(
                 write_latency_seconds=0.0,
                 temporal_policy=temporal_policy,
                 event_gap_seconds=0.0,
+                gaps_total=0,
+                gap_irreparable_total=0,
                 late_events=0,
             )
         if compute_features_after:
@@ -388,6 +404,8 @@ def collect_events(
         return events_out
 
     source_impl = source or BinanceSource(cfg)
+    if source is None and isinstance(getattr(source_impl, "raw_sink", None), NullRawSink):
+        source_impl.raw_sink = JsonlRawSink(Path(cfg.data_dir) / "raw", env=cfg.env)
     source_stats = getattr(source_impl, "stats", None)
     checkpoint_store_impl = checkpoint_store
     if checkpoint_store_impl is None and source is None and sink is None:
@@ -491,6 +509,8 @@ def collect_events(
                     "max_latency_seconds": runner.metrics.max_latency_seconds,
                     "write_latency_seconds": write_latency_seconds,
                     "event_gap_seconds": runner.metrics.max_event_gap_seconds,
+                    "gaps_total": runner.metrics.gaps_total,
+                    "gap_irreparable_total": runner.metrics.gap_irreparable_total,
                     "late_events": runner.metrics.late_events,
                     "temporal_policy": temporal_policy,
                 },
@@ -529,6 +549,8 @@ def collect_events(
                 write_latency_seconds=write_latency_seconds,
                 temporal_policy=temporal_policy,
                 event_gap_seconds=runner.metrics.max_event_gap_seconds,
+                gaps_total=runner.metrics.gaps_total,
+                gap_irreparable_total=runner.metrics.gap_irreparable_total,
                 late_events=runner.metrics.late_events,
                 out_of_order_events=runner.metrics.out_of_order_events,
                 late_events_dropped=runner.metrics.late_events_dropped,
@@ -550,6 +572,8 @@ def collect_events(
                 write_latency_seconds=write_latency_seconds,
                 temporal_policy=temporal_policy,
                 event_gap_seconds=runner.metrics.max_event_gap_seconds,
+                gaps_total=runner.metrics.gaps_total,
+                gap_irreparable_total=runner.metrics.gap_irreparable_total,
                 late_events=runner.metrics.late_events,
             )
         events_out = list(handler.events)
@@ -570,6 +594,8 @@ def collect_events(
         write_latency_seconds = _safe_float(getattr(sink_impl, "write_latency_seconds", 0.0), 0.0) if sink_impl is not None else 0.0
         events_persisted = _safe_int(getattr(sink_impl, "persisted_count", 0), 0) if sink_impl is not None else 0
         event_gap_seconds = _safe_float(getattr(runner, "metrics", None).max_event_gap_seconds if runner else 0.0)
+        gaps_total = _safe_int(getattr(runner, "metrics", None).gaps_total if runner else 0)
+        gap_irreparable_total = _safe_int(getattr(runner, "metrics", None).gap_irreparable_total if runner else 0)
         late_events = _safe_int(getattr(runner, "metrics", None).late_events if runner else 0)
         out_of_order_events = _safe_int(getattr(runner, "metrics", None).out_of_order_events if runner else 0)
         late_events_dropped = _safe_int(getattr(runner, "metrics", None).late_events_dropped if runner else 0)
@@ -623,6 +649,8 @@ def collect_events(
                     write_latency_seconds=write_latency_seconds,
                     temporal_policy=temporal_policy,
                     event_gap_seconds=event_gap_seconds,
+                    gaps_total=gaps_total,
+                    gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
                     out_of_order_events=out_of_order_events,
                     late_events_dropped=late_events_dropped,
@@ -644,6 +672,8 @@ def collect_events(
                     write_latency_seconds=write_latency_seconds,
                     temporal_policy=temporal_policy,
                     event_gap_seconds=event_gap_seconds,
+                    gaps_total=gaps_total,
+                    gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
                 )
             raise err
@@ -695,6 +725,8 @@ def collect_events(
                     write_latency_seconds=write_latency_seconds,
                     temporal_policy=temporal_policy,
                     event_gap_seconds=event_gap_seconds,
+                    gaps_total=gaps_total,
+                    gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
                     out_of_order_events=out_of_order_events,
                     late_events_dropped=late_events_dropped,
@@ -716,6 +748,8 @@ def collect_events(
                     write_latency_seconds=write_latency_seconds,
                     temporal_policy=temporal_policy,
                     event_gap_seconds=event_gap_seconds,
+                    gaps_total=gaps_total,
+                    gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
                 )
             return []
@@ -766,8 +800,10 @@ def collect_events(
                 processing_latency_seconds=0.0,
                 write_latency_seconds=write_latency_seconds,
                 temporal_policy=temporal_policy,
-                event_gap_seconds=event_gap_seconds,
-                late_events=late_events,
+                    event_gap_seconds=event_gap_seconds,
+                    gaps_total=gaps_total,
+                    gap_irreparable_total=gap_irreparable_total,
+                    late_events=late_events,
                 out_of_order_events=out_of_order_events,
                 late_events_dropped=late_events_dropped,
                 late_event_max_delay_seconds=late_event_max_delay_seconds,
@@ -787,9 +823,11 @@ def collect_events(
                 processing_latency_seconds=0.0,
                 write_latency_seconds=write_latency_seconds,
                 temporal_policy=temporal_policy,
-                event_gap_seconds=event_gap_seconds,
-                late_events=late_events,
-            )
+                    event_gap_seconds=event_gap_seconds,
+                    gaps_total=gaps_total,
+                    gap_irreparable_total=gap_irreparable_total,
+                    late_events=late_events,
+                )
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out

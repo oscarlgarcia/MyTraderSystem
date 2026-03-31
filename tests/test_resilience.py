@@ -7,10 +7,15 @@ import pytest
 from app.common.dto import MarketEvent
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
+from app.marketdata.models import TradeEvent
 
 
 def make_ev(ts: datetime) -> MarketEvent:
     return MarketEvent(symbol="BTCUSDT", event_ts=ts, price=1.0, size=1.0, source="trade")
+
+
+def make_ev_for(symbol: str, ts: datetime) -> MarketEvent:
+    return MarketEvent(symbol=symbol, event_ts=ts, price=1.0, size=1.0, source="trade")
 
 
 def test_reconnect_after_drop(monkeypatch):
@@ -323,3 +328,102 @@ def test_snapshot_resync_does_not_duplicate_recent_stream_events():
     ]
     assert runner.metrics.snapshot_runs == 1
     assert runner.metrics.snapshot_duplicates_skipped == 1
+
+
+def test_multi_symbol_interleaving_does_not_create_false_late_or_gap_metrics():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [
+        make_ev_for("BTCUSDT", base + timedelta(seconds=20)),
+        make_ev_for("ETHUSDT", base + timedelta(seconds=5)),
+        make_ev_for("BTCUSDT", base + timedelta(seconds=25)),
+        make_ev_for("ETHUSDT", base + timedelta(seconds=10)),
+    ]
+    handled = []
+
+    def stream():
+        for ev in events:
+            yield ev
+
+    runner = ResilientRunner(
+        stream_fn=stream,
+        snapshot_fn=None,
+        lag_threshold_seconds=2,
+        sleeper=lambda s: None,
+    )
+    runner.run(lambda ev: handled.append((ev.symbol, ev.event_ts)), stop_on_complete=True)
+
+    assert handled == [(ev.symbol, ev.event_ts) for ev in events]
+    assert runner.metrics.late_events == 0
+    assert runner.metrics.out_of_order_events == 0
+    assert runner.metrics.max_event_gap_seconds == 5.0
+    assert runner.metrics.last_event_gap_seconds == 5.0
+    assert set(runner.metrics.temporal_streams) == {
+        "BINANCE:BTCUSDT:trade",
+        "BINANCE:ETHUSDT:trade",
+    }
+    assert runner.metrics.temporal_streams["BINANCE:BTCUSDT:trade"]["max_event_gap_seconds"] == 5.0
+    assert runner.metrics.temporal_streams["BINANCE:ETHUSDT:trade"]["max_event_gap_seconds"] == 5.0
+
+
+def test_broken_sequence_generates_detectable_gap():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=base,
+            receive_ts=base,
+            process_ts=base,
+            venue="BINANCE",
+            source_id="1",
+            price=100.0,
+            size=1.0,
+            trade_id="1",
+        ),
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=base + timedelta(seconds=1),
+            receive_ts=base + timedelta(seconds=1),
+            process_ts=base + timedelta(seconds=1),
+            venue="BINANCE",
+            source_id="3",
+            price=101.0,
+            size=1.0,
+            trade_id="3",
+        ),
+    ]
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(events),
+        snapshot_fn=None,
+        lag_threshold_seconds=60,
+        sleeper=lambda s: None,
+    )
+    runner.run(lambda ev: None, stop_on_complete=True)
+
+    stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:trade"]
+    assert runner.metrics.gaps_total == 1
+    assert runner.metrics.gap_irreparable_total == 1
+    assert stream_metrics["gap_detected"] is True
+    assert stream_metrics["gap_irreparable"] is True
+    assert stream_metrics["last_gap_detection_mode"] == "sequence_gap_detection"
+    assert stream_metrics["last_gap_missing_count"] == 1
+
+
+def test_temporal_gap_heuristic_is_marked_weak_not_strong():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [make_ev(base), make_ev(base + timedelta(seconds=10))]
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(events),
+        snapshot_fn=None,
+        lag_threshold_seconds=2,
+        sleeper=lambda s: None,
+    )
+    runner.run(lambda ev: None, stop_on_complete=True)
+
+    stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:trade"]
+    assert runner.metrics.gaps_total == 1
+    assert runner.metrics.gap_irreparable_total == 0
+    assert stream_metrics["gap_detected"] is True
+    assert stream_metrics["gap_irreparable"] is False
+    assert stream_metrics["last_gap_detection_mode"] == "weak_gap_detection"
+    assert stream_metrics["last_gap_missing_count"] == 0
+    assert stream_metrics["last_gap_seconds"] == 10.0

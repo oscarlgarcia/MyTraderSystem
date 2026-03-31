@@ -1,7 +1,7 @@
 # Especificacion tecnica y funcional
 
 ## Componentes principales
-- **Ingestion**: normaliza `MarketEvent` desde WS/REST, escribe Parquet en modo live y provee fixtures dry.
+- **Ingestion**: normaliza `MarketEvent` desde WS/REST, escribe normalized Parquet v2 en modo live y provee fixtures dry.
 - **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
@@ -157,7 +157,12 @@
 ## Supuestos y limites
 - No se anaden dependencias externas adicionales.
 - La deduplicacion usa la tupla `(symbol, event_ts, price, size, source)` como identidad canonica.
-- La identidad puede especializarse por `source`, pero solo sobre campos que ya existen en live y storage.
+- La regla anterior ya no es la primera opcion. La jerarquia actual es:
+  - `trade_id`
+  - `sequence_id`
+  - `source_id`
+  - fallback heuristico `(symbol, event_ts, price, size, source)`
+- La identidad puede especializarse por `source` mediante `IdentityProvider`, pero solo sobre campos que ya existen en live y storage.
 - `Deduplicator` expira por TTL y recorta por capacidad; esto acota memoria pero no garantiza supresion infinita de duplicados.
 - El checkpoint contiene solo estado minimo de continuidad; no pretende resolver offsets generales ni exactly-once.
 - La deduplicacion de backfill es opt-in; la de live sigue controlada por `--ingest-dedup`.
@@ -176,6 +181,158 @@
 
 ## Relaciones
 `WS/REST -> MarketEvent -> dedup/Parquet -> FeatureVector -> Strategy -> Risk -> Execution -> Portfolio -> Logs/Metrics`
+
+## Contrato canonico tipado
+- `app.marketdata.models` introduce una capa de contratos tipados para market data:
+  - `TradeEvent`: `price`, `size`, `trade_id`, `side`
+  - `BarEvent`: `open`, `high`, `low`, `close`, `volume`, `interval`
+  - `BookEvent`: `bid_price`, `bid_size`, `ask_price`, `ask_size`, `sequence_id`
+- Todos comparten:
+  - `symbol`
+  - `exchange_ts`
+  - `receive_ts`
+  - `process_ts`
+  - `venue`
+  - `source_id`
+  - `metadata`
+- Compatibilidad transitoria:
+  - `legacy_market_event_to_trade(...)`
+  - `legacy_market_event_to_bar(...)`
+  - `typed_event_to_legacy(...)`
+  - `ensure_legacy_market_event(...)`
+- El objetivo de esta fase es abrir el contrato nuevo sin romper el stack actual:
+  - `Source` y `EventSink` aceptan eventos tipados
+  - `ParquetWriter`, `ResilientRunner` y `collect_events` siguen usando `MarketEvent` legacy como representacion operativa interna hasta que se complete la migracion del modelo.
+
+## Semantica temporal oficial
+- Campos temporales del contrato tipado:
+  - `exchange_ts`: timestamp del mercado/exchange que representa el evento
+  - `receive_ts`: instante en el que el conector local recibe el mensaje/respuesta
+  - `process_ts`: instante en el que el evento ya esta normalizado o, si faltaba, es aceptado por el runner
+- Mapping actual por feed Binance:
+  - trade -> `exchange_ts = E`
+  - kline -> `exchange_ts = k.T` si viene en payload; fallback a `E`
+  - `open_ts = k.t`
+  - `close_ts = k.T`
+- Regla de compatibilidad legacy:
+  - `MarketEvent.event_ts` se interpreta como `exchange_ts`
+  - `receive_ts` y `process_ts` se preservan temporalmente en `metadata` al convertir typed -> legacy
+- Invariante temporal objetivo de esta fase:
+  - cuando el feed se captura en el conector local, debe cumplirse `exchange_ts <= receive_ts <= process_ts`
+  - si una fuente custom inyecta un evento sin `process_ts`, `ResilientRunner` lo completa al aceptarlo
+- Watermark runtime actual:
+  - `app.marketdata.temporal_state.TemporalPartitionKey = (venue, symbol, stream_type)`
+  - `ResilientRunner` mantiene `last_event_ts`, gaps y late metrics por esa clave
+  - las metricas agregadas del run (`event_gap_seconds`, `late_events`, `late_event_max_delay_seconds`) se calculan a partir de esos estados por stream
+- Gap detection actual:
+  - `app.marketdata.gaps.detect_gap(...)`
+  - prioridad:
+    1. `sequence_gap_detection` si hay `trade_id` o `sequence_id` numerico y la secuencia salta
+    2. `weak_gap_detection` si no hay secuencia usable y el hueco temporal supera `lag_threshold_seconds`
+  - metricas agregadas:
+    - `gaps_total`
+    - `gap_irreparable_total`
+- Semantica de fuerza:
+  - `sequence_gap_detection` = evidencia fuerte de gap
+  - `weak_gap_detection` = heuristica operativa, no garantia fuerte
+- Semantica de irreparabilidad:
+  - hoy solo se promociona a `gap_irreparable` un gap fuerte sin snapshot/recovery disponible
+  - un gap heuristico no se promociona a irreparable por si solo
+- Estado persistente actual:
+  - el runtime mantiene watermarks por stream
+  - el checkpoint local persiste cursor/watermark/dedup window por stream
+  - ademas conserva `last_event_ts` global maximo por compatibilidad con readers legacy
+- Limitacion deliberada:
+  - el cursor por stream es best-effort y deriva de `trade_id`, `sequence_id` o `source_id` cuando existen
+  - no equivale a un offset transaccional del exchange
+
+## Raw landing append-only
+- `app.marketdata.raw_sink` introduce la capa raw minima:
+  - `RawRecord`
+  - `RawSink`
+  - `JsonlRawSink`
+- Layout actual:
+  - `<data_dir>/raw/env=<env>/venue=<venue>/stream_type=<stream_type>/symbol=<symbol>/date=<yyyy-mm-dd>/events.jsonl`
+- Campos persistidos por registro:
+  - `payload`
+  - `venue`
+  - `stream_type`
+  - `symbol`
+  - `exchange_ts`
+  - `receive_ts`
+  - `trace_id`
+  - `source_id`
+- Regla operativa:
+  - solo mensajes raw validos llegan al raw landing
+  - `BinanceSource` escribe el raw inmediatamente despues de validar+normalizar y antes de entregar el evento al sink normalized
+  - si el sink normalized falla despues, el raw ya queda preservado
+- Esta capa no versiona todavia el raw schema; el replay se apoya en ella para re-normalizar de forma determinista, pero la evolucion del contrato raw sigue siendo minima y controlada.
+
+## ReplaySource determinista
+- `app.marketdata.replay.ReplaySource` implementa el contrato `Source` leyendo desde raw landing.
+- Orden de replay:
+  - primario: `receive_ts`
+  - secundario: path de particion
+  - terciario: numero de linea dentro de `events.jsonl`
+- Filtros soportados:
+  - `venue`
+  - `stream_types`
+  - `symbol`
+  - `start_ts`
+  - `end_ts`
+- Velocidades soportadas:
+  - `full-speed`: sin pausas entre eventos
+  - `step-by-step`: pausa fija `step_seconds` entre eventos via `sleeper` inyectable
+- Determinismo:
+  - el replay re-normaliza desde raw, no desde normalized
+  - `normalizer_version` se resuelve de forma explicita antes de re-normalizar y se inyecta en `metadata` del evento re-normalizado para fijar la version del contrato usada
+  - la politica actual es global y solo soporta `normalizer_version="v1"`
+- Limitacion actual:
+  - el raw layout no guarda un contador global de orden entre particiones; el merge multi-particion es determinista, pero la garantia mas fuerte de orden exacto aplica a la secuencia append-only dentro de cada fichero raw.
+
+## Validacion explicita por tipo
+- `app.marketdata.validators` fija reglas explicitas por feed y por evento:
+  - payloads `trade`: `s`, `E`, `p`, `q`, numericos finitos y no negativos
+  - payloads `kline`: `s`, `E`, `k`, `c`, `q` y, cuando vienen `o/h/l/t/T`, consistencia OHLC y orden temporal
+  - `TradeEvent`: precio/tamano finitos y no negativos, `exchange_ts` saneado y `process_ts >= receive_ts`
+  - `BarEvent`: OHLC consistente, volumen no negativo y `close_ts >= open_ts`
+  - `BookEvent`: libro no cruzado, tamanos/precios finitos y no negativos
+- Regla operativa:
+  - payload raw invalido de `BinanceSource` -> `ErrorSink` / DLQ local
+  - evento tipado invalido inyectado por una fuente custom -> fallo rapido del source
+- Se considera timestamp absurdo cualquier timestamp con mas de 5 minutos de adelanto respecto al reloj del proceso.
+
+## Normalized storage v2
+- `app.ingestion.storage` escribe ahora en:
+  - `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - `<data_dir>/normalized/books/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+- El schema `v2` a?ade:
+  - `venue`
+  - `feed_type`
+  - `normalizer_version`
+  - y conserva:
+    - `symbol`
+    - `event_ts`
+    - `price`
+    - `size`
+    - `source`
+    - `metadata`
+- Compatibilidad de migracion:
+  - `read_parquet(...)` acepta `schema_version` `v1` y `v2`
+  - al mergear una particion nueva, si solo existe un fichero legacy `v1`, el writer lo lee y lo adapta al schema `v2`
+  - la escritura nueva ya no genera particiones legacy
+  - toda escritura `v2` persiste `normalizer_version` tanto como columna como en metadata de Parquet
+
+## Politica de versionado de normalizacion
+- La version de normalizacion actual se define de forma centralizada en `app.marketdata.normalization.NORMALIZER_VERSION`.
+- En esta fase la politica es deliberadamente simple:
+  - una version global unica para todos los feeds soportados
+  - valor actual: `v1`
+- Reglas operativas:
+  - un cambio incompatible en la semantica de normalizacion requiere introducir una nueva version
+  - no se debe reusar `v1` para cambiar silenciosamente el significado de los datasets ya persistidos
+  - `ReplaySource` solo acepta versiones soportadas explicitamente
 
 ## Readiness operativa
 - La validacion de readiness queda fijada en:
