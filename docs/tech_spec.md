@@ -54,6 +54,7 @@
   - `checkpoint_store` permite inyectar un store explicito; si no se pasa y live usa el wiring real, se usa el store local por defecto.
   - live usa `Deduplicator` tanto en `ResilientRunner` como en la barrera defensiva previa al sink; ambos comparten la misma politica de identidad aunque no el mismo estado interno.
   - el summary final distingue `events_out` (aceptados por ingestion) de `events_persisted` (confirmados por el sink por defecto).
+  - el cierre emite `ingestion summary` e `ingestion health`, ambos correlacionables por `trace_id`.
 - `app.ingestion.sources.BinanceSource(cfg).stream(end_time) -> Iterable[MarketEvent]`
   - Reutiliza `build_ws_url` y `parse_message`, preservando el comportamiento Binance actual.
   - Si recibe raw payload invalido o tipo desconocido, lo registra en `ErrorSink` y continua.
@@ -74,7 +75,7 @@
 
 ## Ingestion y backfill
 - **Live**:
-  - `ResilientRunner` maneja reconexion, buffer y lag.
+  - `ResilientRunner` maneja reconexion, buffer, lag y contadores de snapshot (`snapshot_runs`, `snapshot_rows`).
   - `collect_events` ya no depende directamente de Binance ni de `ParquetWriter`; consume un `Source` y un `EventSink`.
   - Los errores se clasifican como `source`, `parse`, `validation` o `sink`, y como `transient` o `permanent`.
   - Solo `source/transient` se reintentan en `ResilientRunner`.
@@ -96,13 +97,22 @@
     - `drop_oldest`
     - `drop_newest`
     - `fail`
-  - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `batch_size`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
+  - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `batch_size`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `write_latency_seconds`.
   - Ademas se emite `ingestion summary` como JSON consolidado con:
+    - `source_events_in`: elementos vistos en la fuente antes de validacion
+    - `events_valid`: eventos aceptados por `Source` tras validacion
+    - `events_invalid`: payloads o filas rechazadas antes de llegar al runner
     - `events_in`: eventos observados por source/snapshot antes de dedup del runner
     - `events_out`: eventos unicos realmente entregados al pipeline y devueltos por `collect_events`
     - `events_persisted`: eventos ya confirmados por el sink al cerrar la ejecucion
+    - `events_dedup_skipped`: duplicados filtrados por runner y por la barrera defensiva previa al sink
+    - `events_buffer_dropped`: eventos descartados por politicas `drop_*`
+    - `snapshot_runs`, `snapshot_rows`
+    - `processing_latency_seconds`: edad maxima del evento al ser aceptado por el pipeline
+    - `write_latency_seconds`: latencia maxima observada en `flush()` del sink por defecto
     - `duplicates_dropped`: suma de duplicados filtrados por runner y por la barrera defensiva previa al writer
     - `reconnects`, `buffer_skipped`, `buffer_overflows`, `buffer_pauses`, `buffer_drop_oldest`, `buffer_drop_newest`, `buffer_failures`, `backpressure_policy`, `max_latency_seconds`, `dedup_on`, `batch_size`
+  - `ingestion health` resume el estado final de la ejecucion para dashboards o chequeos operativos: `result`, `source_events_in`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `reconnects`, `processing_latency_seconds`, `write_latency_seconds`.
   - Si live falla, el comportamiento depende de `error_policy`. Errores `sink` nunca se convierten en fallback/degraded.
   - En `fast-path`, se omite el resumen de cierre de ingest live para reducir overhead de logging, pero se mantiene el log final de `pipeline ok`.
   - Si `buffer_skipped > ingest_buffer_warn` o `max_latency_seconds > ingest_lag_warn`, `collect_events` emite un `WARNING` una vez por ciclo live.
@@ -147,7 +157,7 @@
 - La deduplicacion de backfill es opt-in; la de live sigue controlada por `--ingest-dedup`.
 - `ParquetWriter(dedup=True)` sigue actuando como barrera defensiva sobre particiones ya existentes.
 - La persistencia sigue siendo por particion `symbol/date`; el cambio de esta fase endurece atomicidad y visibilidad de estado, no rediseña el layout.
-- El resumen agregado de ingest no introduce un sistema nuevo de metricas; reutiliza los contadores ya disponibles en `ResilientRunner` y en el handler live.
+- El resumen agregado de ingest no introduce un sistema nuevo de metricas; reutiliza `SourceStats`, `ResilientRunner` y los contadores/latencias del sink por defecto.
 
 ## Relaciones
 `WS/REST -> MarketEvent -> dedup/Parquet -> FeatureVector -> Strategy -> Risk -> Execution -> Portfolio -> Logs/Metrics`

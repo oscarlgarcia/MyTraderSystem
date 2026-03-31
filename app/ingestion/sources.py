@@ -31,6 +31,11 @@ class Source(Protocol):
 
 @dataclass
 class SourceStats:
+    source_events_in: int = 0
+    events_valid: int = 0
+    events_invalid: int = 0
+    snapshot_runs: int = 0
+    snapshot_rows: int = 0
     rejected_payloads: int = 0
     error_sink_failures: int = 0
 
@@ -72,6 +77,7 @@ class BinanceSource:
             )
 
     def _record_rejected(self, raw_message: object, error: IngestionError, *, context: dict[str, object]) -> None:
+        self.stats.events_invalid += 1
         self.stats.rejected_payloads += 1
         try:
             self.error_sink.write(raw_message, error, context=context)
@@ -91,12 +97,16 @@ class BinanceSource:
         url = build_ws_url(self.cfg.ws_base, self.cfg.symbols)
         try:
             for item in self.ws_stream(url, end_time=end_time):
+                self.stats.source_events_in += 1
                 if isinstance(item, MarketEvent):
                     validator.validate_market_payload(item.symbol, item.event_ts, item.price, item.size)
+                    self.stats.events_valid += 1
                     yield item
                     continue
                 try:
-                    yield parse_message(str(item))
+                    event = parse_message(str(item))
+                    self.stats.events_valid += 1
+                    yield event
                 except (json.JSONDecodeError, KeyError) as exc:
                     self._record_rejected(
                         item,
@@ -119,14 +129,19 @@ class BinanceSource:
     def snapshot(self) -> Iterable[MarketEvent]:
         events: list[MarketEvent] = []
         try:
+            self.stats.snapshot_runs += 1
             for symbol in self.cfg.symbols:
                 url = f"{self.cfg.rest_base.rstrip('/')}/api/v3/klines"
                 resp = self.http_get(url, params={"symbol": symbol, "interval": "1m", "limit": 5}, timeout=5.0)
                 resp.raise_for_status()
                 for row in resp.json():
+                    self.stats.source_events_in += 1
                     payload = {"s": symbol, "E": int(row[6]), "k": {"c": row[4], "q": row[5]}}
                     try:
-                        events.append(normalize_kline(payload))
+                        event = normalize_kline(payload)
+                        events.append(event)
+                        self.stats.events_valid += 1
+                        self.stats.snapshot_rows += 1
                     except ValueError as exc:
                         self._record_rejected(
                             payload,
@@ -143,10 +158,20 @@ class BinanceSource:
 class StaticSource:
     events: list[MarketEvent] = field(default_factory=list)
     snapshot_events: Optional[list[MarketEvent]] = None
+    stats: SourceStats = field(default_factory=SourceStats)
 
     def stream(self, end_time: float | None = None) -> Iterable[MarketEvent]:
         del end_time
-        yield from self.events
+        for event in self.events:
+            self.stats.source_events_in += 1
+            self.stats.events_valid += 1
+            yield event
 
     def snapshot(self) -> Optional[Iterable[MarketEvent]]:
+        self.stats.snapshot_runs += 1
+        if self.snapshot_events is None:
+            return None
+        self.stats.source_events_in += len(self.snapshot_events)
+        self.stats.events_valid += len(self.snapshot_events)
+        self.stats.snapshot_rows += len(self.snapshot_events)
         return self.snapshot_events

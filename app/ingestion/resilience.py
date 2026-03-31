@@ -43,6 +43,8 @@ class ResilienceMetrics:
     buffer_drop_oldest: int = 0
     buffer_drop_newest: int = 0
     buffer_failures: int = 0
+    snapshot_runs: int = 0
+    snapshot_rows: int = 0
     last_latency_seconds: float = 0.0
     max_latency_seconds: float = 0.0
 
@@ -262,7 +264,9 @@ class ResilientRunner:
     def _resync(self, handler: Callable[[MarketEvent], None]) -> None:
         if not self.snapshot_fn:
             return
+        self.metrics.snapshot_runs += 1
         for ev in self.snapshot_fn():
+            self.metrics.snapshot_rows += 1
             self.metrics.events_in += 1
             k = _key(ev)
             if self.dedup_enabled and self.deduplicator.contains_key(k):

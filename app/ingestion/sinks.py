@@ -64,3 +64,11 @@ class ParquetEventSink:
     @property
     def buffered_count(self) -> int:
         return self.writer.buffered_events
+
+    @property
+    def write_latency_seconds(self) -> float:
+        return self.writer.max_write_latency_seconds
+
+    @property
+    def last_write_latency_seconds(self) -> float:
+        return self.writer.last_write_latency_seconds

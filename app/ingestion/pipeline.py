@@ -22,6 +22,20 @@ from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _synthetic_events(max_events: int) -> List[MarketEvent]:
     now = time.time()
     events: List[MarketEvent] = []
@@ -104,13 +118,37 @@ def _emit_ingestion_summary(
     error_severity: str | None = None,
     rejected_payloads: int = 0,
     error_sink_failures: int = 0,
+    source_events_in: int | None = None,
+    events_valid: int | None = None,
+    events_invalid: int | None = None,
+    events_dedup_skipped: int | None = None,
+    events_buffer_dropped: int | None = None,
+    snapshot_runs: int = 0,
+    snapshot_rows: int = 0,
+    processing_latency_seconds: float | None = None,
+    write_latency_seconds: float = 0.0,
 ) -> None:
+    events_invalid = rejected_payloads if events_invalid is None else events_invalid
+    events_dedup_skipped = duplicates_dropped if events_dedup_skipped is None else events_dedup_skipped
+    events_buffer_dropped = buffer_skipped if events_buffer_dropped is None else events_buffer_dropped
+    source_events_in = events_in if source_events_in is None else source_events_in
+    events_valid = events_in if events_valid is None else events_valid
+    processing_latency_seconds = (
+        max_latency_seconds if processing_latency_seconds is None else processing_latency_seconds
+    )
     payload = {
         "mode": mode,
         "env": cfg.env,
         "events_in": int(events_in),
         "events_out": int(events_out),
         "events_persisted": int(events_persisted),
+        "source_events_in": int(source_events_in),
+        "events_valid": int(events_valid),
+        "events_invalid": int(events_invalid),
+        "events_dedup_skipped": int(events_dedup_skipped),
+        "events_buffer_dropped": int(events_buffer_dropped),
+        "snapshot_runs": int(snapshot_runs),
+        "snapshot_rows": int(snapshot_rows),
         "reconnects": int(reconnects),
         "buffer_skipped": int(buffer_skipped),
         "buffer_overflows": int(buffer_overflows),
@@ -120,6 +158,8 @@ def _emit_ingestion_summary(
         "buffer_failures": int(buffer_failures),
         "backpressure_policy": backpressure_policy,
         "max_latency_seconds": float(max_latency_seconds),
+        "processing_latency_seconds": float(processing_latency_seconds),
+        "write_latency_seconds": float(write_latency_seconds),
         "dedup_on": bool(dedup_on),
         "batch_size": int(max(1, batch_size)),
         "duplicates_dropped": int(duplicates_dropped),
@@ -135,6 +175,41 @@ def _emit_ingestion_summary(
     logger.info(
         "ingestion summary",
         extra=payload,
+    )
+
+
+def _emit_health_summary(
+    logger: logging.Logger,
+    *,
+    mode: str,
+    cfg: AppConfig,
+    result: str,
+    source_events_in: int,
+    events_invalid: int,
+    events_dedup_skipped: int,
+    events_buffer_dropped: int,
+    events_persisted: int,
+    snapshot_runs: int,
+    reconnects: int,
+    processing_latency_seconds: float,
+    write_latency_seconds: float,
+) -> None:
+    logger.info(
+        "ingestion health",
+        extra={
+            "mode": mode,
+            "env": cfg.env,
+            "result": result,
+            "source_events_in": int(source_events_in),
+            "events_invalid": int(events_invalid),
+            "events_dedup_skipped": int(events_dedup_skipped),
+            "events_buffer_dropped": int(events_buffer_dropped),
+            "events_persisted": int(events_persisted),
+            "snapshot_runs": int(snapshot_runs),
+            "reconnects": int(reconnects),
+            "processing_latency_seconds": float(processing_latency_seconds),
+            "write_latency_seconds": float(write_latency_seconds),
+        },
     )
 
 
@@ -252,6 +327,30 @@ def collect_events(
                 error_policy=effective_error_policy,
                 rejected_payloads=getattr(source_rejected, "rejected_payloads", 0),
                 error_sink_failures=getattr(source_rejected, "error_sink_failures", 0),
+                source_events_in=getattr(source_rejected, "source_events_in", len(events_out)),
+                events_valid=getattr(source_rejected, "events_valid", len(events_out)),
+                events_invalid=getattr(source_rejected, "events_invalid", 0),
+                events_dedup_skipped=0,
+                events_buffer_dropped=0,
+                snapshot_runs=getattr(source_rejected, "snapshot_runs", 0),
+                snapshot_rows=getattr(source_rejected, "snapshot_rows", 0),
+                processing_latency_seconds=0.0,
+                write_latency_seconds=0.0,
+            )
+            _emit_health_summary(
+                logger,
+                mode="dry",
+                cfg=cfg,
+                result="ok",
+                source_events_in=getattr(source_rejected, "source_events_in", len(events_out)),
+                events_invalid=getattr(source_rejected, "events_invalid", 0),
+                events_dedup_skipped=0,
+                events_buffer_dropped=0,
+                events_persisted=len(events_out),
+                snapshot_runs=getattr(source_rejected, "snapshot_runs", 0),
+                reconnects=0,
+                processing_latency_seconds=0.0,
+                write_latency_seconds=0.0,
             )
         if compute_features_after:
             run_feature_pipeline(events_out)
@@ -275,6 +374,9 @@ def collect_events(
                 },
             )
 
+    runner: ResilientRunner | None = None
+    sink_impl: EventSink | None = None
+    handler: _LiveBatchHandler | None = None
     try:
         end_time = time.time() + duration_s if duration_s else None
 
@@ -330,11 +432,19 @@ def collect_events(
             buffer_warn_threshold=buffer_warn_threshold,
         )
         if summary_logging:
+            events_persisted = _safe_int(getattr(sink_impl, "persisted_count", len(handler.events)), len(handler.events))
+            write_latency_seconds = _safe_float(getattr(sink_impl, "write_latency_seconds", 0.0), 0.0)
+            source_events_in = _safe_int(getattr(source_stats, "source_events_in", runner.metrics.events_in), runner.metrics.events_in)
+            events_valid = _safe_int(getattr(source_stats, "events_valid", runner.metrics.events_in), runner.metrics.events_in)
+            events_invalid = _safe_int(getattr(source_stats, "events_invalid", getattr(source_stats, "rejected_payloads", 0)), getattr(source_stats, "rejected_payloads", 0))
+            events_dedup_skipped = _safe_int(runner.metrics.dedup_skipped + stats["duplicates_dropped"])
+            snapshot_runs = _safe_int(getattr(source_stats, "snapshot_runs", runner.metrics.snapshot_runs), runner.metrics.snapshot_runs)
+            snapshot_rows = _safe_int(getattr(source_stats, "snapshot_rows", runner.metrics.snapshot_rows), runner.metrics.snapshot_rows)
             logger.info(
                 "ingestion live complete",
                 extra={
                     "events_written": stats["written"],
-                    "events_persisted": int(getattr(sink_impl, "persisted_count", stats["written"])),
+                    "events_persisted": events_persisted,
                     "duplicates_dropped": stats["duplicates_dropped"],
                     "batch_size": max(1, batch_size),
                     "env": cfg.env,
@@ -347,6 +457,7 @@ def collect_events(
                     "buffer_failures": runner.metrics.buffer_failures,
                     "backpressure_policy": backpressure_policy,
                     "max_latency_seconds": runner.metrics.max_latency_seconds,
+                    "write_latency_seconds": write_latency_seconds,
                 },
             )
             _emit_ingestion_summary(
@@ -355,7 +466,7 @@ def collect_events(
                 cfg=cfg,
                 events_in=runner.metrics.events_in,
                 events_out=len(handler.events),
-                events_persisted=int(getattr(sink_impl, "persisted_count", len(handler.events))),
+                events_persisted=events_persisted,
                 reconnects=runner.metrics.reconnects,
                 buffer_skipped=runner.metrics.buffer_skipped,
                 buffer_overflows=runner.metrics.buffer_overflows,
@@ -371,6 +482,30 @@ def collect_events(
                 error_policy=effective_error_policy,
                 rejected_payloads=getattr(source_stats, "rejected_payloads", 0),
                 error_sink_failures=getattr(source_stats, "error_sink_failures", 0),
+                source_events_in=source_events_in,
+                events_valid=events_valid,
+                events_invalid=events_invalid,
+                events_dedup_skipped=events_dedup_skipped,
+                events_buffer_dropped=runner.metrics.buffer_skipped,
+                snapshot_runs=snapshot_runs,
+                snapshot_rows=snapshot_rows,
+                processing_latency_seconds=runner.metrics.max_latency_seconds,
+                write_latency_seconds=write_latency_seconds,
+            )
+            _emit_health_summary(
+                logger,
+                mode="live",
+                cfg=cfg,
+                result="ok",
+                source_events_in=source_events_in,
+                events_invalid=events_invalid,
+                events_dedup_skipped=events_dedup_skipped,
+                events_buffer_dropped=runner.metrics.buffer_skipped,
+                events_persisted=events_persisted,
+                snapshot_runs=snapshot_runs,
+                reconnects=runner.metrics.reconnects,
+                processing_latency_seconds=runner.metrics.max_latency_seconds,
+                write_latency_seconds=write_latency_seconds,
             )
         events_out = list(handler.events)
         if compute_features_after:
@@ -378,6 +513,17 @@ def collect_events(
         return events_out
     except Exception as exc:  # pragma: no cover - explicit policy validated by unit tests
         err = exc if isinstance(exc, IngestionError) else IngestionError("source", "permanent", str(exc))
+        source_events_in = _safe_int(getattr(source_stats, "source_events_in", getattr(runner, "metrics", None).events_in if runner else 0))
+        events_valid = _safe_int(getattr(source_stats, "events_valid", getattr(runner, "metrics", None).events_in if runner else 0))
+        events_invalid = _safe_int(getattr(source_stats, "events_invalid", getattr(source_stats, "rejected_payloads", 0)))
+        events_dedup_skipped = _safe_int((getattr(runner, "metrics", None).dedup_skipped if runner else 0) + (0 if handler is None else handler.stats["duplicates_dropped"]))
+        events_buffer_dropped = _safe_int(getattr(runner, "metrics", None).buffer_skipped if runner else 0)
+        snapshot_runs = _safe_int(getattr(source_stats, "snapshot_runs", getattr(runner, "metrics", None).snapshot_runs if runner else 0))
+        snapshot_rows = _safe_int(getattr(source_stats, "snapshot_rows", getattr(runner, "metrics", None).snapshot_rows if runner else 0))
+        reconnects = _safe_int(getattr(runner, "metrics", None).reconnects if runner else 0)
+        processing_latency_seconds = _safe_float(getattr(runner, "metrics", None).max_latency_seconds if runner else 0.0)
+        write_latency_seconds = _safe_float(getattr(sink_impl, "write_latency_seconds", 0.0), 0.0) if sink_impl is not None else 0.0
+        events_persisted = _safe_int(getattr(sink_impl, "persisted_count", 0), 0) if sink_impl is not None else 0
         if err.category == "sink" or effective_error_policy == "fail_fast":
             logger.error(
                 "ingestion failed",
@@ -388,6 +534,57 @@ def collect_events(
                     "error_policy": effective_error_policy,
                 },
             )
+            if summary_logging:
+                _emit_ingestion_summary(
+                    logger,
+                    mode="live",
+                    cfg=cfg,
+                    events_in=int(getattr(runner, "metrics", None).events_in if runner else 0),
+                    events_out=len(handler.events) if handler is not None else 0,
+                    events_persisted=events_persisted,
+                    reconnects=reconnects,
+                    buffer_skipped=events_buffer_dropped,
+                    buffer_overflows=int(getattr(runner, "metrics", None).buffer_overflows if runner else 0),
+                    buffer_pauses=int(getattr(runner, "metrics", None).buffer_pauses if runner else 0),
+                    buffer_drop_oldest=int(getattr(runner, "metrics", None).buffer_drop_oldest if runner else 0),
+                    buffer_drop_newest=int(getattr(runner, "metrics", None).buffer_drop_newest if runner else 0),
+                    buffer_failures=int(getattr(runner, "metrics", None).buffer_failures if runner else 0),
+                    backpressure_policy=backpressure_policy,
+                    max_latency_seconds=processing_latency_seconds,
+                    dedup_on=dedup_enabled,
+                    batch_size=batch_size,
+                    duplicates_dropped=events_dedup_skipped,
+                    result="failed",
+                    error_policy=effective_error_policy,
+                    error_category=err.category,
+                    error_severity=err.severity,
+                    rejected_payloads=getattr(source_stats, "rejected_payloads", 0),
+                    error_sink_failures=getattr(source_stats, "error_sink_failures", 0),
+                    source_events_in=source_events_in,
+                    events_valid=events_valid,
+                    events_invalid=events_invalid,
+                    events_dedup_skipped=events_dedup_skipped,
+                    events_buffer_dropped=events_buffer_dropped,
+                    snapshot_runs=snapshot_runs,
+                    snapshot_rows=snapshot_rows,
+                    processing_latency_seconds=processing_latency_seconds,
+                    write_latency_seconds=write_latency_seconds,
+                )
+                _emit_health_summary(
+                    logger,
+                    mode="live",
+                    cfg=cfg,
+                    result="failed",
+                    source_events_in=source_events_in,
+                    events_invalid=events_invalid,
+                    events_dedup_skipped=events_dedup_skipped,
+                    events_buffer_dropped=events_buffer_dropped,
+                    events_persisted=events_persisted,
+                    snapshot_runs=snapshot_runs,
+                    reconnects=reconnects,
+                    processing_latency_seconds=processing_latency_seconds,
+                    write_latency_seconds=write_latency_seconds,
+                )
             raise err
         if effective_error_policy == "degraded":
             logger.warning(
@@ -425,6 +622,30 @@ def collect_events(
                     error_severity=err.severity,
                     rejected_payloads=getattr(source_stats, "rejected_payloads", 0),
                     error_sink_failures=getattr(source_stats, "error_sink_failures", 0),
+                    source_events_in=source_events_in,
+                    events_valid=events_valid,
+                    events_invalid=events_invalid,
+                    events_dedup_skipped=events_dedup_skipped,
+                    events_buffer_dropped=events_buffer_dropped,
+                    snapshot_runs=snapshot_runs,
+                    snapshot_rows=snapshot_rows,
+                    processing_latency_seconds=processing_latency_seconds,
+                    write_latency_seconds=write_latency_seconds,
+                )
+                _emit_health_summary(
+                    logger,
+                    mode="live",
+                    cfg=cfg,
+                    result="degraded",
+                    source_events_in=source_events_in,
+                    events_invalid=events_invalid,
+                    events_dedup_skipped=events_dedup_skipped,
+                    events_buffer_dropped=events_buffer_dropped,
+                    events_persisted=events_persisted,
+                    snapshot_runs=snapshot_runs,
+                    reconnects=reconnects,
+                    processing_latency_seconds=processing_latency_seconds,
+                    write_latency_seconds=write_latency_seconds,
                 )
             return []
         logger.warning(
@@ -463,6 +684,30 @@ def collect_events(
                 error_severity=err.severity,
                 rejected_payloads=getattr(source_stats, "rejected_payloads", 0),
                 error_sink_failures=getattr(source_stats, "error_sink_failures", 0),
+                source_events_in=max(source_events_in, len(events_out)),
+                events_valid=max(events_valid, len(events_out)),
+                events_invalid=events_invalid,
+                events_dedup_skipped=events_dedup_skipped,
+                events_buffer_dropped=events_buffer_dropped,
+                snapshot_runs=snapshot_runs,
+                snapshot_rows=snapshot_rows,
+                processing_latency_seconds=0.0,
+                write_latency_seconds=write_latency_seconds,
+            )
+            _emit_health_summary(
+                logger,
+                mode="dry",
+                cfg=cfg,
+                result="fallback",
+                source_events_in=max(source_events_in, len(events_out)),
+                events_invalid=events_invalid,
+                events_dedup_skipped=events_dedup_skipped,
+                events_buffer_dropped=events_buffer_dropped,
+                events_persisted=len(events_out),
+                snapshot_runs=snapshot_runs,
+                reconnects=reconnects,
+                processing_latency_seconds=0.0,
+                write_latency_seconds=write_latency_seconds,
             )
         if compute_features_after:
             run_feature_pipeline(events_out)

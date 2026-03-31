@@ -184,6 +184,8 @@ def test_sink_exposes_accepted_vs_persisted_counts(tmp_path):
     assert sink.accepted_count == 1
     assert sink.persisted_count == 1
     assert sink.buffered_count == 0
+    assert sink.write_latency_seconds >= 0.0
+    assert sink.last_write_latency_seconds >= 0.0
 
 
 def test_dedup_threshold_appends_without_oom(tmp_path):

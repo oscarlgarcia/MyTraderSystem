@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import time
 from typing import Iterable, List
 
 import pyarrow as pa
@@ -29,6 +30,9 @@ class ParquetWriter:
     accepted_events: int = 0
     persisted_events: int = 0
     flush_count: int = 0
+    total_write_latency_seconds: float = 0.0
+    last_write_latency_seconds: float = 0.0
+    max_write_latency_seconds: float = 0.0
 
     def add(self, event: MarketEvent | Iterable[MarketEvent]) -> None:
         if isinstance(event, MarketEvent):
@@ -44,32 +48,39 @@ class ParquetWriter:
     def flush(self) -> None:
         if not self.buffer:
             return
+        started = time.perf_counter()
         grouped = list(_group_events_by_partition(self.buffer).items())
         remaining: list[MarketEvent] = []
         persisted_now = 0
+        try:
+            for index, (partition_key, events) in enumerate(grouped):
+                try:
+                    _write_partition(
+                        base_dir=self.base_dir,
+                        env=self.env,
+                        partition_key=partition_key,
+                        events=events,
+                        schema_version=self.schema_version,
+                        dedup=self.dedup,
+                        max_dedup_rows=self.max_dedup_rows,
+                    )
+                    persisted_now += len(events)
+                except Exception:
+                    remaining.extend(events)
+                    for _, later_events in grouped[index + 1 :]:
+                        remaining.extend(later_events)
+                    self.buffer = remaining
+                    raise
 
-        for index, (partition_key, events) in enumerate(grouped):
-            try:
-                _write_partition(
-                    base_dir=self.base_dir,
-                    env=self.env,
-                    partition_key=partition_key,
-                    events=events,
-                    schema_version=self.schema_version,
-                    dedup=self.dedup,
-                    max_dedup_rows=self.max_dedup_rows,
-                )
-                persisted_now += len(events)
-            except Exception:
-                remaining.extend(events)
-                for _, later_events in grouped[index + 1 :]:
-                    remaining.extend(later_events)
-                self.buffer = remaining
-                raise
-
-        self.buffer.clear()
-        self.persisted_events += persisted_now
-        self.flush_count += 1
+            self.buffer.clear()
+            self.persisted_events += persisted_now
+            self.flush_count += 1
+        finally:
+            duration = max(0.0, time.perf_counter() - started)
+            self.last_write_latency_seconds = duration
+            self.total_write_latency_seconds += duration
+            if duration > self.max_write_latency_seconds:
+                self.max_write_latency_seconds = duration
 
     @property
     def buffered_events(self) -> int:

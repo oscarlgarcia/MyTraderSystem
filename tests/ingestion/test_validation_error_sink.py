@@ -91,6 +91,44 @@ def test_invalid_numeric_field_is_rejected_and_counted():
     assert source.stats.rejected_payloads == 1
     summary = next(json.loads(line) for line in buffer.getvalue().splitlines() if json.loads(line)["message"] == "ingestion summary")
     assert summary["rejected_payloads"] == 1
+    assert summary["events_invalid"] == 1
+    assert summary["events_dedup_skipped"] == 0
+
+
+def test_invalid_payload_metrics_are_separate_from_dedup_metrics():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    error_sink = RecordingErrorSink()
+    source = BinanceSource(
+        cfg,
+        ws_stream=lambda *_args, **_kwargs: iter(
+            [
+                _raw_message({"s": "BTCUSDT", "E": 1710000000000, "p": "oops", "q": "1"}),
+                _raw_message({"s": "BTCUSDT", "E": 1710000000000, "p": "100", "q": "1"}),
+                _raw_message({"s": "BTCUSDT", "E": 1710000000000, "p": "100", "q": "1"}),
+            ]
+        ),
+        error_sink=error_sink,
+    )
+    sink = RecordingSink()
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.validation.vs_dedup", level="INFO", stream=buffer)
+
+    events = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        duration_s=0,
+        source=source,
+        sink=sink,
+        logger=logger,
+        dedup_enabled=True,
+    )
+
+    assert len(events) == 1
+    summary = next(json.loads(line) for line in buffer.getvalue().splitlines() if json.loads(line)["message"] == "ingestion summary")
+    assert summary["source_events_in"] == 3
+    assert summary["events_valid"] == 2
+    assert summary["events_invalid"] == 1
+    assert summary["events_dedup_skipped"] == 1
 
 
 def test_unknown_event_type_does_not_kill_stream():

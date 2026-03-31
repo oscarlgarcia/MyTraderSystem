@@ -6,8 +6,11 @@ from datetime import datetime, timezone
 import logging
 import io
 import json
+import time
 
 from app.ingestion.sources import StaticSource
+from app.ingestion.sinks import ParquetEventSink
+from app.ingestion.storage import ParquetWriter
 from app.observability.logger import get_logger
 
 
@@ -250,10 +253,85 @@ def test_live_keeps_original_log_and_adds_aggregated_summary(monkeypatch):
     assert summary["events_in"] == 2
     assert summary["events_out"] == 2
     assert summary["events_persisted"] == 2
+    assert summary["source_events_in"] == 2
+    assert summary["events_valid"] == 2
+    assert summary["events_invalid"] == 0
+    assert summary["events_dedup_skipped"] == 0
+    assert summary["events_buffer_dropped"] == 0
+    assert summary["snapshot_runs"] == 0
+    assert summary["snapshot_rows"] == 0
     assert summary["reconnects"] == 0
     assert summary["buffer_skipped"] == 0
     assert summary["buffer_overflows"] == 0
     assert summary["backpressure_policy"] == "pause"
     assert isinstance(summary["max_latency_seconds"], float)
+    assert isinstance(summary["processing_latency_seconds"], float)
+    assert isinstance(summary["write_latency_seconds"], float)
     assert summary["dedup_on"] is True
     assert summary["batch_size"] == 4
+    health = next(record for record in logs if record["message"] == "ingestion health")
+    assert health["result"] == "ok"
+    assert health["events_persisted"] == 2
+
+
+def test_summary_metrics_reflect_real_pipeline_path():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.summary.metrics", level="INFO", stream=buffer)
+    event_a = _ev(0, 100)
+    source = StaticSource(events=[event_a, event_a])
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        logger=logger,
+        max_events=10,
+        duration_s=0,
+        dedup_enabled=True,
+        snapshot_enabled=False,
+        summary_logging=True,
+        source=source,
+        sink=DummySink(),
+    )
+
+    assert out == [event_a]
+    summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
+    assert summary["source_events_in"] == 2
+    assert summary["events_valid"] == 2
+    assert summary["events_invalid"] == 0
+    assert summary["events_dedup_skipped"] == 1
+    assert summary["events_buffer_dropped"] == 0
+    assert summary["events_persisted"] == 1
+    assert summary["reconnects"] == 0
+
+
+def test_sink_latency_metric_records_flush_cost(monkeypatch, tmp_path):
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.summary.write_latency", level="INFO", stream=buffer)
+    sink = ParquetEventSink(ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10))
+    real_write = pipeline.ParquetWriter.flush
+
+    def slow_flush(self):
+        time.sleep(0.01)
+        return real_write(self)
+
+    monkeypatch.setattr(pipeline.ParquetWriter, "flush", slow_flush)
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        logger=logger,
+        max_events=10,
+        duration_s=0,
+        dedup_enabled=False,
+        snapshot_enabled=False,
+        summary_logging=True,
+        source=StaticSource(events=[_ev(0, 100)]),
+        sink=sink,
+    )
+
+    assert len(out) == 1
+    summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
+    assert summary["events_persisted"] == 1
+    assert summary["write_latency_seconds"] > 0.0
