@@ -19,8 +19,14 @@ from websockets.sync.client import connect
 
 from app.common.dto import MarketEvent
 from app.config import AppConfig
-from app.ingestion.client import build_ws_url, normalize_kline_typed, parse_message_parts, parse_typed_message
-from app.ingestion.errors import IngestionError, classify_error
+from app.ingestion.client import (
+    DEFAULT_STREAM_TYPES,
+    build_ws_url,
+    normalize_kline_typed,
+    parse_message_parts,
+    parse_typed_message,
+)
+from app.ingestion.errors import IngestionError, classify_connector_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
@@ -42,17 +48,80 @@ class SourceStats:
     snapshot_rows: int = 0
     rejected_payloads: int = 0
     error_sink_failures: int = 0
+    handoff_bootstrap_rows: int = 0
+    handoff_overlap_dropped: int = 0
+    handoff_inconsistent: int = 0
 
 
-def _ws_stream(url: str, end_time: float | None = None) -> Iterable[str]:
-    with connect(url) as ws:
+@dataclass(frozen=True, slots=True)
+class HeartbeatPolicy:
+    recv_timeout_seconds: float
+    ping_interval_seconds: float
+    ping_timeout_seconds: float
+    inactivity_timeout_seconds: float
+    expected_idle_seconds_by_stream: dict[str, float]
+
+
+def heartbeat_policy_for_streams(stream_types: Iterable[str]) -> HeartbeatPolicy:
+    expected_by_stream = {
+        "trade": 30.0,
+        "kline": 90.0,
+        "book": 10.0,
+    }
+    stream_list = tuple(stream_types) or DEFAULT_STREAM_TYPES
+    relevant = {
+        stream_type: expected_by_stream.get(stream_type, 30.0)
+        for stream_type in stream_list
+    }
+    inactivity_timeout = max(relevant.values())
+    ping_interval = min(10.0, max(2.0, inactivity_timeout / 3.0))
+    ping_timeout = min(5.0, max(1.0, ping_interval / 2.0))
+    return HeartbeatPolicy(
+        recv_timeout_seconds=1.0,
+        ping_interval_seconds=ping_interval,
+        ping_timeout_seconds=ping_timeout,
+        inactivity_timeout_seconds=inactivity_timeout,
+        expected_idle_seconds_by_stream=relevant,
+    )
+
+
+def _ws_stream(
+    url: str,
+    end_time: float | None = None,
+    *,
+    heartbeat: HeartbeatPolicy | None = None,
+    monotonic_fn: Callable[[], float] = time.monotonic,
+    connect_fn: Callable[[str], object] = connect,
+) -> Iterable[str]:
+    heartbeat_policy = heartbeat or heartbeat_policy_for_streams(DEFAULT_STREAM_TYPES)
+    with connect_fn(url) as ws:
+        last_activity = monotonic_fn()
+        last_ping = last_activity
         while True:
             if end_time and time.time() >= end_time:
                 break
             try:
-                raw = ws.recv(timeout=1)
+                raw = ws.recv(timeout=heartbeat_policy.recv_timeout_seconds)
+            except StopIteration:
+                break
             except TimeoutError:
+                now = monotonic_fn()
+                idle_seconds = now - last_activity
+                if idle_seconds >= heartbeat_policy.ping_interval_seconds and now - last_ping >= heartbeat_policy.ping_interval_seconds:
+                    pong = ws.ping()
+                    if not pong.wait(timeout=heartbeat_policy.ping_timeout_seconds):
+                        raise TimeoutError(
+                            f"websocket heartbeat timeout after {idle_seconds:.1f}s idle"
+                        )
+                    last_activity = monotonic_fn()
+                    last_ping = last_activity
+                    continue
+                if idle_seconds >= heartbeat_policy.inactivity_timeout_seconds:
+                    raise TimeoutError(
+                        f"websocket inactivity watchdog exceeded {heartbeat_policy.inactivity_timeout_seconds:.1f}s"
+                    )
                 continue
+            last_activity = monotonic_fn()
             yield raw
 
 
@@ -69,10 +138,14 @@ def source_snapshot_fn(source: Source) -> Callable[[], Iterable[IngestionEvent]]
 @dataclass
 class BinanceSource:
     cfg: AppConfig
-    ws_stream: Callable[[str, float | None], Iterable[object]] = _ws_stream
+    ws_stream: Callable[..., Iterable[object]] = _ws_stream
     http_get: Callable[..., httpx.Response] = httpx.get
     error_sink: ErrorSink = field(default_factory=NullErrorSink)
     raw_sink: RawSink = field(default_factory=NullRawSink)
+    stream_types: tuple[str, ...] = DEFAULT_STREAM_TYPES
+    heartbeat_policy: HeartbeatPolicy | None = None
+    ws_connect_fn: Callable[[str], object] = connect
+    monotonic_fn: Callable[[], float] = time.monotonic
     stats: SourceStats = field(default_factory=SourceStats)
 
     def __post_init__(self) -> None:
@@ -80,6 +153,8 @@ class BinanceSource:
             self.error_sink = JsonlErrorSink(
                 Path(self.cfg.data_dir) / "errors" / "ingestion-dlq.jsonl"
             )
+        if self.heartbeat_policy is None:
+            self.heartbeat_policy = heartbeat_policy_for_streams(self.stream_types)
 
     def _write_raw_record(
         self,
@@ -124,9 +199,19 @@ class BinanceSource:
             )
 
     def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]:
-        url = build_ws_url(self.cfg.ws_base, self.cfg.symbols)
+        url = build_ws_url(self.cfg.ws_base, self.cfg.symbols, self.stream_types)
         try:
-            for item in self.ws_stream(url, end_time=end_time):
+            if self.ws_stream is _ws_stream:
+                stream_iter = self.ws_stream(
+                    url,
+                    end_time=end_time,
+                    heartbeat=self.heartbeat_policy,
+                    monotonic_fn=self.monotonic_fn,
+                    connect_fn=self.ws_connect_fn,
+                )
+            else:
+                stream_iter = self.ws_stream(url, end_time=end_time)
+            for item in stream_iter:
                 self.stats.source_events_in += 1
                 if isinstance(item, (MarketEvent, BaseMarketEvent)):
                     validate_ingestion_event(item)
@@ -168,7 +253,7 @@ class BinanceSource:
         except IngestionError:
             raise
         except Exception as exc:
-            raise classify_error(exc, default_category="source") from exc
+            raise classify_connector_error(exc) from exc
 
     def snapshot(self) -> Iterable[IngestionEvent]:
         events: list[IngestionEvent] = []
@@ -219,7 +304,7 @@ class BinanceSource:
                         )
                         continue
         except Exception as exc:
-            raise classify_error(exc, default_category="source") from exc
+            raise classify_connector_error(exc) from exc
         return events
 
 

@@ -5,6 +5,7 @@ from unittest import mock
 
 from app.common.dto import MarketEvent
 from app.ingestion import pipeline
+from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sources import BinanceSource, StaticSource
 from app.marketdata.models import TradeEvent
 from app.observability.logger import get_logger
@@ -96,6 +97,63 @@ def test_binance_source_captures_receive_and_process_timestamps_on_raw_stream():
     assert out[0].receive_ts is not None
     assert out[0].process_ts is not None
     assert out[0].exchange_ts <= out[0].receive_ts <= out[0].process_ts
+
+
+def test_stream_without_heartbeat_triggers_reconnect():
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+
+    class FakeConnection:
+        def __init__(self, mode: str):
+            self.mode = mode
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def recv(self, timeout=None):
+            del timeout
+            if self.mode == "dead":
+                raise TimeoutError("idle")
+            if self.mode == "live":
+                if getattr(self, "_sent", False):
+                    raise StopIteration
+                self._sent = True
+                return '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","t":7}}'
+            raise RuntimeError("unexpected mode")
+
+        def ping(self):
+            class Pong:
+                def wait(self, timeout=None):
+                    del timeout
+                    return False
+
+            return Pong()
+
+    attempts = {"n": 0}
+    monotonic_values = iter([0.0, 1.0, 10.0, 10.0, 10.5, 10.5, 11.0])
+
+    def fake_connect(_url: str):
+        attempts["n"] += 1
+        return FakeConnection("dead" if attempts["n"] == 1 else "live")
+
+    source = BinanceSource(
+        cfg,
+        ws_connect_fn=fake_connect,
+        monotonic_fn=lambda: next(monotonic_values),
+    )
+    runner = ResilientRunner(
+        stream_fn=lambda: source.stream(),
+        sleeper=lambda _seconds: None,
+        jitter_fn=lambda delay: delay,
+    )
+    handled = []
+    runner.run(lambda event: handled.append(event), stop_on_complete=True, max_retries=1)
+
+    assert attempts["n"] == 2
+    assert runner.metrics.reconnects == 1
+    assert len(handled) == 1
 
 
 def test_snapshot_optional_on_source():

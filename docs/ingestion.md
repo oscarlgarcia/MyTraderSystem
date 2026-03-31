@@ -83,15 +83,38 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
     - secuencia rota (`trade_id` / `sequence_id`) -> `sequence_gap_detection`
     - si no hay secuencia usable, hueco temporal sobre umbral -> `weak_gap_detection`
   - `weak_gap_detection` es deliberadamente heuristico; no se debe interpretar como garantia fuerte de perdida.
+- `marketdata.recovery`
+  - Define `RecoveryPolicy`, `TradeRecoveryPolicy`, `BarRecoveryPolicy` y `recovery_policy_for_event(...)`.
+  - El recovery ya no es generico:
+    - `trade`: no acepta snapshots de barras como catch-up. Un gap fuerte sin recovery exacto se marca `gap_irreparable`.
+    - `kline`: usa snapshots filtrados por `(venue, symbol, stream_type)` y elimina el borde duplicado via dedup del runner.
+- `marketdata.handoff`
+  - Define `HistoricalWindow`, `windowed_bootstrap_events(...)` y `HandoffSource`.
+  - `HandoffSource` compone:
+    - bootstrap historico filtrado por ventana
+    - stream live real
+  - Integra checkpoint local si existe:
+    - omite bootstrap ya cubierto por `last_event_ts` o cursor conocido
+    - deduplica el solape bootstrap/live con la misma identidad fuerte de ingestion
+  - Si no puede garantizar continuidad en el borde, incrementa `handoff_inconsistent` y falla rapido en modo estricto.
 - `ingestion.sources`
   - Define el contrato `Source` (`stream`, `snapshot`).
   - Implementa `BinanceSource` como adaptador por defecto para WS/REST.
   - Implementa `StaticSource` para tests y ejecucion controlada sin red.
-  - Expone `SourceStats` con `source_events_in`, `events_valid`, `events_invalid`, `snapshot_runs`, `snapshot_rows`, `rejected_payloads` y `error_sink_failures`.
+  - Expone `SourceStats` con `source_events_in`, `events_valid`, `events_invalid`, `snapshot_runs`, `snapshot_rows`, `rejected_payloads`, `error_sink_failures`, `handoff_bootstrap_rows`, `handoff_overlap_dropped` y `handoff_inconsistent`.
+  - Define `HeartbeatPolicy` y `heartbeat_policy_for_streams(...)`.
+  - El watchdog de websocket usa tres umbrales:
+    - `recv_timeout_seconds`: timeout corto de polling
+    - `ping_interval_seconds`: a partir de aqui intenta `ping/pong`
+    - `inactivity_timeout_seconds`: si no hay frames ni `pong`, se considera feed no saludable y fuerza reconnect
 - `ingestion.resilience`
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de entrada/salida/duplicados/gap temporal/eventos tardios/latencia/buffer.
   - Gestiona una cola bounded y una politica explicita de saturacion: `pause`, `drop_oldest`, `drop_newest`, `fail`.
   - Gestiona una politica temporal explicita: `accept`, `drop`, `fail`.
+  - Resuelve el recovery por tipo de feed antes de disparar resync:
+    - barras -> snapshot del mismo stream
+    - trades -> sin recovery generico desde barras
+  - El reconnect usa backoff exponencial con `jitter_fn` inyectable para mantener tests deterministas.
   - Mantiene watermarks por `(venue, symbol, stream_type)` via `TemporalStateStore`; las metricas agregadas siguen saliendo en el summary, pero se calculan sin mezclar streams distintos.
   - Mantiene estado de gap por stream:
     - `gap_detected`
@@ -127,6 +150,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 ## Relaciones entre modulos
 - `pipeline.collect_events` usa un `Source`, crea `ResilientRunner` y delega la persistencia a un `EventSink`.
 - En el wiring live por defecto, `collect_events` crea `BinanceSource(..., raw_sink=JsonlRawSink(...))`, de modo que el raw valido queda persistido antes de que el sink normalized pueda fallar.
+- Cuando el runner detecta un gap, aplica una `RecoveryPolicy` por feed:
+  - si el feed es `kline`, intenta resync con snapshot compatible del mismo stream;
+  - si el feed es `trade`, no rellena el hueco con barras y deja el gap fuerte como `gap_irreparable`.
+- Si el source usado es `HandoffSource`, `collect_events` le inyecta el checkpoint local cargado antes de arrancar live para que el bootstrap historico no reprocesse borde ya cubierto.
 - `Source` y `EventSink` ya aceptan eventos tipados (`TradeEvent`, `BarEvent`, `BookEvent`) o `MarketEvent` legacy; el handler live y el sink por defecto convierten a `MarketEvent` solo en el borde de compatibilidad.
 - Si el path live es el real (sin `source`/`sink` custom), `collect_events` carga `ingestion-checkpoint.json` al arrancar y lo reescribe tras un cierre limpio del sink.
 - `BinanceSource` valida payloads raw antes de normalizar y valida el evento resultante tras normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.

@@ -10,6 +10,11 @@ from typing import Literal
 
 import httpx
 
+try:
+    from websockets.exceptions import ConnectionClosed
+except ImportError:  # pragma: no cover - optional in local tooling
+    ConnectionClosed = ()  # type: ignore[assignment]
+
 
 ErrorCategory = Literal["source", "parse", "validation", "sink"]
 ErrorSeverity = Literal["transient", "permanent"]
@@ -42,6 +47,8 @@ def classify_error(exc: Exception, *, default_category: ErrorCategory = "source"
         return IngestionError(category, "permanent", str(exc))
     if isinstance(exc, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.ConnectError)):
         return IngestionError(default_category, "transient", str(exc))
+    if ConnectionClosed and isinstance(exc, ConnectionClosed):
+        return IngestionError(default_category, "transient", str(exc))
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code if exc.response is not None else None
         severity: ErrorSeverity = "transient" if status in {429, 500, 502, 503, 504} else "permanent"
@@ -52,6 +59,12 @@ def classify_error(exc: Exception, *, default_category: ErrorCategory = "source"
     if isinstance(exc, RuntimeError) and default_category == "source":
         return IngestionError("source", "transient", str(exc))
     return IngestionError(default_category, "permanent", str(exc))
+
+
+def classify_connector_error(exc: Exception) -> IngestionError:
+    if isinstance(exc, OSError):
+        return IngestionError("source", "transient", str(exc))
+    return classify_error(exc, default_category="source")
 
 
 def resolve_error_policy(policy: ErrorPolicy | None, *, allow_live_fallback: bool = False) -> ErrorPolicy:

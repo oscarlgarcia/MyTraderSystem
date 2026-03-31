@@ -227,6 +227,17 @@ El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `ingestion summary` e `ingestion health`. El summary consolida `source_events_in`, `events_valid`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`, `processing_latency_seconds`, `write_latency_seconds`, `event_gap_seconds`, `gaps_total`, `gap_irreparable_total`, `late_events`, `late_event_max_delay_seconds`, `temporal_policy` y `reconnects`, junto con los contadores legacy (`events_in`, `events_out`, `buffer_*`, `duplicates_dropped`, `result`, `error_policy`). `ingestion health` resume el estado operativo final de la ejecucion con el mismo `trace_id`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite estos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). La semantica temporal se controla con `--ingest-temporal-policy {accept,drop,fail}`: por defecto se aceptan eventos tardios/fuera de orden, se contabilizan por separado y no se mezclan con la latencia de proceso. El gap detection ahora distingue entre:
 - `sequence_gap_detection`: fuerte, cuando existe cursor numerico (`trade_id` o `sequence_id`) y se rompe la secuencia esperada.
 - `weak_gap_detection`: heuristico, cuando solo se observa un hueco temporal mayor que el umbral.
+- El recovery ya es especifico por feed:
+  - `trade` no intenta rellenarse con snapshots de `kline`; si aparece un gap fuerte sin recovery exacto, se marca `gap_irreparable`.
+  - `kline` puede usar snapshot REST de barras del mismo `venue/symbol/stream_type`, filtrando el borde para no duplicar eventos recientes.
+- El handoff historico -> live ya tiene contrato explicito:
+  - `HandoffSource` emite primero un bootstrap historico por ventana y luego entrega el stream live.
+  - Deduplica el solape de borde con la misma identidad fuerte usada por live/storage.
+  - Si el primer evento live no garantiza continuidad respecto al ultimo bootstrap, marca `handoff_inconsistent` y deja que la politica operativa (`fail_fast` / `degraded`) decida si aborta o degrada.
+- Liveness de conectores:
+  - `BinanceSource` define heartbeat esperado por feed (`trade`, `kline`, `book`) y deriva un watchdog de inactividad para el websocket compartido.
+  - Si no entran frames dentro del umbral, intenta `ping/pong` antes de declarar timeout.
+  - Los errores de conector (`timeout`, `connection closed`, `OSError`) se clasifican de forma uniforme como `source/transient`, de modo que el runner reintenta con backoff + jitter.
 Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Seguridad operativa minima

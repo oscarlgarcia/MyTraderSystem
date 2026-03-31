@@ -61,6 +61,18 @@
 - `app.ingestion.sources.BinanceSource(cfg).snapshot() -> Iterable[MarketEvent]`
   - Reutiliza el snapshot REST de klines en un unico punto.
   - Si una fila individual de snapshot es invalida, la rechaza y continua con el resto.
+ - Liveness / heartbeat del conector WS:
+  - `HeartbeatPolicy` se deriva de los `stream_types` activos.
+  - valores iniciales por feed:
+    - `trade`: 30s de idle esperado
+    - `kline`: 90s
+    - `book`: 10s
+  - sobre ese baseline, `_ws_stream(...)` aplica:
+    - `recv_timeout_seconds=1`
+    - `ping_interval_seconds ~= inactivity/3`
+    - `ping_timeout_seconds ~= ping_interval/2`
+    - `inactivity_timeout_seconds = max(expected_idle_seconds_by_stream)`
+  - si `pong.wait(...)` falla o se supera `inactivity_timeout_seconds`, el conector se considera no saludable y se fuerza reconnect
   - `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
@@ -77,7 +89,8 @@
 
 ## Ingestion y backfill
 - **Live**:
-  - `ResilientRunner` maneja reconexion, buffer, gap temporal, eventos tardios y contadores de snapshot (`snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`).
+- `ResilientRunner` maneja reconexion, buffer, gap temporal, eventos tardios y contadores de snapshot (`snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`).
+  - el reconnect duerme usando `jitter_fn(delay)`; por defecto aplica jitter multiplicativo suave y en tests puede inyectarse una funcion determinista
   - `collect_events` ya no depende directamente de Binance ni de `ParquetWriter`; consume un `Source` y un `EventSink`.
   - Los errores se clasifican como `source`, `parse`, `validation` o `sink`, y como `transient` o `permanent`.
   - Solo `source/transient` se reintentan en `ResilientRunner`.
@@ -236,8 +249,26 @@
   - `sequence_gap_detection` = evidencia fuerte de gap
   - `weak_gap_detection` = heuristica operativa, no garantia fuerte
 - Semantica de irreparabilidad:
-  - hoy solo se promociona a `gap_irreparable` un gap fuerte sin snapshot/recovery disponible
+  - hoy solo se promociona a `gap_irreparable` un gap fuerte sin recovery exacto disponible
   - un gap heuristico no se promociona a irreparable por si solo
+- Recovery por feed:
+  - `app.marketdata.recovery.RecoveryPolicy`
+  - `TradeRecoveryPolicy`
+    - no acepta snapshots de `kline` como catch-up de trades
+    - si hay secuencia rota y no existe recovery exacto, el gap se marca `gap_irreparable`
+  - `BarRecoveryPolicy`
+    - usa `snapshot_fn` filtrado por `(venue, symbol, stream_type)`
+    - el runner reaplica dedup para evitar duplicados de borde durante el resync
+- Handoff historico -> live:
+  - `app.marketdata.handoff.HandoffSource`
+  - ejecuta bootstrap historico por ventana antes del stream live
+  - integra el checkpoint local cargado por `collect_events(...)` para:
+    - omitir bootstrap ya cubierto por cursor/watermark
+    - deduplicar solape de borde con identidad fuerte
+  - semantica de inconsistencia:
+    - si el primer evento live retrocede respecto al ultimo bootstrap, o hay salto fuerte de cursor, marca `handoff_inconsistent`
+    - en modo estricto lanza `IngestionError(category="validation")`
+    - el efecto final depende de `error_policy` (`fail_fast`, `degraded`, `allow_fallback`)
 - Estado persistente actual:
   - el runtime mantiene watermarks por stream
   - el checkpoint local persiste cursor/watermark/dedup window por stream
@@ -245,6 +276,7 @@
 - Limitacion deliberada:
   - el cursor por stream es best-effort y deriva de `trade_id`, `sequence_id` o `source_id` cuando existen
   - no equivale a un offset transaccional del exchange
+  - el watchdog de heartbeat observa la salud del transporte WS, no garantiza frecuencia minima de negocio por simbolo cuando el mercado esta inactivo
 
 ## Raw landing append-only
 - `app.marketdata.raw_sink` introduce la capa raw minima:
