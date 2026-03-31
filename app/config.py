@@ -125,6 +125,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Umbral experimental de WARNING para eventos descartados por buffer.",
     )
     parser.add_argument(
+        "--ingest-backpressure-policy",
+        choices=["pause", "drop_oldest", "drop_newest", "fail"],
+        default="pause",
+        help="Politica de saturacion del buffer de ingestion: pause, drop_oldest, drop_newest o fail.",
+    )
+    parser.add_argument(
         "--fast-path",
         action="store_true",
         help="Modo experimental de alto throughput: menos garantias, menos logs, mas batching.",

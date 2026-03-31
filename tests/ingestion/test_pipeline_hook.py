@@ -214,6 +214,8 @@ def test_dry_emits_aggregated_ingestion_summary(monkeypatch):
     assert summary["events_persisted"] == 2
     assert summary["reconnects"] == 0
     assert summary["buffer_skipped"] == 0
+    assert summary["buffer_overflows"] == 0
+    assert summary["backpressure_policy"] == "pause"
     assert summary["max_latency_seconds"] == 0.0
     assert summary["dedup_on"] is True
     assert summary["batch_size"] == 1
@@ -250,6 +252,8 @@ def test_live_keeps_original_log_and_adds_aggregated_summary(monkeypatch):
     assert summary["events_persisted"] == 2
     assert summary["reconnects"] == 0
     assert summary["buffer_skipped"] == 0
+    assert summary["buffer_overflows"] == 0
+    assert summary["backpressure_policy"] == "pause"
     assert isinstance(summary["max_latency_seconds"], float)
     assert summary["dedup_on"] is True
     assert summary["batch_size"] == 4

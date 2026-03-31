@@ -59,6 +59,7 @@ def _resolve_runtime_options(args) -> Dict[str, object]:
         "ingest_batch_size": max(FAST_PATH_BATCH_SIZE, ingest_batch_size) if fast_path else ingest_batch_size,
         "ingest_lag_warn": getattr(args, "ingest_lag_warn", None),
         "ingest_buffer_warn": getattr(args, "ingest_buffer_warn", None),
+        "ingest_backpressure_policy": getattr(args, "ingest_backpressure_policy", "pause"),
         "allow_live_fallback": bool(getattr(args, "allow_live_fallback", False)),
         "error_policy": getattr(args, "error_policy", None),
         "snapshot_enabled": not fast_path,
@@ -83,6 +84,7 @@ def run_cycle(
     live_summary_logging: bool = True,
     ingest_lag_warn: float | None = None,
     ingest_buffer_warn: int | None = None,
+    ingest_backpressure_policy: str = "pause",
     allow_live_fallback: bool = False,
     error_policy: str | None = None,
 ):
@@ -112,6 +114,7 @@ def run_cycle(
         buffer_warn_threshold=ingest_buffer_warn,
         allow_live_fallback=allow_live_fallback,
         error_policy=error_policy,
+        backpressure_policy=ingest_backpressure_policy,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
@@ -185,6 +188,7 @@ def run() -> int:
         live_summary_logging=runtime["summary_logging"],
         ingest_lag_warn=runtime["ingest_lag_warn"],
         ingest_buffer_warn=runtime["ingest_buffer_warn"],
+        ingest_backpressure_policy=runtime["ingest_backpressure_policy"],
         allow_live_fallback=runtime["allow_live_fallback"],
         error_policy=runtime["error_policy"],
     )

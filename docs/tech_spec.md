@@ -63,6 +63,7 @@
 - `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
+  - Propaga `ingest_backpressure_policy` con default `pause`.
   - Propaga `allow_live_fallback` para debugging controlado; no se activa por defecto.
 - `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
@@ -90,13 +91,18 @@
     - `persisted_events`
     - `buffered_events`
   - Si una particion falla al persistir, el archivo previo se conserva intacto y el writer retiene en buffer solo los eventos aun no confirmados.
+  - `ResilientRunner` usa una cola bounded y aplica una politica de saturacion configurable:
+    - `pause`
+    - `drop_oldest`
+    - `drop_newest`
+    - `fail`
   - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `batch_size`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
   - Ademas se emite `ingestion summary` como JSON consolidado con:
     - `events_in`: eventos observados por source/snapshot antes de dedup del runner
     - `events_out`: eventos unicos realmente entregados al pipeline y devueltos por `collect_events`
     - `events_persisted`: eventos ya confirmados por el sink al cerrar la ejecucion
     - `duplicates_dropped`: suma de duplicados filtrados por runner y por la barrera defensiva previa al writer
-    - `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size`
+    - `reconnects`, `buffer_skipped`, `buffer_overflows`, `buffer_pauses`, `buffer_drop_oldest`, `buffer_drop_newest`, `buffer_failures`, `backpressure_policy`, `max_latency_seconds`, `dedup_on`, `batch_size`
   - Si live falla, el comportamiento depende de `error_policy`. Errores `sink` nunca se convierten en fallback/degraded.
   - En `fast-path`, se omite el resumen de cierre de ingest live para reducir overhead de logging, pero se mantiene el log final de `pipeline ok`.
   - Si `buffer_skipped > ingest_buffer_warn` o `max_latency_seconds > ingest_lag_warn`, `collect_events` emite un `WARNING` una vez por ciclo live.
@@ -110,6 +116,7 @@
 - **Flags relevantes**:
   - `--ingest-batch-size N`: agrupa eventos antes de `writer.add`; reduce llamadas de IO.
   - `--no-ingest-dedup`: desactiva dedup live en `ResilientRunner` y en la barrera previa al writer.
+  - `--ingest-backpressure-policy {pause,drop_oldest,drop_newest,fail}`: decide como degrada el runner si la cola bounded se llena.
   - `--fast-path`: modo experimental que fuerza `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False`, `trace_steps=False` y `ingest_batch_size >= 256`.
   - `--ingest-lag-warn S`, `--ingest-buffer-warn N`: emiten `WARNING` una vez por ciclo si se superan los umbrales.
 - **Recetas**:

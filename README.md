@@ -21,6 +21,7 @@ python -m app --env dev --mode dry --trace-steps                   # pipeline co
 python -m app --env dev --mode live --features-after-ingest        # ejecuta feature pipeline tras ingesta (solo log)
 python -m app --env dev --mode live --ingest-max-buffer 20000      # ajusta buffer del runner (escalabilidad)
 python -m app --env dev --mode live --ingest-batch-size 50         # agrupa escrituras al writer en lotes locales
+python -m app --env dev --mode live --ingest-backpressure-policy drop_newest  # politica de saturacion: pause/drop_oldest/drop_newest/fail
 python -m app --env dev --mode live --no-ingest-dedup              # desactiva dedup para throughput (riesgo duplicados)
 python -m app --env dev --mode live --allow-live-fallback          # permite fallback explicito a dry si live falla
 python -m app --env dev --mode live --error-policy degraded        # politica explicita de error: fail_fast, allow_fallback, degraded
@@ -71,6 +72,12 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Pipeline live limitado: WS/REST + escritura Parquet acotada por eventos/duracion.
 - `python -m app --env dev --mode live --ingest-batch-size 50`  
   Agrupa eventos en lotes locales antes de llamar al writer; reduce IO a costa de algo mas de latencia por lote.
+- `python -m app --env dev --mode live --ingest-backpressure-policy drop_newest`  
+  Politica de saturacion del runner:
+  - `pause` (default): drena parcialmente y ralentiza la lectura
+  - `drop_oldest`: expulsa el mas antiguo para hacer hueco
+  - `drop_newest`: descarta el evento entrante
+  - `fail`: aborta con error de `sink`
 - `python -m app --env dev --mode live --allow-live-fallback`  
   Permite fallback explicito a `dry` si la ingesta real falla. Sin este flag, live ahora falla fuerte por defecto.
 - Checkpoint live minimo: las ejecuciones reales de live persisten `last_event_ts` y una ventana corta de claves dedup en `<data_dir>/<env>/state/ingestion-checkpoint.json`. Si el checkpoint esta corrupto, live arranca con estado vacio y emite un warning explicito.
@@ -190,7 +197,7 @@ Ejemplo de salida:
 ```
 El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 
-En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `events_persisted`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size`, `duplicates_dropped`, `result` y `error_policy`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
+En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `events_persisted`, `reconnects`, `buffer_skipped`, `buffer_overflows`, `buffer_pauses`, `buffer_drop_oldest`, `buffer_drop_newest`, `buffer_failures`, `backpressure_policy`, `max_latency_seconds`, `dedup_on`, `batch_size`, `duplicates_dropped`, `result` y `error_policy`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Feature Store inicial
 - Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).

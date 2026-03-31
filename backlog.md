@@ -29,6 +29,7 @@
 - Fase 5 checkpoints y reanudacion minima: `CheckpointStore` local, `last_event_ts`, metadata de ejecucion y ventana corta de dedup para reinicios. [hecho]
 - Fase 6 deduplicacion robusta y desacoplada: `Deduplicator` dedicado con TTL, capacidad e identidad compartida live/backfill/sink. [hecho]
 - Fase 7 writer robusto y persistencia segura: `tmp + rename`, contadores accepted/persisted y buffer retenido solo para eventos no confirmados. [hecho]
+- Fase 8 backpressure real y control de saturacion: cola bounded con politicas `pause`, `drop_oldest`, `drop_newest`, `fail` y metricas explicitas. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.

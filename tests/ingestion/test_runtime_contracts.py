@@ -134,5 +134,7 @@ def test_summary_metrics_match_processed_events(monkeypatch):
     assert summary["events_out"] == 2
     assert summary["events_persisted"] == 2
     assert summary["duplicates_dropped"] == 1
+    assert summary["buffer_overflows"] == 0
+    assert summary["backpressure_policy"] == "pause"
     assert summary["dedup_on"] is True
     assert summary["batch_size"] == 1

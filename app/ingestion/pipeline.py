@@ -16,7 +16,7 @@ from app.ingestion.client import _key
 from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
 from app.ingestion.dedup import Deduplicator
 from app.ingestion.errors import ErrorPolicy, IngestionError, resolve_error_policy
-from app.ingestion.resilience import ResilientRunner
+from app.ingestion.resilience import BackpressurePolicy, ResilientRunner
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
@@ -49,11 +49,20 @@ def _emit_runtime_warnings(
     lag_warn_threshold: float | None,
     buffer_warn_threshold: int | None,
 ) -> None:
-    if buffer_warn_threshold is not None and runner.metrics.buffer_skipped > buffer_warn_threshold:
+    if buffer_warn_threshold is not None and (
+        runner.metrics.buffer_skipped > buffer_warn_threshold
+        or runner.metrics.buffer_overflows > buffer_warn_threshold
+    ):
         logger.warning(
             "ingestion buffer pressure warning",
             extra={
                 "buffer_skipped": runner.metrics.buffer_skipped,
+                "buffer_overflows": runner.metrics.buffer_overflows,
+                "buffer_pauses": runner.metrics.buffer_pauses,
+                "buffer_drop_oldest": runner.metrics.buffer_drop_oldest,
+                "buffer_drop_newest": runner.metrics.buffer_drop_newest,
+                "buffer_failures": runner.metrics.buffer_failures,
+                "backpressure_policy": runner.backpressure_policy,
                 "buffer_warn_threshold": buffer_warn_threshold,
                 "buffer_size": runner.metrics.buffer_size,
             },
@@ -79,6 +88,12 @@ def _emit_ingestion_summary(
     events_persisted: int,
     reconnects: int,
     buffer_skipped: int,
+    buffer_overflows: int,
+    buffer_pauses: int,
+    buffer_drop_oldest: int,
+    buffer_drop_newest: int,
+    buffer_failures: int,
+    backpressure_policy: str,
     max_latency_seconds: float,
     dedup_on: bool,
     batch_size: int,
@@ -98,6 +113,12 @@ def _emit_ingestion_summary(
         "events_persisted": int(events_persisted),
         "reconnects": int(reconnects),
         "buffer_skipped": int(buffer_skipped),
+        "buffer_overflows": int(buffer_overflows),
+        "buffer_pauses": int(buffer_pauses),
+        "buffer_drop_oldest": int(buffer_drop_oldest),
+        "buffer_drop_newest": int(buffer_drop_newest),
+        "buffer_failures": int(buffer_failures),
+        "backpressure_policy": backpressure_policy,
         "max_latency_seconds": float(max_latency_seconds),
         "dedup_on": bool(dedup_on),
         "batch_size": int(max(1, batch_size)),
@@ -201,6 +222,7 @@ def collect_events(
     sink: EventSink | None = None,
     error_policy: ErrorPolicy | None = None,
     checkpoint_store: CheckpointStore | None = None,
+    backpressure_policy: BackpressurePolicy = "pause",
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
@@ -217,6 +239,12 @@ def collect_events(
                 events_persisted=len(events_out),
                 reconnects=0,
                 buffer_skipped=0,
+                buffer_overflows=0,
+                buffer_pauses=0,
+                buffer_drop_oldest=0,
+                buffer_drop_newest=0,
+                buffer_failures=0,
+                backpressure_policy=backpressure_policy,
                 max_latency_seconds=0.0,
                 dedup_on=dedup_enabled,
                 batch_size=batch_size,
@@ -271,6 +299,7 @@ def collect_events(
             snapshot_fn=snapshot_fn,
             lag_threshold_seconds=5.0,
             max_buffer=max_buffer,
+            backpressure_policy=backpressure_policy,
             dedup_enabled=dedup_enabled,
         )
         runner.restore_checkpoint(checkpoint_state)
@@ -311,6 +340,12 @@ def collect_events(
                     "env": cfg.env,
                     "reconnects": runner.metrics.reconnects,
                     "buffer_skipped": runner.metrics.buffer_skipped,
+                    "buffer_overflows": runner.metrics.buffer_overflows,
+                    "buffer_pauses": runner.metrics.buffer_pauses,
+                    "buffer_drop_oldest": runner.metrics.buffer_drop_oldest,
+                    "buffer_drop_newest": runner.metrics.buffer_drop_newest,
+                    "buffer_failures": runner.metrics.buffer_failures,
+                    "backpressure_policy": backpressure_policy,
                     "max_latency_seconds": runner.metrics.max_latency_seconds,
                 },
             )
@@ -323,6 +358,12 @@ def collect_events(
                 events_persisted=int(getattr(sink_impl, "persisted_count", len(handler.events))),
                 reconnects=runner.metrics.reconnects,
                 buffer_skipped=runner.metrics.buffer_skipped,
+                buffer_overflows=runner.metrics.buffer_overflows,
+                buffer_pauses=runner.metrics.buffer_pauses,
+                buffer_drop_oldest=runner.metrics.buffer_drop_oldest,
+                buffer_drop_newest=runner.metrics.buffer_drop_newest,
+                buffer_failures=runner.metrics.buffer_failures,
+                backpressure_policy=backpressure_policy,
                 max_latency_seconds=runner.metrics.max_latency_seconds,
                 dedup_on=dedup_enabled,
                 batch_size=batch_size,
@@ -368,6 +409,12 @@ def collect_events(
                     events_persisted=0,
                     reconnects=0,
                     buffer_skipped=0,
+                    buffer_overflows=0,
+                    buffer_pauses=0,
+                    buffer_drop_oldest=0,
+                    buffer_drop_newest=0,
+                    buffer_failures=0,
+                    backpressure_policy=backpressure_policy,
                     max_latency_seconds=0.0,
                     dedup_on=dedup_enabled,
                     batch_size=batch_size,
@@ -400,6 +447,12 @@ def collect_events(
                 events_persisted=len(events_out),
                 reconnects=0,
                 buffer_skipped=0,
+                buffer_overflows=0,
+                buffer_pauses=0,
+                buffer_drop_oldest=0,
+                buffer_drop_newest=0,
+                buffer_failures=0,
+                backpressure_policy=backpressure_policy,
                 max_latency_seconds=0.0,
                 dedup_on=dedup_enabled,
                 batch_size=batch_size,

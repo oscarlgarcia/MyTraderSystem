@@ -148,24 +148,85 @@ def test_gap_without_snapshot_skips_resync():
     assert runner.metrics.last_lag_seconds >= 10
 
 
-def test_buffer_skip_when_overflow():
+def test_pause_policy_limits_ingestion_rate_under_pressure():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    sleeps = []
+    handled = []
+
+    def stream():
+        for i in range(6):
+            yield make_ev(base + timedelta(seconds=i))
+
+    runner = ResilientRunner(
+        stream_fn=stream,
+        snapshot_fn=None,
+        max_buffer=2,
+        read_burst_size=6,
+        backpressure_policy="pause",
+        backpressure_pause_seconds=0.05,
+        sleeper=lambda seconds: sleeps.append(seconds),
+    )
+    runner.run(lambda ev: handled.append(ev), stop_on_complete=True, max_retries=0)
+
+    assert len(handled) == 6
+    assert runner.metrics.buffer_pauses > 0
+    assert sleeps
+
+
+def test_drop_policy_counts_and_logs_losses():
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
     def stream():
-        for i in range(5):
+        for i in range(6):
             yield make_ev(base + timedelta(seconds=i))
 
     handled = []
+    buffer = io.StringIO()
+    logger = logging.getLogger("ingest.resilience")
+    handler = logging.StreamHandler(buffer)
+    logger.handlers = [handler]
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    try:
+        runner = ResilientRunner(
+            stream_fn=stream,
+            snapshot_fn=None,
+            max_buffer=2,
+            read_burst_size=6,
+            backpressure_policy="drop_newest",
+            sleeper=lambda s: None,
+        )
+        runner.run(lambda ev: handled.append(ev), stop_on_complete=True, max_retries=0)
+    finally:
+        logger.handlers = []
+        logger.propagate = True
 
-    def slow_handler(ev):
-        handled.append(ev)
-        # no sleep needed; skip logic is based on buffer size
-
-    runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, max_buffer=0, sleeper=lambda s: None)
-    runner.run(slow_handler, stop_on_complete=True, max_retries=0)
-    # se deberían haber descartado al menos 1 evento
     assert runner.metrics.buffer_skipped > 0
-    assert runner.metrics.buffer_size <= 0
+    assert runner.metrics.buffer_drop_newest > 0
+    assert len(handled) < 6
+    assert "backpressure drop_newest applied" in buffer.getvalue()
+
+
+def test_fail_policy_aborts_cleanly_on_overload():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def stream():
+        for i in range(6):
+            yield make_ev(base + timedelta(seconds=i))
+
+    runner = ResilientRunner(
+        stream_fn=stream,
+        snapshot_fn=None,
+        max_buffer=2,
+        read_burst_size=6,
+        backpressure_policy="fail",
+        sleeper=lambda s: None,
+    )
+
+    with pytest.raises(IngestionError) as exc_info:
+        runner.run(lambda ev: None, stop_on_complete=True, max_retries=0)
+    assert exc_info.value.category == "sink"
+    assert runner.metrics.buffer_failures > 0
 
 
 def test_warning_when_lag_exceeds():
