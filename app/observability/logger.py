@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -17,6 +18,22 @@ from pathlib import Path
 from typing import Any, Dict, Optional, TextIO
 
 TRACE_ID: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
+REDACTED = "[REDACTED]"
+SENSITIVE_KEY_MARKERS = (
+    "password",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "private_key",
+    "authorization",
+    "cookie",
+    "session",
+)
+SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"bearer\s+[a-z0-9._\-]+", re.IGNORECASE),
+    re.compile(r"(token|password|api[_-]?key|secret)=([^&\\s]+)", re.IGNORECASE),
+)
 
 
 def set_trace_id(trace_id: str) -> None:
@@ -54,10 +71,37 @@ class JsonFormatter(logging.Formatter):
                 continue
             if key in payload:
                 continue
-            if key.lower() in forbidden:
+            if key.lower() in forbidden or _is_sensitive_key(key):
                 continue
-            payload[key] = value
-        return json.dumps(payload, ensure_ascii=False)
+            payload[key] = _sanitize_value(value, field_name=key)
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in SENSITIVE_KEY_MARKERS)
+
+
+def _sanitize_value(value: Any, *, field_name: str | None = None) -> Any:
+    if field_name and _is_sensitive_key(field_name):
+        return REDACTED
+    if isinstance(value, dict):
+        return {str(key): _sanitize_value(item, field_name=str(key)) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_value(item) for item in value]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+            else:
+                return _sanitize_value(parsed, field_name=field_name)
+        for pattern in SENSITIVE_VALUE_PATTERNS:
+            if pattern.search(value):
+                return REDACTED
+    return value
 
 
 def _base_handler(stream: Optional[TextIO] = None) -> logging.Handler:

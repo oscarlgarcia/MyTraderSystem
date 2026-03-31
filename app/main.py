@@ -16,6 +16,7 @@ from app.common.dto import MarketEvent, TraceContext
 from app.config import AppConfig, load_config, parse_args
 from app.observability.logger import get_logger, set_trace_id
 from app.ingestion.pipeline import collect_events
+from app.ingestion.storage import validate_output_path
 from app.features.pipeline import run_feature_pipeline
 from app.features.engine import FeatureEngine
 from app.strategy.basic import generate_signals
@@ -52,6 +53,7 @@ def _resolve_runtime_options(args) -> Dict[str, object]:
     ingest_batch_size = int(getattr(args, "ingest_batch_size", 1))
     return {
         "fast_path": fast_path,
+        "production_mode": bool(getattr(args, "production_mode", False)),
         "trace_steps": False if fast_path else bool(getattr(args, "trace_steps", False)),
         "compute_features_after_ingest": bool(getattr(args, "features_after_ingest", False)),
         "ingest_max_buffer": int(getattr(args, "ingest_max_buffer", 10_000)),
@@ -66,6 +68,38 @@ def _resolve_runtime_options(args) -> Dict[str, object]:
         "snapshot_enabled": not fast_path,
         "summary_logging": not fast_path,
     }
+
+
+def _validate_operational_security(
+    cfg: AppConfig,
+    *,
+    mode: str,
+    runtime: Dict[str, object],
+) -> None:
+    production_mode = bool(runtime.get("production_mode", False))
+    validate_output_path(cfg.data_dir, require_absolute=production_mode)
+    if not production_mode:
+        return
+
+    errors: list[str] = []
+    if mode != "live":
+        errors.append("production mode requires --mode live")
+    if bool(runtime.get("fast_path", False)):
+        errors.append("production mode rejects --fast-path")
+    if bool(runtime.get("allow_live_fallback", False)):
+        errors.append("production mode rejects --allow-live-fallback")
+    if runtime.get("error_policy") not in (None, "fail_fast"):
+        errors.append("production mode requires error_policy=fail_fast")
+    if not bool(runtime.get("ingest_dedup", True)):
+        errors.append("production mode requires ingest dedup enabled")
+    if not bool(runtime.get("summary_logging", True)):
+        errors.append("production mode requires ingestion summary logging")
+    if runtime.get("ingest_backpressure_policy") in {"drop_oldest", "drop_newest"}:
+        errors.append("production mode rejects lossy backpressure policies")
+    if str(cfg.log_level).upper() == "DEBUG":
+        errors.append("production mode rejects DEBUG logging")
+    if errors:
+        raise ValueError("Unsafe production configuration: " + "; ".join(errors))
 
 
 def run_cycle(
@@ -170,6 +204,7 @@ def run() -> int:
     args = parse_args()
     config = load_config(args.env)
     runtime = _resolve_runtime_options(args)
+    _validate_operational_security(config, mode=args.mode, runtime=runtime)
     trace_id = str(uuid4())
     set_trace_id(trace_id)
     logger = get_logger(level=config.log_level)

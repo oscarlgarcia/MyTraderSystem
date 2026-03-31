@@ -18,6 +18,25 @@ from app.common.dto import MarketEvent
 from app.ingestion.dedup import identity_from_fields
 
 
+def validate_output_path(base_dir: Path, *, require_absolute: bool = False) -> Path:
+    resolved = Path(base_dir).expanduser()
+    if require_absolute and not resolved.is_absolute():
+        raise ValueError(f"data_dir must be absolute in production mode: {base_dir}")
+    resolved = resolved.resolve()
+    if resolved == Path(resolved.anchor):
+        raise ValueError(f"data_dir cannot be filesystem root: {resolved}")
+    if resolved.exists() and not resolved.is_dir():
+        raise ValueError(f"data_dir must be a directory: {resolved}")
+    resolved.mkdir(parents=True, exist_ok=True)
+    probe = resolved / ".write_probe"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        raise ValueError(f"data_dir is not writable: {resolved}") from exc
+    return resolved
+
+
 @dataclass
 class ParquetWriter:
     base_dir: Path
@@ -33,6 +52,9 @@ class ParquetWriter:
     total_write_latency_seconds: float = 0.0
     last_write_latency_seconds: float = 0.0
     max_write_latency_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.base_dir = validate_output_path(self.base_dir)
 
     def add(self, event: MarketEvent | Iterable[MarketEvent]) -> None:
         if isinstance(event, MarketEvent):

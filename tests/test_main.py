@@ -2,6 +2,7 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+import pytest
 from app import main
 from app.common.dto import MarketEvent
 from app.config import load_config
@@ -93,6 +94,7 @@ def test_features_after_ingest_runs_pipeline(monkeypatch, caplog):
 def test_fast_path_derives_runtime_flags():
     args = SimpleNamespace(
         fast_path=True,
+        production_mode=True,
         trace_steps=True,
         features_after_ingest=False,
         ingest_max_buffer=10_000,
@@ -109,6 +111,7 @@ def test_fast_path_derives_runtime_flags():
     runtime = main._resolve_runtime_options(args)
 
     assert runtime["fast_path"] is True
+    assert runtime["production_mode"] is True
     assert runtime["trace_steps"] is False
     assert runtime["ingest_dedup"] is False
     assert runtime["snapshot_enabled"] is False
@@ -120,6 +123,30 @@ def test_fast_path_derives_runtime_flags():
     assert runtime["ingest_temporal_policy"] == "fail"
     assert runtime["allow_live_fallback"] is True
     assert runtime["error_policy"] == "degraded"
+
+
+def test_production_mode_rejects_unsafe_fallback(tmp_path):
+    cfg = load_config("dev")
+    cfg = type(cfg)(
+        env=cfg.env,
+        data_dir=tmp_path.resolve(),
+        log_level=cfg.log_level,
+        ws_base=cfg.ws_base,
+        rest_base=cfg.rest_base,
+        symbols=cfg.symbols,
+    )
+    runtime = {
+        "production_mode": True,
+        "fast_path": False,
+        "allow_live_fallback": True,
+        "error_policy": None,
+        "ingest_dedup": True,
+        "summary_logging": True,
+        "ingest_backpressure_policy": "pause",
+    }
+
+    with pytest.raises(ValueError, match="allow-live-fallback"):
+        main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 
 def test_fast_path_mock_benchmark_improves_throughput():

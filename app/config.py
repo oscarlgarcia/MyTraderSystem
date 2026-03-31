@@ -16,6 +16,16 @@ from typing import Any, Dict
 DEFAULT_ENV = "dev"
 REQUIRED_KEYS = {"env", "data_dir", "log_level", "ws_base", "rest_base", "symbols"}
 ALLOWED_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
+SECRET_ENV_PREFIX = "APP_SECRET_"
+FORBIDDEN_CONFIG_KEY_MARKERS = (
+    "password",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "private_key",
+    "authorization",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +38,14 @@ class AppConfig:
     symbols: list[str]
 
 
+def get_secret_env(name: str, *, required: bool = False) -> str | None:
+    env_name = f"{SECRET_ENV_PREFIX}{name.upper()}"
+    value = os.getenv(env_name)
+    if required and not value:
+        raise ValueError(f"Missing required secret env var: {env_name}")
+    return value
+
+
 def _load_file(path: Path) -> Dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -36,10 +54,27 @@ def _load_file(path: Path) -> Dict[str, Any]:
     return data
 
 
+def _contains_forbidden_secret_keys(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(marker in lowered for marker in FORBIDDEN_CONFIG_KEY_MARKERS):
+                return True
+            if _contains_forbidden_secret_keys(item):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_forbidden_secret_keys(item) for item in value)
+    return False
+
+
 def load_config(env: str | None = None) -> AppConfig:
     env_name = env or os.getenv("APP_ENV", DEFAULT_ENV)
     path = Path(f"config.{env_name}.yaml")
     raw = _load_file(path)
+    if _contains_forbidden_secret_keys(raw):
+        raise ValueError(
+            f"Config file {path} contains secret-like keys; move secrets to {SECRET_ENV_PREFIX}* environment variables"
+        )
 
     missing = REQUIRED_KEYS - set(raw.keys())
     if missing:
@@ -72,6 +107,11 @@ def load_config(env: str | None = None) -> AppConfig:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MyTraderSystem")
     parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
+    parser.add_argument(
+        "--production-mode",
+        action="store_true",
+        help="Activa validaciones operativas estrictas: sin fallback, sin fast-path y con data_dir seguro.",
+    )
     parser.add_argument(
         "--mode",
         choices=["dry", "live"],

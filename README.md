@@ -199,6 +199,19 @@ El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 
 En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `ingestion summary` e `ingestion health`. El summary consolida `source_events_in`, `events_valid`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`, `processing_latency_seconds`, `write_latency_seconds`, `event_gap_seconds`, `late_events`, `late_event_max_delay_seconds`, `temporal_policy` y `reconnects`, junto con los contadores legacy (`events_in`, `events_out`, `buffer_*`, `duplicates_dropped`, `result`, `error_policy`). `ingestion health` resume el estado operativo final de la ejecucion con el mismo `trace_id`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite estos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). La semantica temporal se controla con `--ingest-temporal-policy {accept,drop,fail}`: por defecto se aceptan eventos tardios/fuera de orden, se contabilizan por separado y no se mezclan con la latencia de proceso. Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
+### Seguridad operativa minima
+- Los ficheros `config.<env>.yaml` no deben contener secretos. Si aparece una clave tipo `password`, `token`, `secret`, `api_key`, `authorization` o similar, `load_config()` falla.
+- La interfaz explicita para secretos queda reservada a variables de entorno `APP_SECRET_*`; helper disponible: `app.config.get_secret_env(...)`.
+- `--production-mode` activa validaciones estrictas:
+  - exige `--mode live`
+  - rechaza `--allow-live-fallback`
+  - rechaza `--fast-path`
+  - rechaza `error_policy` distinto de `fail_fast`
+  - rechaza `--no-ingest-dedup`
+  - rechaza politicas de backpressure con perdida (`drop_oldest`, `drop_newest`)
+  - exige `data_dir` absoluto y escribible
+- El logger JSON sanea payloads y extras anidados para evitar que credenciales o tokens terminen en stdout o en ficheros de log.
+
 ### Feature Store inicial
 - Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).
 - Uso CLI: `python -m app --env dev --features-after-ingest` (solo logging de features tras ingesta).

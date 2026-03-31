@@ -66,6 +66,7 @@
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
   - Propaga `ingest_backpressure_policy` con default `pause`.
   - Propaga `ingest_temporal_policy` con default `accept`.
+  - Propaga `production_mode`; cuando esta activo, el arranque valida `data_dir`, logging y politicas inseguras antes de ejecutar ingestion.
   - Propaga `allow_live_fallback` para debugging controlado; no se activa por defecto.
 - `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
@@ -167,6 +168,15 @@
   - gaps positivos pueden disparar resync por snapshot;
   - eventos tardios/fuera de orden no reordenan el flujo internamente;
   - segun `temporal_policy`, se aceptan, se descartan o abortan la ejecucion.
+- La garantia operativa minima de seguridad en esta fase es:
+  - no se aceptan secretos en `config.*.yaml`;
+  - el logger no expone claves/valores sensibles en logs JSON;
+  - produccion rechaza configuraciones con degradacion silenciosa o perdida implicita;
+  - la ruta de persistencia debe ser valida y escribible.
 
 ## Relaciones
 `WS/REST -> MarketEvent -> dedup/Parquet -> FeatureVector -> Strategy -> Risk -> Execution -> Portfolio -> Logs/Metrics`
+- **Seguridad operativa**:
+  - `app.config.get_secret_env(name, required=False)`: punto de entrada explicito para secretos via `APP_SECRET_*`.
+  - `app.ingestion.storage.validate_output_path(...)`: valida rutas y permisos de escritura.
+  - `app.main._validate_operational_security(...)`: aplica politicas estrictas en `--production-mode`.

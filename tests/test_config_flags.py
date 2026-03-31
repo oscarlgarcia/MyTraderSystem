@@ -4,6 +4,7 @@ from app.config import parse_args
 def test_defaults_flags():
     args = parse_args([])
     assert args.mode == "dry"
+    assert args.production_mode is False
     assert args.trace_steps is False
     assert args.features_after_ingest is False
     assert args.ingest_max_buffer == 10_000
@@ -53,3 +54,8 @@ def test_allow_live_fallback_flag():
 def test_error_policy_flag():
     args = parse_args(["--error-policy", "degraded"])
     assert args.error_policy == "degraded"
+
+
+def test_production_mode_flag():
+    args = parse_args(["--production-mode"])
+    assert args.production_mode is True

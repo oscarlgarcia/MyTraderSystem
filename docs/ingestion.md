@@ -32,6 +32,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - Descarga klines historicos, normaliza filas, ordena y opcionalmente deduplica con `--dedup` antes del sink.
 - `ingestion.storage`
   - `ParquetWriter`: persiste eventos particionados por simbolo y fecha; puede deduplicar contra datos ya existentes, escribe con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
+  - `validate_output_path(...)`: valida que la ruta de escritura sea directorio valido y escribible; en modo estricto puede exigir ruta absoluta.
 - `ingestion.sinks`
   - Define `EventSink` y `ParquetEventSink`.
   - Define `ErrorSink`, `NullErrorSink` y `JsonlErrorSink` para trazado local de payloads rechazados.
@@ -83,6 +84,9 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - **Checkpoint local minimo**: live persiste `data_dir/<env>/state/ingestion-checkpoint.json` con el ultimo timestamp procesado, metadata minima y una ventana corta de claves dedup para contener duplicados inmediatos tras reinicio.
 - **Memoria acotada**: el deduplicador expira por TTL y expulsa por capacidad para evitar crecimiento sin control en runs largos.
 - **Separacion accepted/persisted**: el writer mantiene contadores de eventos aceptados, persistidos y pendientes, para distinguir buffer en memoria de datos ya confirmados en disco.
+- **Config/secrets separados**: el config JSON-compatible no admite claves sensibles; los secretos futuros deben entrar por `APP_SECRET_*`.
+- **Modo produccion estricto**: `main._validate_operational_security(...)` falla al arrancar si se detectan defaults inseguros o `data_dir` no es absoluto/escribible.
+- **Sanitizacion reforzada de logs**: el `JsonFormatter` elimina claves sensibles de primer nivel y redacta valores sensibles anidados en `payload`, `context` y estructuras JSON serializables.
 - **Semantica temporal explicita**:
   - `event_gap_seconds` mide huecos positivos entre timestamps consecutivos y decide si se dispara resync.
   - `processing_latency_seconds` mide edad del evento al procesarlo; no se usa para inferir huecos.
@@ -114,11 +118,13 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - deduplica con una clave compartida,
   - escribe Parquet local,
   - expone metricas y logs resumidos, incluido un resumen agregado de cierre por ejecucion.
+  - valida que la ruta de persistencia sea segura y escribible antes de usarla.
 - No debe:
   - convertirse en una capa de negocio,
   - asumir guarantees exactly-once,
   - degradar silenciosamente a datos sinteticos cuando live falla,
-  - depender de caches distribuidas o filtros probabilisticos para esta fase.
+  - depender de caches distribuidas o filtros probabilisticos para esta fase,
+  - aceptar secretos dentro de los ficheros de configuracion.
 
 ## Posibles mejoras
 - Sustituir `_key` por ids nativos cuando la fuente los provea.

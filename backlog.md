@@ -32,6 +32,7 @@
 - Fase 8 backpressure real y control de saturacion: cola bounded con politicas `pause`, `drop_oldest`, `drop_newest`, `fail` y metricas explicitas. [hecho]
 - Fase 9 observabilidad operativa seria: metricas consolidadas por fuente/validacion/dedup/buffer/sink, `ingestion health` y latencia de escritura. [hecho]
 - Fase 10 semantica temporal explicita: separacion gap vs processing lag, politica para eventos tardios/fuera de orden y metricas propias de resync. [hecho]
+- Fase 11 seguridad operativa minima: config/secrets separados, sanitizacion reforzada de logs, `--production-mode` y validacion de rutas/permisos. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.
