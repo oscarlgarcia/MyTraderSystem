@@ -130,6 +130,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - Sustituir `_key` por ids nativos cuando la fuente los provea.
 - Persistir estado minimo de deduplicacion para reinicios.
 - Anadir retencion/rehidratacion y compactacion offline cuando el volumen crezca.
+- Ejecutar soak tests y canary externo antes de aprobar carga/criticidad superiores a la suite local de readiness.
 
 ## Extension rapida de streams
 - Registrar el builder del tipo nuevo con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")`.

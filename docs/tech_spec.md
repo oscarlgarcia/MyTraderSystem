@@ -176,6 +176,17 @@
 
 ## Relaciones
 `WS/REST -> MarketEvent -> dedup/Parquet -> FeatureVector -> Strategy -> Risk -> Execution -> Portfolio -> Logs/Metrics`
+
+## Readiness operativa
+- La validacion de readiness queda fijada en:
+  - `tests/slow/test_ingestion_readiness.py`
+  - `docs/operations/ingestion_runbook.md`
+  - `docs/validation/ingestion_readiness.md`
+- El objetivo de esta fase no es simular un entorno distribuido, sino dejar evidencia reproducible de:
+  - reconnect con checkpoint
+  - sobrecarga controlada
+  - reinicio tras fallo parcial
+  - fallo compuesto diagnosticable
 - **Seguridad operativa**:
   - `app.config.get_secret_env(name, required=False)`: punto de entrada explicito para secretos via `APP_SECRET_*`.
   - `app.ingestion.storage.validate_output_path(...)`: valida rutas y permisos de escritura.

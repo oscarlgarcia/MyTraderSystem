@@ -36,7 +36,7 @@ backfill-dev-write:
 	poetry run python -m app.ingestion.backfill --env dev --symbol $(SYMBOL) --start $(START) --end $(END) --interval $(INTERVAL) --batch $(BATCH)
 
 # Docker helpers
-.PHONY: docker-build docker-up docker-down docker-shell docker-exec docker-test docker-test-all
+.PHONY: docker-build docker-up docker-down docker-shell docker-exec docker-test docker-test-all docker-test-slow docker-test-ingestion-readiness
 
 docker-build:
 	docker compose build
@@ -58,6 +58,12 @@ docker-test:
 
 docker-test-all:
 	docker compose exec app poetry run pytest
+
+docker-test-slow:
+	docker compose exec app poetry run pytest -m slow -q
+
+docker-test-ingestion-readiness:
+	docker compose exec app poetry run pytest tests/slow/test_ingestion_readiness.py -m slow -q
 
 demo-ingest:
 	poetry run python -m app.ingestion.demo --env dev --duration 30 --max-events 200

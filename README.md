@@ -182,6 +182,8 @@ events = collect_events("live", cfg, duration_s=0, source=source, sink=sink)
 - [Functional](docs/Functional.md)
 - [Use Cases](docs/useCase.md)
 - [Dependencies](docs/dependencies.md)
+- [Runbook de ingestion](docs/operations/ingestion_runbook.md)
+- [Checklist de readiness](docs/validation/ingestion_readiness.md)
 
 ### Backfill historico
 - Seco (no escribe): `make backfill-dev START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
