@@ -93,3 +93,51 @@ def test_dedup_capacity_bounds_memory():
 
     assert len(dedup) == 2
     assert dedup.is_duplicate(first) is False
+
+
+def test_distinct_trades_with_different_native_ids_are_not_collapsed():
+    dedup = Deduplicator(ttl_seconds=60.0, max_entries=10)
+    event_a = MarketEvent(
+        symbol="BTCUSDT",
+        event_ts=datetime.fromtimestamp(1700000000, tz=timezone.utc),
+        price=100.0,
+        size=1.0,
+        source="trade",
+        metadata={"trade_id": "1001", "source_id": "1001", "venue": "BINANCE"},
+    )
+    event_b = MarketEvent(
+        symbol="BTCUSDT",
+        event_ts=event_a.event_ts,
+        price=100.0,
+        size=1.0,
+        source="trade",
+        metadata={"trade_id": "1002", "source_id": "1002", "venue": "BINANCE"},
+    )
+
+    assert dedup.is_duplicate(event_a) is False
+    dedup.remember(event_a)
+    assert dedup.is_duplicate(event_b) is False
+
+
+def test_duplicate_trades_with_same_native_id_are_collapsed():
+    dedup = Deduplicator(ttl_seconds=60.0, max_entries=10)
+    event_a = MarketEvent(
+        symbol="BTCUSDT",
+        event_ts=datetime.fromtimestamp(1700000000, tz=timezone.utc),
+        price=100.0,
+        size=1.0,
+        source="trade",
+        metadata={"trade_id": "2001", "source_id": "2001", "venue": "BINANCE"},
+    )
+    event_b = MarketEvent(
+        symbol="BTCUSDT",
+        event_ts=event_a.event_ts,
+        price=100.0,
+        size=1.0,
+        source="trade",
+        metadata={"trade_id": "2001", "source_id": "2001", "venue": "BINANCE"},
+    )
+
+    assert dedup.is_duplicate(event_a) is False
+    dedup.remember(event_a)
+    assert dedup.is_duplicate(event_b) is True
