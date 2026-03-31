@@ -6,13 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Protocol
 
-from app.common.dto import MarketEvent
 from app.ingestion.errors import IngestionError
 from app.ingestion.storage import ParquetWriter
+from app.marketdata.models import IngestionEvent
 
 
 class EventSink(Protocol):
-    def add(self, event: MarketEvent | Iterable[MarketEvent]) -> None: ...
+    def add(self, event: IngestionEvent | Iterable[IngestionEvent]) -> None: ...
     def close(self) -> None: ...
 
 
@@ -47,7 +47,7 @@ class ParquetEventSink:
     def __init__(self, writer: ParquetWriter):
         self.writer = writer
 
-    def add(self, event: MarketEvent | Iterable[MarketEvent]) -> None:
+    def add(self, event: IngestionEvent | Iterable[IngestionEvent]) -> None:
         self.writer.add(event)
 
     def close(self) -> None:
