@@ -6,8 +6,11 @@ from app.ingestion.client import (
     build_streams,
     build_ws_url,
     normalize_kline,
+    normalize_kline_typed,
     normalize_trade,
+    normalize_trade_typed,
     parse_message,
+    parse_typed_message,
     register_normalizer,
     register_stream_builder,
 )
@@ -59,6 +62,52 @@ def test_parse_message_trade():
     ev = parse_message(json_dumps(msg))
     assert ev.source == "trade"
     assert ev.symbol == "BTCUSDT"
+
+
+def test_parse_typed_trade_message_captures_exchange_receive_and_process_timestamps():
+    receive_ts = datetime(2024, 1, 1, 0, 0, 2, tzinfo=timezone.utc)
+    process_ts = datetime(2024, 1, 1, 0, 0, 3, tzinfo=timezone.utc)
+    msg = {
+        "stream": "btcusdt@trade",
+        "data": {"s": "BTCUSDT", "E": 1704067200000, "p": "100", "q": "1", "t": 42},
+    }
+
+    ev = parse_typed_message(json_dumps(msg), receive_ts=receive_ts, process_ts=process_ts)
+
+    assert ev.exchange_ts == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    assert ev.receive_ts == receive_ts
+    assert ev.process_ts == process_ts
+    assert ev.exchange_ts <= ev.receive_ts <= ev.process_ts
+
+
+def test_parse_typed_kline_message_maps_exchange_ts_from_close_time():
+    receive_ts = datetime(2024, 1, 1, 0, 2, tzinfo=timezone.utc)
+    process_ts = datetime(2024, 1, 1, 0, 2, 1, tzinfo=timezone.utc)
+    msg = {
+        "stream": "btcusdt@kline_1m",
+        "data": {
+            "e": "kline",
+            "E": 1704067255000,
+            "s": "BTCUSDT",
+            "k": {
+                "t": 1704067200000,
+                "T": 1704067250000,
+                "o": "100",
+                "h": "101",
+                "l": "99",
+                "c": "100.5",
+                "q": "10",
+                "i": "1m",
+            },
+        },
+    }
+
+    ev = parse_typed_message(json_dumps(msg), receive_ts=receive_ts, process_ts=process_ts)
+
+    assert ev.exchange_ts == datetime(2024, 1, 1, 0, 0, 50, tzinfo=timezone.utc)
+    assert ev.open_ts == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    assert ev.close_ts == datetime(2024, 1, 1, 0, 0, 50, tzinfo=timezone.utc)
+    assert ev.exchange_ts <= ev.receive_ts <= ev.process_ts
 
 
 def test_parse_message_unknown_stream_raises():
@@ -123,3 +172,33 @@ def test_register_stream_builder_generates_custom_stream_and_parse_message():
 def test_default_streams_unchanged_without_custom_types():
     streams = build_streams(["BTCUSDT"])
     assert streams == ["btcusdt@trade", "btcusdt@kline_1m"]
+
+
+def test_normalize_trade_typed_sets_process_ts_when_not_provided():
+    payload = {"s": "BTCUSDT", "E": 1710000000000, "p": "100", "q": "1", "t": 1}
+
+    ev = normalize_trade_typed(payload)
+
+    assert ev.exchange_ts.tzinfo is not None
+    assert ev.process_ts is not None
+
+
+def test_normalize_kline_typed_sets_receive_ts_when_provided():
+    receive_ts = datetime(2024, 1, 1, 0, 2, tzinfo=timezone.utc)
+    payload = {
+        "s": "BTCUSDT",
+        "E": 1710000060000,
+        "k": {
+            "t": 1710000000000,
+            "T": 1710000060000,
+            "o": "100",
+            "h": "101",
+            "l": "99",
+            "c": "100",
+            "q": "1",
+        },
+    }
+
+    ev = normalize_kline_typed(payload, receive_ts=receive_ts)
+
+    assert ev.receive_ts == receive_ts

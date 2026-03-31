@@ -10,23 +10,27 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Protocol
 
 import httpx
 from websockets.sync.client import connect
 
-from app.common import validator
 from app.common.dto import MarketEvent
 from app.config import AppConfig
-from app.ingestion.client import build_ws_url, normalize_kline, parse_message
+from app.ingestion.client import build_ws_url, normalize_kline_typed, parse_message_parts, parse_typed_message
 from app.ingestion.errors import IngestionError, classify_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
+from app.marketdata.models import BaseMarketEvent, IngestionEvent
+from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
+from app.marketdata.validators import validate_ingestion_event, validate_kline_payload
+from app.observability.logger import get_trace_id
 
 
 class Source(Protocol):
-    def stream(self, end_time: float | None = None) -> Iterable[MarketEvent]: ...
-    def snapshot(self) -> Optional[Iterable[MarketEvent]]: ...
+    def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]: ...
+    def snapshot(self) -> Optional[Iterable[IngestionEvent]]: ...
 
 
 @dataclass
@@ -52,8 +56,8 @@ def _ws_stream(url: str, end_time: float | None = None) -> Iterable[str]:
             yield raw
 
 
-def source_snapshot_fn(source: Source) -> Callable[[], Iterable[MarketEvent]]:
-    def snapshot() -> Iterable[MarketEvent]:
+def source_snapshot_fn(source: Source) -> Callable[[], Iterable[IngestionEvent]]:
+    def snapshot() -> Iterable[IngestionEvent]:
         events = source.snapshot()
         if events is None:
             return []
@@ -68,6 +72,7 @@ class BinanceSource:
     ws_stream: Callable[[str, float | None], Iterable[object]] = _ws_stream
     http_get: Callable[..., httpx.Response] = httpx.get
     error_sink: ErrorSink = field(default_factory=NullErrorSink)
+    raw_sink: RawSink = field(default_factory=NullRawSink)
     stats: SourceStats = field(default_factory=SourceStats)
 
     def __post_init__(self) -> None:
@@ -75,6 +80,31 @@ class BinanceSource:
             self.error_sink = JsonlErrorSink(
                 Path(self.cfg.data_dir) / "errors" / "ingestion-dlq.jsonl"
             )
+
+    def _write_raw_record(
+        self,
+        *,
+        payload: object,
+        event: IngestionEvent,
+        stream_type: str,
+        receive_ts: datetime,
+    ) -> None:
+        if isinstance(self.raw_sink, NullRawSink):
+            return
+        record = RawRecord(
+            payload=payload,
+            venue=getattr(event, "venue", "BINANCE"),
+            stream_type=stream_type,
+            symbol=event.symbol,
+            exchange_ts=event.event_ts,
+            receive_ts=receive_ts,
+            trace_id=get_trace_id(),
+            source_id=getattr(event, "source_id", None),
+        )
+        try:
+            self.raw_sink.write(record)
+        except Exception as exc:
+            raise IngestionError("sink", "transient", f"raw sink write failed: {exc}") from exc
 
     def _record_rejected(self, raw_message: object, error: IngestionError, *, context: dict[str, object]) -> None:
         self.stats.events_invalid += 1
@@ -93,18 +123,32 @@ class BinanceSource:
                 },
             )
 
-    def stream(self, end_time: float | None = None) -> Iterable[MarketEvent]:
+    def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]:
         url = build_ws_url(self.cfg.ws_base, self.cfg.symbols)
         try:
             for item in self.ws_stream(url, end_time=end_time):
                 self.stats.source_events_in += 1
-                if isinstance(item, MarketEvent):
-                    validator.validate_market_payload(item.symbol, item.event_ts, item.price, item.size)
+                if isinstance(item, (MarketEvent, BaseMarketEvent)):
+                    validate_ingestion_event(item)
                     self.stats.events_valid += 1
                     yield item
                     continue
                 try:
-                    event = parse_message(str(item))
+                    receive_ts = datetime.now(timezone.utc)
+                    payload, data, _stream, event_type = parse_message_parts(str(item))
+                    event = parse_typed_message(
+                        str(item),
+                        receive_ts=receive_ts,
+                        process_ts=receive_ts,
+                        allowed_event_types=("trade", "kline"),
+                    )
+                    validate_ingestion_event(event)
+                    self._write_raw_record(
+                        payload=payload,
+                        event=event,
+                        stream_type=event_type,
+                        receive_ts=receive_ts,
+                    )
                     self.stats.events_valid += 1
                     yield event
                 except (json.JSONDecodeError, KeyError) as exc:
@@ -126,19 +170,44 @@ class BinanceSource:
         except Exception as exc:
             raise classify_error(exc, default_category="source") from exc
 
-    def snapshot(self) -> Iterable[MarketEvent]:
-        events: list[MarketEvent] = []
+    def snapshot(self) -> Iterable[IngestionEvent]:
+        events: list[IngestionEvent] = []
         try:
             self.stats.snapshot_runs += 1
             for symbol in self.cfg.symbols:
                 url = f"{self.cfg.rest_base.rstrip('/')}/api/v3/klines"
                 resp = self.http_get(url, params={"symbol": symbol, "interval": "1m", "limit": 5}, timeout=5.0)
                 resp.raise_for_status()
+                receive_ts = datetime.now(timezone.utc)
                 for row in resp.json():
                     self.stats.source_events_in += 1
-                    payload = {"s": symbol, "E": int(row[6]), "k": {"c": row[4], "q": row[5]}}
+                    payload = {
+                        "s": symbol,
+                        "E": int(row[6]),
+                        "k": {
+                            "t": int(row[0]),
+                            "T": int(row[6]),
+                            "o": row[1],
+                            "h": row[2],
+                            "l": row[3],
+                            "c": row[4],
+                            "q": row[5],
+                        },
+                    }
                     try:
-                        event = normalize_kline(payload)
+                        validate_kline_payload(payload)
+                        event = normalize_kline_typed(
+                            payload,
+                            receive_ts=receive_ts,
+                            process_ts=receive_ts,
+                        )
+                        validate_ingestion_event(event)
+                        self._write_raw_record(
+                            payload=payload,
+                            event=event,
+                            stream_type="kline",
+                            receive_ts=receive_ts,
+                        )
                         events.append(event)
                         self.stats.events_valid += 1
                         self.stats.snapshot_rows += 1
@@ -156,21 +225,24 @@ class BinanceSource:
 
 @dataclass
 class StaticSource:
-    events: list[MarketEvent] = field(default_factory=list)
-    snapshot_events: Optional[list[MarketEvent]] = None
+    events: list[IngestionEvent] = field(default_factory=list)
+    snapshot_events: Optional[list[IngestionEvent]] = None
     stats: SourceStats = field(default_factory=SourceStats)
 
-    def stream(self, end_time: float | None = None) -> Iterable[MarketEvent]:
+    def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]:
         del end_time
         for event in self.events:
+            validate_ingestion_event(event)
             self.stats.source_events_in += 1
             self.stats.events_valid += 1
             yield event
 
-    def snapshot(self) -> Optional[Iterable[MarketEvent]]:
+    def snapshot(self) -> Optional[Iterable[IngestionEvent]]:
         self.stats.snapshot_runs += 1
         if self.snapshot_events is None:
             return None
+        for event in self.snapshot_events:
+            validate_ingestion_event(event)
         self.stats.source_events_in += len(self.snapshot_events)
         self.stats.events_valid += len(self.snapshot_events)
         self.stats.snapshot_rows += len(self.snapshot_events)
