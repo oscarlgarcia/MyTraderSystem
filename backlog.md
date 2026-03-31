@@ -26,6 +26,7 @@
 - Fase 2 arquitectura de produccion: contrato `Source/Sink` y eliminacion de duplicacion WS/REST entre pipeline y runner. [hecho]
 - Fase 3 politica explicita de errores: `fail_fast` / `allow_fallback` / `degraded`, clasificacion source/parse/validation/sink. [hecho]
 - Fase 4 validacion de entrada y canal de errores: validacion pre/post normalizacion y DLQ local JSONL. [hecho]
+- Fase 5 checkpoints y reanudacion minima: `CheckpointStore` local, `last_event_ts`, metadata de ejecucion y ventana corta de dedup para reinicios. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.

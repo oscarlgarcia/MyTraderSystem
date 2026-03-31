@@ -16,6 +16,7 @@ from typing import Callable, Deque, Iterable, List, Optional, Set, Tuple
 
 from app.common.dto import MarketEvent
 from app.ingestion.client import _key
+from app.ingestion.checkpoints import CheckpointState
 from app.ingestion.errors import IngestionError, classify_error
 
 
@@ -53,6 +54,22 @@ class ResilientRunner:
     metrics: ResilienceMetrics = field(default_factory=ResilienceMetrics)
     last_event_ts: Optional[datetime] = None
     seen: Set[Tuple[str, datetime, float, float, str]] = field(default_factory=set)
+    checkpoint_seen_limit: int = 1024
+    checkpoint_seen: Deque[Tuple[str, datetime, float, float, str]] = field(default_factory=deque)
+
+    def restore_checkpoint(self, state: CheckpointState | None) -> None:
+        if state is None:
+            return
+        self.last_event_ts = state.last_event_ts
+        self.seen = set(state.seen_keys)
+        self.checkpoint_seen = deque(state.seen_keys, maxlen=max(1, self.checkpoint_seen_limit))
+
+    def export_checkpoint(self, *, metadata: dict[str, object] | None = None) -> CheckpointState:
+        return CheckpointState(
+            last_event_ts=self.last_event_ts,
+            seen_keys=tuple(self.checkpoint_seen),
+            metadata=dict(metadata or {}),
+        )
 
     def run(
         self,
@@ -134,7 +151,7 @@ class ResilientRunner:
         handler(ev)
         self.metrics.events_out += 1
         if self.dedup_enabled:
-            self.seen.add(k)
+            self._remember_seen(k)
         self.last_event_ts = ev.event_ts
 
         # latency from event_ts to processing time
@@ -155,5 +172,11 @@ class ResilientRunner:
                 continue
             handler(ev)
             self.metrics.events_out += 1
-            self.seen.add(k)
+            self._remember_seen(k)
             self.last_event_ts = max(self.last_event_ts or ev.event_ts, ev.event_ts)
+
+    def _remember_seen(self, key: Tuple[str, datetime, float, float, str]) -> None:
+        self.seen.add(key)
+        self.checkpoint_seen.append(key)
+        while len(self.checkpoint_seen) > max(1, self.checkpoint_seen_limit):
+            self.checkpoint_seen.popleft()

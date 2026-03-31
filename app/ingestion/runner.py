@@ -10,11 +10,13 @@ from __future__ import annotations
 import argparse
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.common.dto import MarketEvent
 from app.config import load_config
 from app.ingestion.client import normalize_kline, normalize_trade
+from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sinks import ParquetEventSink
 from app.ingestion.sources import BinanceSource, StaticSource, source_snapshot_fn
@@ -76,6 +78,7 @@ def run(argv: Optional[list[str]] = None) -> int:
     stats = IngestStats(start_time=time.time())
     source = _dry_source() if args.dry_run else BinanceSource(cfg)
     sink = ParquetEventSink(ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.flush_size))
+    checkpoint_store = None if args.dry_run else CheckpointStore(default_checkpoint_path(cfg))
 
     def stream():
         end_time = stats.start_time + (args.duration or 0)
@@ -94,13 +97,35 @@ def run(argv: Optional[list[str]] = None) -> int:
         snapshot_fn=None if args.dry_run else source_snapshot_fn(source),
         lag_threshold_seconds=5.0,
     )
+    if checkpoint_store is not None:
+        try:
+            runner.restore_checkpoint(checkpoint_store.load())
+        except ValueError as exc:
+            logger.warning(
+                "checkpoint recovery using empty state",
+                extra={"checkpoint_path": str(checkpoint_store.path), "error": str(exc)},
+            )
 
+    completed_successfully = False
     try:
         runner.run(handler, stop_on_complete=True, max_retries=5)
+        completed_successfully = True
     except StopIteration:
-        pass
+        completed_successfully = True
     finally:
         sink.close()
+        if checkpoint_store is not None and completed_successfully:
+            checkpoint_store.save(
+                runner.export_checkpoint(
+                    metadata={
+                        "env": cfg.env,
+                        "mode": "runner",
+                        "saved_at": datetime.now(timezone.utc).isoformat(),
+                        "events_written": stats.events_written,
+                        "reconnects": runner.metrics.reconnects,
+                    }
+                )
+            )
         stats.reconnects = runner.metrics.reconnects
         stats.last_lag_seconds = runner.metrics.last_lag_seconds
         elapsed = time.time() - stats.start_time

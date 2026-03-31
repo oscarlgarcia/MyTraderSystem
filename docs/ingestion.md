@@ -16,8 +16,11 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - Implementa `StaticSource` para tests y ejecucion controlada sin red.
 - `ingestion.resilience`
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de entrada/salida/duplicados/lag/latencia/buffer.
+- `ingestion.checkpoints`
+  - `CheckpointStore`: persiste `last_event_ts`, una ventana corta de claves dedup y metadata minima de ejecucion.
+  - Se usa para reanudar live desde el ultimo estado local conocido sin pretender exactly-once.
 - `ingestion.pipeline`
-  - `collect_events`: orquesta dry/live, ejecuta un `Source`, consume un `EventSink`, aplica una segunda barrera de deduplicacion antes de persistir, soporta batching local de IO y emite un resumen agregado final de la ejecucion.
+  - `collect_events`: orquesta dry/live, ejecuta un `Source`, consume un `EventSink`, aplica una segunda barrera de deduplicacion antes de persistir, soporta batching local de IO, carga/guarda checkpoints live y emite un resumen agregado final de la ejecucion.
 - `ingestion.backfill`
   - Descarga klines historicos, normaliza filas, ordena y opcionalmente deduplica con `--dedup` antes del sink.
 - `ingestion.storage`
@@ -29,8 +32,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 
 ## Relaciones entre modulos
 - `pipeline.collect_events` usa un `Source`, crea `ResilientRunner` y delega la persistencia a un `EventSink`.
+- Si el path live es el real (sin `source`/`sink` custom), `collect_events` carga `ingestion-checkpoint.json` al arrancar y lo reescribe tras un cierre limpio del sink.
 - `BinanceSource` valida payloads raw antes de normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.
 - `ResilientRunner` usa `client._key` para filtrar duplicados del stream.
+- `ResilientRunner` exporta el estado minimo necesario para checkpoint (`last_event_ts` + claves dedup recientes).
 - `pipeline._build_live_handler` usa la misma `_key` para evitar que un evento duplicado llegue a `writer.add`.
 - `pipeline._LiveBatchHandler` acumula eventos y llama a `sink.add` por lote (`--ingest-batch-size`), manteniendo `max_buffer` en `ResilientRunner`.
 - `backfill.run` usa `deduplicate_events` con `_key` antes de escribir.
@@ -62,6 +67,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - `degraded`: solo errores de `source` devuelven `[]` y quedan logueados como degradacion
   - Errores `sink`, `parse` y `validation` no se enmascaran como `source`.
 - **DLQ local simple**: los rechazos de payload se escriben en JSONL en `data_dir/errors/ingestion-dlq.jsonl` por defecto. Si el `ErrorSink` falla, el stream sigue vivo y se incrementa `error_sink_failures`.
+- **Checkpoint local minimo**: live persiste `data_dir/<env>/state/ingestion-checkpoint.json` con el ultimo timestamp procesado, metadata minima y una ventana corta de claves dedup para contener duplicados inmediatos tras reinicio.
 
 ## Trade-offs
 - Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
@@ -74,6 +80,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 ## Riesgos actuales
 - Si la clave `_key` no representa bien la identidad real del exchange, puede haber falsos positivos o falsos negativos.
 - La deduplicacion en memoria no persiste estado entre ejecuciones.
+- El checkpoint solo contiene una ventana corta de claves dedup; limita duplicados inmediatos tras reinicio, no garantiza replay perfecto ni exactly-once.
 - `ParquetWriter` sigue dependiendo de merge/dedup en memoria cuando la particion ya existe.
 - Si el proceso cae antes del cierre del handler, el lote en memoria aun no persistido se pierde.
 

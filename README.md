@@ -73,6 +73,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Agrupa eventos en lotes locales antes de llamar al writer; reduce IO a costa de algo mas de latencia por lote.
 - `python -m app --env dev --mode live --allow-live-fallback`  
   Permite fallback explicito a `dry` si la ingesta real falla. Sin este flag, live ahora falla fuerte por defecto.
+- Checkpoint live minimo: las ejecuciones reales de live persisten `last_event_ts` y una ventana corta de claves dedup en `<data_dir>/<env>/state/ingestion-checkpoint.json`. Si el checkpoint esta corrupto, live arranca con estado vacio y emite un warning explicito.
 - `python -m app --env dev --mode live --error-policy degraded`  
   Politica explicita de error para live:
   - `fail_fast` (default): propaga el error
@@ -186,7 +187,7 @@ Ejemplo de salida:
 ```
 El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 
-En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size`, `duplicates_dropped`, `result` y `error_policy`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`).
+En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size`, `duplicates_dropped`, `result` y `error_policy`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Feature Store inicial
 - Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).

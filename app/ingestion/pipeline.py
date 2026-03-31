@@ -13,6 +13,7 @@ from app.common.dto import MarketEvent, normalize_symbol
 from app.config import AppConfig
 from app.features.pipeline import run_feature_pipeline
 from app.ingestion.client import _key
+from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
 from app.ingestion.errors import ErrorPolicy, IngestionError, resolve_error_policy
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sinks import EventSink, ParquetEventSink
@@ -196,6 +197,7 @@ def collect_events(
     source: Source | None = None,
     sink: EventSink | None = None,
     error_policy: ErrorPolicy | None = None,
+    checkpoint_store: CheckpointStore | None = None,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
@@ -223,9 +225,25 @@ def collect_events(
             run_feature_pipeline(events_out)
         return events_out
 
+    source_impl = source or BinanceSource(cfg)
+    source_stats = getattr(source_impl, "stats", None)
+    checkpoint_store_impl = checkpoint_store
+    if checkpoint_store_impl is None and source is None and sink is None:
+        checkpoint_store_impl = CheckpointStore(default_checkpoint_path(cfg))
+    checkpoint_state = None
+    if checkpoint_store_impl is not None:
+        try:
+            checkpoint_state = checkpoint_store_impl.load()
+        except ValueError as exc:
+            logger.warning(
+                "checkpoint recovery using empty state",
+                extra={
+                    "checkpoint_path": str(checkpoint_store_impl.path),
+                    "error": str(exc),
+                },
+            )
+
     try:
-        source_impl = source or BinanceSource(cfg)
-        source_stats = getattr(source_impl, "stats", None)
         end_time = time.time() + duration_s if duration_s else None
 
         def stream():
@@ -251,12 +269,27 @@ def collect_events(
             max_buffer=max_buffer,
             dedup_enabled=dedup_enabled,
         )
+        runner.restore_checkpoint(checkpoint_state)
         stop_on_complete = duration_s is not None
         try:
             runner.run(handler, stop_on_complete=stop_on_complete, max_retries=1)
         finally:
             handler.close()
             sink_impl.close()
+        if checkpoint_store_impl is not None:
+            checkpoint_store_impl.save(
+                runner.export_checkpoint(
+                    metadata={
+                        "env": cfg.env,
+                        "mode": "live",
+                        "saved_at": datetime.now(timezone.utc).isoformat(),
+                        "events_in": runner.metrics.events_in,
+                        "events_out": len(handler.events),
+                        "duplicates_dropped": runner.metrics.dedup_skipped + stats["duplicates_dropped"],
+                        "reconnects": runner.metrics.reconnects,
+                    }
+                )
+            )
         _emit_runtime_warnings(
             logger,
             runner,
