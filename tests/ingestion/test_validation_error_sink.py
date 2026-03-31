@@ -95,6 +95,62 @@ def test_invalid_numeric_field_is_rejected_and_counted():
     assert summary["events_dedup_skipped"] == 0
 
 
+def test_invalid_kline_payload_goes_to_error_sink():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    error_sink = RecordingErrorSink()
+    source = BinanceSource(
+        cfg,
+        ws_stream=lambda *_args, **_kwargs: iter(
+            [
+                _raw_message(
+                    {
+                        "e": "kline",
+                        "s": "BTCUSDT",
+                        "E": 1710000000000,
+                        "k": {
+                            "t": 1710000000000,
+                            "T": 1710000060000,
+                            "o": "100",
+                            "h": "101",
+                            "l": "99",
+                            "c": "120",
+                            "q": "1",
+                        },
+                    },
+                    stream="btcusdt@kline_1m",
+                ),
+                _raw_message(
+                    {
+                        "e": "kline",
+                        "s": "BTCUSDT",
+                        "E": 1710000000000,
+                        "k": {
+                            "t": 1710000000000,
+                            "T": 1710000060000,
+                            "o": "100",
+                            "h": "101",
+                            "l": "99",
+                            "c": "100",
+                            "q": "1",
+                        },
+                    },
+                    stream="btcusdt@kline_1m",
+                ),
+            ]
+        ),
+        error_sink=error_sink,
+    )
+    sink = RecordingSink()
+
+    events = pipeline.collect_events(mode="live", cfg=cfg, duration_s=0, source=source, sink=sink)
+
+    assert len(events) == 1
+    assert len(error_sink.records) == 1
+    _raw, error, context = error_sink.records[0]
+    assert error.category == "validation"
+    assert context["stage"] == "stream"
+
+
 def test_invalid_payload_metrics_are_separate_from_dedup_metrics():
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     error_sink = RecordingErrorSink()
