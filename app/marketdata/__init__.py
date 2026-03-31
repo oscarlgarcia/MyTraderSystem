@@ -17,6 +17,7 @@ from .models import (
 from .normalization import NORMALIZER_VERSION, SUPPORTED_NORMALIZER_VERSIONS, resolve_normalizer_version
 from .raw_sink import JsonlRawSink, NullRawSink, RawRecord, RawSink
 from .gaps import GapObservation, detect_gap
+from .recovery import BarRecoveryPolicy, RecoveryPolicy, TradeRecoveryPolicy, recovery_policy_for_event
 from .temporal_state import (
     CursorState,
     TemporalPartitionKey,
@@ -60,6 +61,10 @@ __all__ = [
     "JsonlRawSink",
     "GapObservation",
     "detect_gap",
+    "RecoveryPolicy",
+    "TradeRecoveryPolicy",
+    "BarRecoveryPolicy",
+    "recovery_policy_for_event",
     "validate_trade_payload",
     "validate_kline_payload",
     "validate_trade_event",

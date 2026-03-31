@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import time
 import logging
+import random
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from app.ingestion.dedup import DedupStateEntry, Deduplicator, EventIdentity
 from app.ingestion.errors import IngestionError, classify_error
 from app.marketdata.gaps import detect_gap
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
+from app.marketdata.recovery import RecoveryPolicy, recovery_policy_for_event
 from app.marketdata.temporal_state import (
     CursorState,
     TemporalPartitionKey,
@@ -32,8 +34,14 @@ from app.marketdata.temporal_state import (
 SnapshotFn = Callable[[], Iterable[IngestionEvent]]
 StreamFn = Callable[[], Iterable[IngestionEvent]]
 Sleeper = Callable[[float], None]
+RecoveryPolicyResolver = Callable[[IngestionEvent], RecoveryPolicy]
+JitterFn = Callable[[float], float]
 BackpressurePolicy = Literal["pause", "drop_oldest", "drop_newest", "fail"]
 TemporalPolicy = Literal["accept", "drop", "fail"]
+
+
+def default_retry_jitter(delay_seconds: float) -> float:
+    return delay_seconds * random.uniform(0.9, 1.1)
 
 @dataclass
 class ResilienceMetrics:
@@ -85,6 +93,8 @@ class ResilientRunner:
     read_burst_size: int = 64
     dedup_enabled: bool = True
     sleeper: Sleeper = time.sleep
+    jitter_fn: JitterFn = default_retry_jitter
+    recovery_policy_resolver: RecoveryPolicyResolver = recovery_policy_for_event
     metrics: ResilienceMetrics = field(default_factory=ResilienceMetrics)
     deduplicator: Deduplicator = field(default_factory=Deduplicator)
     temporal_state: TemporalStateStore = field(default_factory=TemporalStateStore)
@@ -181,7 +191,8 @@ class ResilientRunner:
                 self.metrics.reconnects += 1
                 if max_retries is not None and self.metrics.reconnects > max_retries:
                     raise err
-                self.sleeper(min(backoff, self.backoff_max))
+                sleep_seconds = min(self.backoff_max, max(0.0, self.jitter_fn(min(backoff, self.backoff_max))))
+                self.sleeper(sleep_seconds)
                 backoff = min(backoff * 2, self.backoff_max)
                 continue
 
@@ -280,6 +291,7 @@ class ResilientRunner:
         self.metrics.events_in += 1
         k = _key(ev)
         partition_key, stream_state = self.temporal_state.state_for_event(ev)
+        recovery_policy = self.recovery_policy_resolver(ev)
         # dedup
         if self.dedup_enabled:
             if self.deduplicator.contains_key(k):
@@ -298,7 +310,7 @@ class ResilientRunner:
                     stream_state=stream_state,
                     event=ev,
                     lag_threshold_seconds=self.lag_threshold_seconds,
-                    has_snapshot=self.snapshot_fn is not None,
+                    recovery_available=recovery_policy.can_recover(self.snapshot_fn),
                 )
                 if gap_observation.detected:
                     self._record_gap(partition_key, stream_state, gap_observation)
@@ -311,8 +323,8 @@ class ResilientRunner:
                 self.metrics.last_lag_seconds = self.metrics.max_event_gap_seconds
                 self._update_temporal_metrics(partition_key, stream_state)
 
-            if delta_seconds > self.lag_threshold_seconds and self.snapshot_fn:
-                self._resync(handler)
+            if delta_seconds > self.lag_threshold_seconds and recovery_policy.can_recover(self.snapshot_fn):
+                self._resync(handler, partition_key=partition_key, recovery_policy=recovery_policy)
                 # The snapshot may have already delivered this event (or a duplicate),
                 # so skip if it's now seen to avoid double handling.
                 if self.deduplicator.contains_key(k):
@@ -348,12 +360,18 @@ class ResilientRunner:
         if latency > self.metrics.max_latency_seconds:
             self.metrics.max_latency_seconds = latency
 
-    def _resync(self, handler: Callable[[IngestionEvent], None]) -> None:
-        if not self.snapshot_fn:
+    def _resync(
+        self,
+        handler: Callable[[IngestionEvent], None],
+        *,
+        partition_key: TemporalPartitionKey,
+        recovery_policy: RecoveryPolicy,
+    ) -> None:
+        if not recovery_policy.can_recover(self.snapshot_fn):
             return
         self.metrics.snapshot_runs += 1
-        for ev in self.snapshot_fn():
-            partition_key, stream_state = self.temporal_state.state_for_event(ev)
+        for ev in recovery_policy.recover(self.snapshot_fn, partition=partition_key):
+            event_partition_key, stream_state = self.temporal_state.state_for_event(ev)
             self.metrics.snapshot_rows += 1
             self.metrics.events_in += 1
             k = _key(ev)
@@ -365,13 +383,13 @@ class ResilientRunner:
             self.metrics.events_out += 1
             if self.dedup_enabled:
                 self.deduplicator.remember_key(k)
-                self._remember_stream_key(partition_key, k)
+                self._remember_stream_key(event_partition_key, k)
             cursor_kind, cursor_value = cursor_from_event(ev)
             if cursor_kind is not None:
                 stream_state.cursor_kind = cursor_kind
                 stream_state.cursor_value = cursor_value
             stream_state.last_event_ts = max(stream_state.last_event_ts or ev.event_ts, ev.event_ts)
-            self._update_temporal_metrics(partition_key, stream_state)
+            self._update_temporal_metrics(event_partition_key, stream_state)
 
     def _handle_out_of_order(
         self,

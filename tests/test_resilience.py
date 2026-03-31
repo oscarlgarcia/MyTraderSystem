@@ -7,7 +7,7 @@ import pytest
 from app.common.dto import MarketEvent
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
-from app.marketdata.models import TradeEvent
+from app.marketdata.models import BarEvent, TradeEvent
 
 
 def make_ev(ts: datetime) -> MarketEvent:
@@ -16,6 +16,24 @@ def make_ev(ts: datetime) -> MarketEvent:
 
 def make_ev_for(symbol: str, ts: datetime) -> MarketEvent:
     return MarketEvent(symbol=symbol, event_ts=ts, price=1.0, size=1.0, source="trade")
+
+
+def make_bar(symbol: str, ts: datetime) -> BarEvent:
+    return BarEvent(
+        symbol=symbol,
+        exchange_ts=ts,
+        receive_ts=ts,
+        process_ts=ts,
+        venue="BINANCE",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=5.0,
+        interval="1m",
+        open_ts=ts - timedelta(minutes=1),
+        close_ts=ts,
+    )
 
 
 def test_reconnect_after_drop(monkeypatch):
@@ -42,12 +60,12 @@ def test_reconnect_after_drop(monkeypatch):
 def test_resync_adds_snapshot_without_duplicates():
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
     stream_events = [
-        make_ev(base),
-        make_ev(base + timedelta(seconds=10)),  # gap > threshold
+        make_bar("BTCUSDT", base),
+        make_bar("BTCUSDT", base + timedelta(seconds=10)),  # gap > threshold
     ]
     snapshot_events = [
-        make_ev(base + timedelta(seconds=5)),  # fills gap
-        make_ev(base + timedelta(seconds=10)),  # duplicate
+        make_bar("BTCUSDT", base + timedelta(seconds=5)),  # fills gap
+        make_bar("BTCUSDT", base + timedelta(seconds=10)),  # duplicate
     ]
     handled = []
 
@@ -86,7 +104,13 @@ def test_backoff_capped():
     def stream():
         raise RuntimeError("drop")
 
-    runner = ResilientRunner(stream_fn=stream, sleeper=lambda s: sleeps.append(s), backoff_base=5, backoff_max=8)
+    runner = ResilientRunner(
+        stream_fn=stream,
+        sleeper=lambda s: sleeps.append(s),
+        backoff_base=5,
+        backoff_max=8,
+        jitter_fn=lambda delay: delay,
+    )
     with pytest.raises(IngestionError) as exc_info:
         runner.run(lambda ev: None, max_retries=2, stop_on_complete=True)
     assert sleeps
@@ -98,10 +122,29 @@ def test_max_retries_raises_after_limit():
     def stream():
         raise RuntimeError("always")
 
-    runner = ResilientRunner(stream_fn=stream, sleeper=lambda s: None)
+    runner = ResilientRunner(stream_fn=stream, sleeper=lambda s: None, jitter_fn=lambda delay: delay)
     with pytest.raises(IngestionError) as exc_info:
         runner.run(lambda ev: None, max_retries=1, stop_on_complete=True)
     assert exc_info.value.category == "source"
+
+
+def test_retry_jitter_can_be_made_deterministic():
+    sleeps = []
+
+    def stream():
+        raise RuntimeError("drop")
+
+    runner = ResilientRunner(
+        stream_fn=stream,
+        sleeper=lambda seconds: sleeps.append(seconds),
+        backoff_base=2.0,
+        backoff_max=8.0,
+        jitter_fn=lambda delay: delay + 0.5,
+    )
+    with pytest.raises(IngestionError):
+        runner.run(lambda ev: None, max_retries=1, stop_on_complete=True)
+
+    assert sleeps == [2.5]
 
 
 def test_last_lag_updates():
@@ -305,12 +348,12 @@ def test_snapshot_resync_does_not_duplicate_recent_stream_events():
     handled = []
 
     def stream():
-        yield make_ev(base)
-        yield make_ev(base + timedelta(seconds=12))
+        yield make_bar("BTCUSDT", base)
+        yield make_bar("BTCUSDT", base + timedelta(seconds=12))
 
     snapshot_events = [
-        make_ev(base + timedelta(seconds=5)),
-        make_ev(base + timedelta(seconds=12)),
+        make_bar("BTCUSDT", base + timedelta(seconds=5)),
+        make_bar("BTCUSDT", base + timedelta(seconds=12)),
     ]
 
     runner = ResilientRunner(
@@ -427,3 +470,79 @@ def test_temporal_gap_heuristic_is_marked_weak_not_strong():
     assert stream_metrics["last_gap_detection_mode"] == "weak_gap_detection"
     assert stream_metrics["last_gap_missing_count"] == 0
     assert stream_metrics["last_gap_seconds"] == 10.0
+
+
+def test_trade_gap_without_exact_recovery_is_marked_irreparable_even_with_snapshot():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    trade_events = [
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=base,
+            receive_ts=base,
+            process_ts=base,
+            venue="BINANCE",
+            source_id="1",
+            price=100.0,
+            size=1.0,
+            trade_id="1",
+        ),
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=base + timedelta(seconds=1),
+            receive_ts=base + timedelta(seconds=1),
+            process_ts=base + timedelta(seconds=1),
+            venue="BINANCE",
+            source_id="3",
+            price=101.0,
+            size=1.0,
+            trade_id="3",
+        ),
+    ]
+    snapshot_events = [make_bar("BTCUSDT", base + timedelta(minutes=1))]
+    handled = []
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(trade_events),
+        snapshot_fn=lambda: snapshot_events,
+        lag_threshold_seconds=60,
+        sleeper=lambda s: None,
+    )
+    runner.run(lambda ev: handled.append(ev), stop_on_complete=True)
+
+    stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:trade"]
+    assert len(handled) == 2
+    assert runner.metrics.snapshot_runs == 0
+    assert runner.metrics.gap_irreparable_total == 1
+    assert stream_metrics["gap_irreparable"] is True
+    assert stream_metrics["last_gap_detection_mode"] == "sequence_gap_detection"
+
+
+def test_bar_recovery_uses_bar_snapshot_without_duplicate_edge():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    handled = []
+
+    def stream():
+        yield make_bar("BTCUSDT", base)
+        yield make_bar("BTCUSDT", base + timedelta(seconds=12))
+
+    snapshot_events = [
+        make_bar("BTCUSDT", base + timedelta(seconds=5)),
+        make_bar("BTCUSDT", base + timedelta(seconds=12)),
+        make_bar("ETHUSDT", base + timedelta(seconds=5)),
+    ]
+
+    runner = ResilientRunner(
+        stream_fn=stream,
+        snapshot_fn=lambda: snapshot_events,
+        lag_threshold_seconds=2,
+        sleeper=lambda s: None,
+    )
+    runner.run(lambda ev: handled.append((ev.symbol, ev.event_ts)), stop_on_complete=True)
+
+    assert handled == [
+        ("BTCUSDT", base),
+        ("BTCUSDT", base + timedelta(seconds=5)),
+        ("BTCUSDT", base + timedelta(seconds=12)),
+    ]
+    assert runner.metrics.snapshot_runs == 1
+    assert runner.metrics.snapshot_rows == 2
+    assert runner.metrics.snapshot_duplicates_skipped == 1

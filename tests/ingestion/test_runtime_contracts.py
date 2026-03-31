@@ -83,11 +83,11 @@ def test_live_failure_fail_fast_by_default(monkeypatch):
 def test_runner_with_dedup_off_and_gap_does_not_crash():
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
     stream_events = [
-        MarketEvent(symbol="BTCUSDT", event_ts=base, price=100.0, size=1.0, source="trade"),
-        MarketEvent(symbol="BTCUSDT", event_ts=base + timedelta(seconds=10), price=101.0, size=1.0, source="trade"),
+        MarketEvent(symbol="BTCUSDT", event_ts=base, price=100.0, size=1.0, source="kline"),
+        MarketEvent(symbol="BTCUSDT", event_ts=base + timedelta(seconds=10), price=101.0, size=1.0, source="kline"),
     ]
     snapshot_events = [
-        MarketEvent(symbol="BTCUSDT", event_ts=base + timedelta(seconds=5), price=100.5, size=1.0, source="trade"),
+        MarketEvent(symbol="BTCUSDT", event_ts=base + timedelta(seconds=5), price=100.5, size=1.0, source="kline"),
     ]
     handled = []
 

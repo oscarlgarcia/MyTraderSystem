@@ -40,7 +40,7 @@ def detect_gap(
     stream_state: TemporalStreamState,
     event: IngestionEvent,
     lag_threshold_seconds: float,
-    has_snapshot: bool,
+    recovery_available: bool,
 ) -> GapObservation:
     cursor_kind, cursor_value = cursor_from_event(event)
     current_cursor = _numeric_cursor(cursor_kind, cursor_value)
@@ -52,7 +52,7 @@ def detect_gap(
             mode="sequence_gap_detection",
             missing_count=missing,
             strong=True,
-            irreparable=not has_snapshot,
+            irreparable=not recovery_available,
         )
 
     if stream_state.last_event_ts is None:
