@@ -21,6 +21,7 @@ from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sinks import ParquetEventSink
 from app.ingestion.sources import BinanceSource, StaticSource, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
+from app.marketdata.raw_sink import JsonlRawSink, NullRawSink
 from app.observability.logger import clear_trace_id  # noqa: F401  # exported for tests
 from app.observability.logger import get_logger, set_trace_id
 
@@ -77,6 +78,8 @@ def run(argv: Optional[list[str]] = None) -> int:
 
     stats = IngestStats(start_time=time.time())
     source = _dry_source() if args.dry_run else BinanceSource(cfg)
+    if not args.dry_run and isinstance(getattr(source, "raw_sink", None), NullRawSink):
+        source.raw_sink = JsonlRawSink(cfg.data_dir / "raw", env=cfg.env)
     sink = ParquetEventSink(ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.flush_size))
     checkpoint_store = None if args.dry_run else CheckpointStore(default_checkpoint_path(cfg))
 
