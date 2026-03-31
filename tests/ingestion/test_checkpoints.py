@@ -6,6 +6,7 @@ from unittest import mock
 
 from app.common.dto import MarketEvent
 from app.ingestion.checkpoints import CheckpointState, CheckpointStore
+from app.ingestion.dedup import DedupStateEntry
 from app.ingestion.pipeline import collect_events
 from app.ingestion.sources import StaticSource
 from app.observability.logger import get_logger
@@ -54,7 +55,12 @@ def test_checkpoint_roundtrip_restores_last_state(tmp_path):
     store = CheckpointStore(tmp_path / "state" / "checkpoint.json")
     state = CheckpointState(
         last_event_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        seen_keys=(("BTCUSDT", datetime(2024, 1, 1, tzinfo=timezone.utc), 100.0, 1.0, "trade"),),
+        seen_entries=(
+            DedupStateEntry(
+                key=("BTCUSDT", datetime(2024, 1, 1, tzinfo=timezone.utc), 100.0, 1.0, "trade"),
+                seen_at=123.0,
+            ),
+        ),
         metadata={"mode": "live", "events_out": 1},
     )
 

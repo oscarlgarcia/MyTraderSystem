@@ -17,7 +17,7 @@ import httpx
 from app.common import validator
 from app.common.dto import MarketEvent, normalize_symbol
 from app.config import load_config
-from app.ingestion.client import _key
+from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_market_events
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
 from app.observability.logger import get_logger, set_trace_id
@@ -131,17 +131,10 @@ def normalize_kline_row(symbol: str, row: list) -> MarketEvent:
 
 
 def deduplicate_events(events: List[MarketEvent]) -> tuple[List[MarketEvent], int]:
-    seen = set()
-    unique: List[MarketEvent] = []
-    dropped = 0
-    for event in events:
-        event_key = _key(event)
-        if event_key in seen:
-            dropped += 1
-            continue
-        seen.add(event_key)
-        unique.append(event)
-    return unique, dropped
+    return deduplicate_market_events(
+        events,
+        deduplicator=Deduplicator(ttl_seconds=None, max_entries=max(len(events), 4096)),
+    )
 
 
 def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> int:

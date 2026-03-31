@@ -79,6 +79,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `fail_fast` (default): propaga el error
   - `allow_fallback`: solo errores de fuente degradan a `dry`
   - `degraded`: solo errores de fuente devuelven `[]` y quedan logueados como degradacion
+- Deduplicacion live/backfill/sink: ahora comparten `Deduplicator`, con identidad por defecto `(symbol, event_ts, price, size, source)`, TTL corto y capacidad acotada para limitar memoria. El checkpoint persiste solo una ventana reciente de esta identidad.
 - `python -m app --env dev --mode live --fast-path`  
   Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos (sin resumen agregado de ingest), `trace_steps` off y batch size grande.
 - `python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0`  
@@ -123,7 +124,8 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - Riesgos:
   - `--no-ingest-dedup` o `--fast-path`: puede persistir duplicados.
   - batch size alto: baja llamadas a IO, sube latencia de flush y riesgo de perder el lote en memoria si el proceso cae.
-  - `--fast-path`: pierde resync por snapshot y oculta resumenes de ingest para priorizar throughput.
+- `--fast-path`: pierde resync por snapshot y oculta resumenes de ingest para priorizar throughput.
+ - La deduplicacion no pretende exactly-once: TTL y capacidad acotada priorizan contencion operativa y memoria estable sobre memoria infinita.
 
 ### Registrar una fuente/tipo nuevo
 ```python

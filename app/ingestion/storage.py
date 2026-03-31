@@ -15,6 +15,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app.common.dto import MarketEvent
+from app.ingestion.dedup import identity_from_fields
 
 
 @dataclass
@@ -120,7 +121,13 @@ def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
 
     def add_rows(rows: list[dict]) -> None:
         for row in rows:
-            key = (row["symbol"], row["event_ts"], row["price"], row["size"], row["source"])
+            key = identity_from_fields(
+                symbol=row["symbol"],
+                event_ts=row["event_ts"],
+                price=row["price"],
+                size=row["size"],
+                source=row["source"],
+            )
             if key in seen:
                 continue
             seen.add(key)
@@ -137,7 +144,15 @@ def _key_set_from_table(tbl: pa.Table) -> set[tuple]:
     keys = set()
     cols = tbl.select(["symbol", "event_ts", "price", "size", "source"])
     for row in cols.to_pylist():
-        keys.add((row["symbol"], row["event_ts"], row["price"], row["size"], row["source"]))
+        keys.add(
+            identity_from_fields(
+                symbol=row["symbol"],
+                event_ts=row["event_ts"],
+                price=row["price"],
+                size=row["size"],
+                source=row["source"],
+            )
+        )
     return keys
 
 
@@ -145,7 +160,13 @@ def _filter_new_rows(tbl: pa.Table, existing_keys: set[tuple]) -> pa.Table:
     schema = tbl.schema
     filtered = []
     for row in tbl.to_pylist():
-        key = (row["symbol"], row["event_ts"], row["price"], row["size"], row["source"])
+        key = identity_from_fields(
+            symbol=row["symbol"],
+            event_ts=row["event_ts"],
+            price=row["price"],
+            size=row["size"],
+            source=row["source"],
+        )
         if key in existing_keys:
             continue
         filtered.append(row)

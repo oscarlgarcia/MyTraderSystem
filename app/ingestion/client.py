@@ -12,10 +12,11 @@ from typing import Iterable, List, Callable, Dict, Tuple
 
 from app.common.dto import MarketEvent, normalize_symbol
 from app.common import validator
+from app.ingestion.dedup import identity_from_event
 
 
 def _key(event: MarketEvent) -> Tuple[str, datetime, float, float, str]:
-    return (event.symbol, event.event_ts, event.price, event.size, event.source)
+    return identity_from_event(event)
 
 
 def _ts_from_ms(ms: int) -> datetime:

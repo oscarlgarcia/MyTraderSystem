@@ -12,11 +12,12 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Deque, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Deque, Iterable, List, Optional
 
 from app.common.dto import MarketEvent
 from app.ingestion.client import _key
 from app.ingestion.checkpoints import CheckpointState
+from app.ingestion.dedup import Deduplicator
 from app.ingestion.errors import IngestionError, classify_error
 
 
@@ -53,21 +54,18 @@ class ResilientRunner:
     sleeper: Sleeper = time.sleep
     metrics: ResilienceMetrics = field(default_factory=ResilienceMetrics)
     last_event_ts: Optional[datetime] = None
-    seen: Set[Tuple[str, datetime, float, float, str]] = field(default_factory=set)
-    checkpoint_seen_limit: int = 1024
-    checkpoint_seen: Deque[Tuple[str, datetime, float, float, str]] = field(default_factory=deque)
+    deduplicator: Deduplicator = field(default_factory=Deduplicator)
 
     def restore_checkpoint(self, state: CheckpointState | None) -> None:
         if state is None:
             return
         self.last_event_ts = state.last_event_ts
-        self.seen = set(state.seen_keys)
-        self.checkpoint_seen = deque(state.seen_keys, maxlen=max(1, self.checkpoint_seen_limit))
+        self.deduplicator.restore_entries(state.seen_entries)
 
     def export_checkpoint(self, *, metadata: dict[str, object] | None = None) -> CheckpointState:
         return CheckpointState(
             last_event_ts=self.last_event_ts,
-            seen_keys=tuple(self.checkpoint_seen),
+            seen_entries=self.deduplicator.export_entries(),
             metadata=dict(metadata or {}),
         )
 
@@ -127,7 +125,7 @@ class ResilientRunner:
         k = _key(ev)
         # dedup
         if self.dedup_enabled:
-            if k in self.seen:
+            if self.deduplicator.contains_key(k):
                 self.metrics.dedup_skipped += 1
                 return
 
@@ -139,7 +137,7 @@ class ResilientRunner:
                 self._resync(handler)
                 # The snapshot may have already delivered this event (or a duplicate),
                 # so skip if it's now seen to avoid double handling.
-                if k in self.seen:
+                if self.deduplicator.contains_key(k):
                     return
             if lag > self.max_lag_seconds:
                 # log via handler extra if it accepts 'warning' pattern? we can't assume; emit via logging module
@@ -151,7 +149,7 @@ class ResilientRunner:
         handler(ev)
         self.metrics.events_out += 1
         if self.dedup_enabled:
-            self._remember_seen(k)
+            self.deduplicator.remember_key(k)
         self.last_event_ts = ev.event_ts
 
         # latency from event_ts to processing time
@@ -167,16 +165,11 @@ class ResilientRunner:
         for ev in self.snapshot_fn():
             self.metrics.events_in += 1
             k = _key(ev)
-            if k in self.seen:
+            if self.dedup_enabled and self.deduplicator.contains_key(k):
                 self.metrics.dedup_skipped += 1
                 continue
             handler(ev)
             self.metrics.events_out += 1
-            self._remember_seen(k)
+            if self.dedup_enabled:
+                self.deduplicator.remember_key(k)
             self.last_event_ts = max(self.last_event_ts or ev.event_ts, ev.event_ts)
-
-    def _remember_seen(self, key: Tuple[str, datetime, float, float, str]) -> None:
-        self.seen.add(key)
-        self.checkpoint_seen.append(key)
-        while len(self.checkpoint_seen) > max(1, self.checkpoint_seen_limit):
-            self.checkpoint_seen.popleft()

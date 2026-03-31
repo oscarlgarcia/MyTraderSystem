@@ -21,6 +21,10 @@
 - **Checkpoints de ingestion**:
   - `app.ingestion.checkpoints.CheckpointStore`: store JSON local para `last_event_ts`, claves dedup recientes y metadata minima.
   - `app.ingestion.checkpoints.default_checkpoint_path(cfg)`: path por defecto en `data_dir/<env>/state/ingestion-checkpoint.json`.
+- **Deduplicacion desacoplada**:
+  - `app.ingestion.dedup.Deduplicator`: TTL + capacidad + estado exportable.
+  - `app.ingestion.dedup.identity_from_fields(...)`: identidad compartida por live, backfill y storage.
+  - `app.ingestion.dedup.register_identity_builder(source, fn)`: personaliza identidad por tipo/fuente.
 - **Feature Store (`app/features/store.py`)**:
   - Entrada: lista de `MarketEvent` por simbolo o llamadas incrementales.
   - Proceso: ventana deslizante configurable; calculos `price`, `ret_1`, agregadores registrados (`sma`, `ema`, `max`, `min`) y transformers opcionales.
@@ -48,6 +52,7 @@
   - `allow_live_fallback=False` se conserva como compatibilidad; internamente resuelve a `allow_fallback` si no se pasa `error_policy`.
   - `source` y `sink` permiten ejecutar el pipeline contra mocks sin tocar Binance ni Parquet.
   - `checkpoint_store` permite inyectar un store explicito; si no se pasa y live usa el wiring real, se usa el store local por defecto.
+  - live usa `Deduplicator` tanto en `ResilientRunner` como en la barrera defensiva previa al sink; ambos comparten la misma politica de identidad aunque no el mismo estado interno.
 - `app.ingestion.sources.BinanceSource(cfg).stream(end_time) -> Iterable[MarketEvent]`
   - Reutiliza `build_ws_url` y `parse_message`, preservando el comportamiento Binance actual.
   - Si recibe raw payload invalido o tipo desconocido, lo registra en `ErrorSink` y continua.
@@ -75,6 +80,7 @@
   - La deduplicacion se aplica con la misma clave `_key` en dos puntos:
     - al procesar el stream para evitar reprocesado;
     - justo antes de `writer.add` para evitar duplicados en Parquet live si llegan por una ruta no filtrada.
+  - La misma semantica de identidad tambien se usa en backfill y en la deduplicacion defensiva de Parquet.
   - Si hay checkpoint valido, `ResilientRunner` arranca con `last_event_ts` y una ventana corta de claves dedup restauradas.
   - El checkpoint solo se guarda tras un cierre limpio del sink; no se persiste estado parcial si live falla.
   - El handler local puede agrupar eventos antes de llamar a `writer.add`.
@@ -121,6 +127,8 @@
 ## Supuestos y limites
 - No se anaden dependencias externas adicionales.
 - La deduplicacion usa la tupla `(symbol, event_ts, price, size, source)` como identidad canonica.
+- La identidad puede especializarse por `source`, pero solo sobre campos que ya existen en live y storage.
+- `Deduplicator` expira por TTL y recorta por capacidad; esto acota memoria pero no garantiza supresion infinita de duplicados.
 - El checkpoint contiene solo estado minimo de continuidad; no pretende resolver offsets generales ni exactly-once.
 - La deduplicacion de backfill es opt-in; la de live sigue controlada por `--ingest-dedup`.
 - `ParquetWriter(dedup=True)` sigue actuando como barrera defensiva sobre particiones ya existentes.

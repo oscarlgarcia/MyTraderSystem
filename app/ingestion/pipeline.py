@@ -14,6 +14,7 @@ from app.config import AppConfig
 from app.features.pipeline import run_feature_pipeline
 from app.ingestion.client import _key
 from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
+from app.ingestion.dedup import Deduplicator
 from app.ingestion.errors import ErrorPolicy, IngestionError, resolve_error_policy
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sinks import EventSink, ParquetEventSink
@@ -129,17 +130,17 @@ class _LiveBatchHandler:
         self.max_events = max_events
         self.dedup_enabled = dedup_enabled
         self.batch_size = max(1, batch_size)
-        self.seen = set()
+        self.deduplicator = Deduplicator()
         self.pending: List[MarketEvent] = []
         self.events: List[MarketEvent] = []
 
     def __call__(self, event: MarketEvent) -> None:
         if self.dedup_enabled:
             event_key = _key(event)
-            if event_key in self.seen:
+            if self.deduplicator.contains_key(event_key):
                 self.stats["duplicates_dropped"] += 1
                 return
-            self.seen.add(event_key)
+            self.deduplicator.remember_key(event_key)
         self.events.append(event)
         self.pending.append(event)
         if self.stats["written"] + len(self.pending) >= self.max_events:
