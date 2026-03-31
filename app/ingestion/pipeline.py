@@ -16,7 +16,7 @@ from app.ingestion.client import _key
 from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
 from app.ingestion.dedup import Deduplicator
 from app.ingestion.errors import ErrorPolicy, IngestionError, resolve_error_policy
-from app.ingestion.resilience import BackpressurePolicy, ResilientRunner
+from app.ingestion.resilience import BackpressurePolicy, ResilientRunner, TemporalPolicy
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
@@ -127,6 +127,13 @@ def _emit_ingestion_summary(
     snapshot_rows: int = 0,
     processing_latency_seconds: float | None = None,
     write_latency_seconds: float = 0.0,
+    temporal_policy: str = "accept",
+    event_gap_seconds: float = 0.0,
+    late_events: int = 0,
+    out_of_order_events: int = 0,
+    late_events_dropped: int = 0,
+    late_event_max_delay_seconds: float = 0.0,
+    snapshot_duplicates_skipped: int = 0,
 ) -> None:
     events_invalid = rejected_payloads if events_invalid is None else events_invalid
     events_dedup_skipped = duplicates_dropped if events_dedup_skipped is None else events_dedup_skipped
@@ -149,6 +156,7 @@ def _emit_ingestion_summary(
         "events_buffer_dropped": int(events_buffer_dropped),
         "snapshot_runs": int(snapshot_runs),
         "snapshot_rows": int(snapshot_rows),
+        "snapshot_duplicates_skipped": int(snapshot_duplicates_skipped),
         "reconnects": int(reconnects),
         "buffer_skipped": int(buffer_skipped),
         "buffer_overflows": int(buffer_overflows),
@@ -160,6 +168,12 @@ def _emit_ingestion_summary(
         "max_latency_seconds": float(max_latency_seconds),
         "processing_latency_seconds": float(processing_latency_seconds),
         "write_latency_seconds": float(write_latency_seconds),
+        "temporal_policy": temporal_policy,
+        "event_gap_seconds": float(event_gap_seconds),
+        "late_events": int(late_events),
+        "out_of_order_events": int(out_of_order_events),
+        "late_events_dropped": int(late_events_dropped),
+        "late_event_max_delay_seconds": float(late_event_max_delay_seconds),
         "dedup_on": bool(dedup_on),
         "batch_size": int(max(1, batch_size)),
         "duplicates_dropped": int(duplicates_dropped),
@@ -193,6 +207,9 @@ def _emit_health_summary(
     reconnects: int,
     processing_latency_seconds: float,
     write_latency_seconds: float,
+    temporal_policy: str,
+    event_gap_seconds: float,
+    late_events: int,
 ) -> None:
     logger.info(
         "ingestion health",
@@ -209,6 +226,9 @@ def _emit_health_summary(
             "reconnects": int(reconnects),
             "processing_latency_seconds": float(processing_latency_seconds),
             "write_latency_seconds": float(write_latency_seconds),
+            "temporal_policy": temporal_policy,
+            "event_gap_seconds": float(event_gap_seconds),
+            "late_events": int(late_events),
         },
     )
 
@@ -298,6 +318,7 @@ def collect_events(
     error_policy: ErrorPolicy | None = None,
     checkpoint_store: CheckpointStore | None = None,
     backpressure_policy: BackpressurePolicy = "pause",
+    temporal_policy: TemporalPolicy = "accept",
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
@@ -336,6 +357,13 @@ def collect_events(
                 snapshot_rows=getattr(source_rejected, "snapshot_rows", 0),
                 processing_latency_seconds=0.0,
                 write_latency_seconds=0.0,
+                temporal_policy=temporal_policy,
+                event_gap_seconds=0.0,
+                late_events=0,
+                out_of_order_events=0,
+                late_events_dropped=0,
+                late_event_max_delay_seconds=0.0,
+                snapshot_duplicates_skipped=0,
             )
             _emit_health_summary(
                 logger,
@@ -351,6 +379,9 @@ def collect_events(
                 reconnects=0,
                 processing_latency_seconds=0.0,
                 write_latency_seconds=0.0,
+                temporal_policy=temporal_policy,
+                event_gap_seconds=0.0,
+                late_events=0,
             )
         if compute_features_after:
             run_feature_pipeline(events_out)
@@ -402,6 +433,7 @@ def collect_events(
             lag_threshold_seconds=5.0,
             max_buffer=max_buffer,
             backpressure_policy=backpressure_policy,
+            temporal_policy=temporal_policy,
             dedup_enabled=dedup_enabled,
         )
         runner.restore_checkpoint(checkpoint_state)
@@ -439,7 +471,7 @@ def collect_events(
             events_invalid = _safe_int(getattr(source_stats, "events_invalid", getattr(source_stats, "rejected_payloads", 0)), getattr(source_stats, "rejected_payloads", 0))
             events_dedup_skipped = _safe_int(runner.metrics.dedup_skipped + stats["duplicates_dropped"])
             snapshot_runs = _safe_int(getattr(source_stats, "snapshot_runs", runner.metrics.snapshot_runs), runner.metrics.snapshot_runs)
-            snapshot_rows = _safe_int(getattr(source_stats, "snapshot_rows", runner.metrics.snapshot_rows), runner.metrics.snapshot_rows)
+            snapshot_rows = _safe_int(runner.metrics.snapshot_rows, runner.metrics.snapshot_rows)
             logger.info(
                 "ingestion live complete",
                 extra={
@@ -458,6 +490,9 @@ def collect_events(
                     "backpressure_policy": backpressure_policy,
                     "max_latency_seconds": runner.metrics.max_latency_seconds,
                     "write_latency_seconds": write_latency_seconds,
+                    "event_gap_seconds": runner.metrics.max_event_gap_seconds,
+                    "late_events": runner.metrics.late_events,
+                    "temporal_policy": temporal_policy,
                 },
             )
             _emit_ingestion_summary(
@@ -489,8 +524,15 @@ def collect_events(
                 events_buffer_dropped=runner.metrics.buffer_skipped,
                 snapshot_runs=snapshot_runs,
                 snapshot_rows=snapshot_rows,
+                snapshot_duplicates_skipped=runner.metrics.snapshot_duplicates_skipped,
                 processing_latency_seconds=runner.metrics.max_latency_seconds,
                 write_latency_seconds=write_latency_seconds,
+                temporal_policy=temporal_policy,
+                event_gap_seconds=runner.metrics.max_event_gap_seconds,
+                late_events=runner.metrics.late_events,
+                out_of_order_events=runner.metrics.out_of_order_events,
+                late_events_dropped=runner.metrics.late_events_dropped,
+                late_event_max_delay_seconds=runner.metrics.max_late_seconds,
             )
             _emit_health_summary(
                 logger,
@@ -506,6 +548,9 @@ def collect_events(
                 reconnects=runner.metrics.reconnects,
                 processing_latency_seconds=runner.metrics.max_latency_seconds,
                 write_latency_seconds=write_latency_seconds,
+                temporal_policy=temporal_policy,
+                event_gap_seconds=runner.metrics.max_event_gap_seconds,
+                late_events=runner.metrics.late_events,
             )
         events_out = list(handler.events)
         if compute_features_after:
@@ -524,6 +569,12 @@ def collect_events(
         processing_latency_seconds = _safe_float(getattr(runner, "metrics", None).max_latency_seconds if runner else 0.0)
         write_latency_seconds = _safe_float(getattr(sink_impl, "write_latency_seconds", 0.0), 0.0) if sink_impl is not None else 0.0
         events_persisted = _safe_int(getattr(sink_impl, "persisted_count", 0), 0) if sink_impl is not None else 0
+        event_gap_seconds = _safe_float(getattr(runner, "metrics", None).max_event_gap_seconds if runner else 0.0)
+        late_events = _safe_int(getattr(runner, "metrics", None).late_events if runner else 0)
+        out_of_order_events = _safe_int(getattr(runner, "metrics", None).out_of_order_events if runner else 0)
+        late_events_dropped = _safe_int(getattr(runner, "metrics", None).late_events_dropped if runner else 0)
+        late_event_max_delay_seconds = _safe_float(getattr(runner, "metrics", None).max_late_seconds if runner else 0.0)
+        snapshot_duplicates_skipped = _safe_int(getattr(runner, "metrics", None).snapshot_duplicates_skipped if runner else 0)
         if err.category == "sink" or effective_error_policy == "fail_fast":
             logger.error(
                 "ingestion failed",
@@ -567,8 +618,15 @@ def collect_events(
                     events_buffer_dropped=events_buffer_dropped,
                     snapshot_runs=snapshot_runs,
                     snapshot_rows=snapshot_rows,
+                    snapshot_duplicates_skipped=snapshot_duplicates_skipped,
                     processing_latency_seconds=processing_latency_seconds,
                     write_latency_seconds=write_latency_seconds,
+                    temporal_policy=temporal_policy,
+                    event_gap_seconds=event_gap_seconds,
+                    late_events=late_events,
+                    out_of_order_events=out_of_order_events,
+                    late_events_dropped=late_events_dropped,
+                    late_event_max_delay_seconds=late_event_max_delay_seconds,
                 )
                 _emit_health_summary(
                     logger,
@@ -584,6 +642,9 @@ def collect_events(
                     reconnects=reconnects,
                     processing_latency_seconds=processing_latency_seconds,
                     write_latency_seconds=write_latency_seconds,
+                    temporal_policy=temporal_policy,
+                    event_gap_seconds=event_gap_seconds,
+                    late_events=late_events,
                 )
             raise err
         if effective_error_policy == "degraded":
@@ -629,8 +690,15 @@ def collect_events(
                     events_buffer_dropped=events_buffer_dropped,
                     snapshot_runs=snapshot_runs,
                     snapshot_rows=snapshot_rows,
+                    snapshot_duplicates_skipped=snapshot_duplicates_skipped,
                     processing_latency_seconds=processing_latency_seconds,
                     write_latency_seconds=write_latency_seconds,
+                    temporal_policy=temporal_policy,
+                    event_gap_seconds=event_gap_seconds,
+                    late_events=late_events,
+                    out_of_order_events=out_of_order_events,
+                    late_events_dropped=late_events_dropped,
+                    late_event_max_delay_seconds=late_event_max_delay_seconds,
                 )
                 _emit_health_summary(
                     logger,
@@ -646,6 +714,9 @@ def collect_events(
                     reconnects=reconnects,
                     processing_latency_seconds=processing_latency_seconds,
                     write_latency_seconds=write_latency_seconds,
+                    temporal_policy=temporal_policy,
+                    event_gap_seconds=event_gap_seconds,
+                    late_events=late_events,
                 )
             return []
         logger.warning(
@@ -691,8 +762,15 @@ def collect_events(
                 events_buffer_dropped=events_buffer_dropped,
                 snapshot_runs=snapshot_runs,
                 snapshot_rows=snapshot_rows,
+                snapshot_duplicates_skipped=snapshot_duplicates_skipped,
                 processing_latency_seconds=0.0,
                 write_latency_seconds=write_latency_seconds,
+                temporal_policy=temporal_policy,
+                event_gap_seconds=event_gap_seconds,
+                late_events=late_events,
+                out_of_order_events=out_of_order_events,
+                late_events_dropped=late_events_dropped,
+                late_event_max_delay_seconds=late_event_max_delay_seconds,
             )
             _emit_health_summary(
                 logger,
@@ -708,6 +786,9 @@ def collect_events(
                 reconnects=reconnects,
                 processing_latency_seconds=0.0,
                 write_latency_seconds=write_latency_seconds,
+                temporal_policy=temporal_policy,
+                event_gap_seconds=event_gap_seconds,
+                late_events=late_events,
             )
         if compute_features_after:
             run_feature_pipeline(events_out)

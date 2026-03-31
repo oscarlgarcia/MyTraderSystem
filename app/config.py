@@ -131,6 +131,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Politica de saturacion del buffer de ingestion: pause, drop_oldest, drop_newest o fail.",
     )
     parser.add_argument(
+        "--ingest-temporal-policy",
+        choices=["accept", "drop", "fail"],
+        default="accept",
+        help="Politica para eventos tardios o fuera de orden: accept, drop o fail.",
+    )
+    parser.add_argument(
         "--fast-path",
         action="store_true",
         help="Modo experimental de alto throughput: menos garantias, menos logs, mas batching.",

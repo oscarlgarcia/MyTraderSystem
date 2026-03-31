@@ -25,6 +25,7 @@ SnapshotFn = Callable[[], Iterable[MarketEvent]]
 StreamFn = Callable[[], Iterable[MarketEvent]]
 Sleeper = Callable[[float], None]
 BackpressurePolicy = Literal["pause", "drop_oldest", "drop_newest", "fail"]
+TemporalPolicy = Literal["accept", "drop", "fail"]
 
 @dataclass
 class ResilienceMetrics:
@@ -35,7 +36,15 @@ class ResilienceMetrics:
     # dedup_skipped counts duplicates filtered by the runner or snapshot re-sync path.
     dedup_skipped: int = 0
     reconnects: int = 0
+    # legacy alias kept for compatibility; mirrors max_event_gap_seconds.
     last_lag_seconds: float = 0.0
+    last_event_gap_seconds: float = 0.0
+    max_event_gap_seconds: float = 0.0
+    late_events: int = 0
+    out_of_order_events: int = 0
+    late_events_dropped: int = 0
+    last_late_seconds: float = 0.0
+    max_late_seconds: float = 0.0
     buffer_size: int = 0
     buffer_skipped: int = 0
     buffer_overflows: int = 0
@@ -45,6 +54,7 @@ class ResilienceMetrics:
     buffer_failures: int = 0
     snapshot_runs: int = 0
     snapshot_rows: int = 0
+    snapshot_duplicates_skipped: int = 0
     last_latency_seconds: float = 0.0
     max_latency_seconds: float = 0.0
 
@@ -59,6 +69,7 @@ class ResilientRunner:
     max_lag_seconds: float = 10.0
     max_buffer: int = 10_000
     backpressure_policy: BackpressurePolicy = "pause"
+    temporal_policy: TemporalPolicy = "accept"
     backpressure_pause_seconds: float = 0.01
     read_burst_size: int = 64
     dedup_enabled: bool = True
@@ -233,19 +244,31 @@ class ResilientRunner:
 
         # gap detection
         if self.last_event_ts:
-            lag = (ev.event_ts - self.last_event_ts).total_seconds()
-            self.metrics.last_lag_seconds = max(self.metrics.last_lag_seconds, lag)
-            if lag > self.lag_threshold_seconds and self.snapshot_fn:
+            delta_seconds = (ev.event_ts - self.last_event_ts).total_seconds()
+            if delta_seconds < 0:
+                if not self._handle_out_of_order(ev):
+                    return
+
+            self.metrics.last_event_gap_seconds = delta_seconds
+            if delta_seconds > self.metrics.max_event_gap_seconds:
+                self.metrics.max_event_gap_seconds = delta_seconds
+            self.metrics.last_lag_seconds = self.metrics.max_event_gap_seconds
+
+            if delta_seconds > self.lag_threshold_seconds and self.snapshot_fn:
                 self._resync(handler)
                 # The snapshot may have already delivered this event (or a duplicate),
                 # so skip if it's now seen to avoid double handling.
                 if self.deduplicator.contains_key(k):
+                    self.metrics.snapshot_duplicates_skipped += 1
                     return
-            if lag > self.max_lag_seconds:
+            if delta_seconds > self.max_lag_seconds:
                 # log via handler extra if it accepts 'warning' pattern? we can't assume; emit via logging module
                 logging.getLogger("ingest.resilience").warning(
-                    "Lag exceeds max_lag_seconds",
-                    extra={"lag_seconds": lag, "max_lag_seconds": self.max_lag_seconds},
+                    "Event gap exceeds max_lag_seconds",
+                    extra={
+                        "event_gap_seconds": delta_seconds,
+                        "max_lag_seconds": self.max_lag_seconds,
+                    },
                 )
 
         handler(ev)
@@ -271,9 +294,42 @@ class ResilientRunner:
             k = _key(ev)
             if self.dedup_enabled and self.deduplicator.contains_key(k):
                 self.metrics.dedup_skipped += 1
+                self.metrics.snapshot_duplicates_skipped += 1
                 continue
             handler(ev)
             self.metrics.events_out += 1
             if self.dedup_enabled:
                 self.deduplicator.remember_key(k)
             self.last_event_ts = max(self.last_event_ts or ev.event_ts, ev.event_ts)
+
+    def _handle_out_of_order(self, ev: MarketEvent) -> bool:
+        if self.last_event_ts is None:
+            return True
+        late_seconds = max(0.0, (self.last_event_ts - ev.event_ts).total_seconds())
+        self.metrics.out_of_order_events += 1
+        self.metrics.late_events += 1
+        self.metrics.last_late_seconds = late_seconds
+        if late_seconds > self.metrics.max_late_seconds:
+            self.metrics.max_late_seconds = late_seconds
+
+        logger = logging.getLogger("ingest.resilience")
+        logger.warning(
+            "Out-of-order event detected",
+            extra={
+                "temporal_policy": self.temporal_policy,
+                "late_seconds": late_seconds,
+                "last_event_ts": self.last_event_ts.isoformat(),
+                "event_ts": ev.event_ts.isoformat(),
+            },
+        )
+
+        if self.temporal_policy == "accept":
+            return True
+        if self.temporal_policy == "drop":
+            self.metrics.late_events_dropped += 1
+            return False
+        raise IngestionError(
+            "validation",
+            "permanent",
+            f"out-of-order event detected (late_seconds={late_seconds:.6f})",
+        )

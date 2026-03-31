@@ -2,7 +2,7 @@ import pytest
 from unittest import mock
 from app.ingestion import pipeline
 from app.common.dto import MarketEvent
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import io
 import json
@@ -303,6 +303,8 @@ def test_summary_metrics_reflect_real_pipeline_path():
     assert summary["events_buffer_dropped"] == 0
     assert summary["events_persisted"] == 1
     assert summary["reconnects"] == 0
+    assert summary["temporal_policy"] == "accept"
+    assert summary["event_gap_seconds"] == 0.0
 
 
 def test_sink_latency_metric_records_flush_cost(monkeypatch, tmp_path):
@@ -335,3 +337,37 @@ def test_sink_latency_metric_records_flush_cost(monkeypatch, tmp_path):
     summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
     assert summary["events_persisted"] == 1
     assert summary["write_latency_seconds"] > 0.0
+
+
+def test_late_event_metrics_are_reported_separately():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.summary.temporal", level="INFO", stream=buffer)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [
+        MarketEvent(symbol="BTCUSDT", event_ts=base + timedelta(seconds=20), price=101.0, size=1.0, source="trade"),
+        MarketEvent(symbol="BTCUSDT", event_ts=base + timedelta(seconds=5), price=100.0, size=1.0, source="trade"),
+    ]
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        logger=logger,
+        max_events=10,
+        duration_s=0,
+        dedup_enabled=True,
+        snapshot_enabled=False,
+        summary_logging=True,
+        temporal_policy="accept",
+        source=StaticSource(events=events),
+        sink=DummySink(),
+    )
+
+    assert out == events
+    summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
+    assert summary["processing_latency_seconds"] >= 0.0
+    assert summary["event_gap_seconds"] == 0.0
+    assert summary["late_events"] == 1
+    assert summary["out_of_order_events"] == 1
+    assert summary["late_events_dropped"] == 0
+    assert summary["late_event_max_delay_seconds"] == 15.0

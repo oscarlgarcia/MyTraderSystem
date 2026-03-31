@@ -101,6 +101,7 @@ def test_fast_path_derives_runtime_flags():
         ingest_lag_warn=1.0,
         ingest_buffer_warn=2,
         ingest_backpressure_policy="drop_oldest",
+        ingest_temporal_policy="fail",
         allow_live_fallback=True,
         error_policy="degraded",
     )
@@ -116,6 +117,7 @@ def test_fast_path_derives_runtime_flags():
     assert runtime["ingest_lag_warn"] == 1.0
     assert runtime["ingest_buffer_warn"] == 2
     assert runtime["ingest_backpressure_policy"] == "drop_oldest"
+    assert runtime["ingest_temporal_policy"] == "fail"
     assert runtime["allow_live_fallback"] is True
     assert runtime["error_policy"] == "degraded"
 

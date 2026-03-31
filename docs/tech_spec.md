@@ -61,10 +61,11 @@
 - `app.ingestion.sources.BinanceSource(cfg).snapshot() -> Iterable[MarketEvent]`
   - Reutiliza el snapshot REST de klines en un unico punto.
   - Si una fila individual de snapshot es invalida, la rechaza y continua con el resto.
-- `app.main._resolve_runtime_options(args) -> dict[str, object]`
+  - `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
   - Propaga `ingest_backpressure_policy` con default `pause`.
+  - Propaga `ingest_temporal_policy` con default `accept`.
   - Propaga `allow_live_fallback` para debugging controlado; no se activa por defecto.
 - `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
@@ -75,7 +76,7 @@
 
 ## Ingestion y backfill
 - **Live**:
-  - `ResilientRunner` maneja reconexion, buffer, lag y contadores de snapshot (`snapshot_runs`, `snapshot_rows`).
+  - `ResilientRunner` maneja reconexion, buffer, gap temporal, eventos tardios y contadores de snapshot (`snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`).
   - `collect_events` ya no depende directamente de Binance ni de `ParquetWriter`; consume un `Source` y un `EventSink`.
   - Los errores se clasifican como `source`, `parse`, `validation` o `sink`, y como `transient` o `permanent`.
   - Solo `source/transient` se reintentan en `ResilientRunner`.
@@ -108,11 +109,15 @@
     - `events_dedup_skipped`: duplicados filtrados por runner y por la barrera defensiva previa al sink
     - `events_buffer_dropped`: eventos descartados por politicas `drop_*`
     - `snapshot_runs`, `snapshot_rows`
+    - `snapshot_duplicates_skipped`: eventos del snapshot o del stream actual omitidos tras resync para evitar duplicados recientes
     - `processing_latency_seconds`: edad maxima del evento al ser aceptado por el pipeline
     - `write_latency_seconds`: latencia maxima observada en `flush()` del sink por defecto
+    - `event_gap_seconds`: mayor gap positivo entre timestamps consecutivos visto por el runner
+    - `late_events`, `out_of_order_events`, `late_events_dropped`, `late_event_max_delay_seconds`
+    - `temporal_policy`: `accept`, `drop` o `fail`
     - `duplicates_dropped`: suma de duplicados filtrados por runner y por la barrera defensiva previa al writer
     - `reconnects`, `buffer_skipped`, `buffer_overflows`, `buffer_pauses`, `buffer_drop_oldest`, `buffer_drop_newest`, `buffer_failures`, `backpressure_policy`, `max_latency_seconds`, `dedup_on`, `batch_size`
-  - `ingestion health` resume el estado final de la ejecucion para dashboards o chequeos operativos: `result`, `source_events_in`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `reconnects`, `processing_latency_seconds`, `write_latency_seconds`.
+  - `ingestion health` resume el estado final de la ejecucion para dashboards o chequeos operativos: `result`, `source_events_in`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `reconnects`, `processing_latency_seconds`, `write_latency_seconds`, `event_gap_seconds`, `late_events`, `temporal_policy`.
   - Si live falla, el comportamiento depende de `error_policy`. Errores `sink` nunca se convierten en fallback/degraded.
   - En `fast-path`, se omite el resumen de cierre de ingest live para reducir overhead de logging, pero se mantiene el log final de `pipeline ok`.
   - Si `buffer_skipped > ingest_buffer_warn` o `max_latency_seconds > ingest_lag_warn`, `collect_events` emite un `WARNING` una vez por ciclo live.
@@ -158,6 +163,10 @@
 - `ParquetWriter(dedup=True)` sigue actuando como barrera defensiva sobre particiones ya existentes.
 - La persistencia sigue siendo por particion `symbol/date`; el cambio de esta fase endurece atomicidad y visibilidad de estado, no rediseña el layout.
 - El resumen agregado de ingest no introduce un sistema nuevo de metricas; reutiliza `SourceStats`, `ResilientRunner` y los contadores/latencias del sink por defecto.
+- La garantia temporal actual es deliberadamente simple:
+  - gaps positivos pueden disparar resync por snapshot;
+  - eventos tardios/fuera de orden no reordenan el flujo internamente;
+  - segun `temporal_policy`, se aceptan, se descartan o abortan la ejecucion.
 
 ## Relaciones
 `WS/REST -> MarketEvent -> dedup/Parquet -> FeatureVector -> Strategy -> Risk -> Execution -> Portfolio -> Logs/Metrics`

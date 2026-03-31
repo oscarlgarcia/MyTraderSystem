@@ -70,6 +70,9 @@ def test_resync_adds_snapshot_without_duplicates():
     assert len(handled) == 3
     assert handled[1] == base + timedelta(seconds=5)
     assert handled[2] == base + timedelta(seconds=10)
+    assert runner.metrics.snapshot_runs == 1
+    assert runner.metrics.snapshot_rows == 2
+    assert runner.metrics.snapshot_duplicates_skipped == 1
 
 
 def test_backoff_capped():
@@ -106,7 +109,8 @@ def test_last_lag_updates():
 
     runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, lag_threshold_seconds=1, sleeper=lambda s: None)
     runner.run(lambda ev: None, stop_on_complete=True)
-    assert runner.metrics.last_lag_seconds >= 3
+    assert runner.metrics.last_event_gap_seconds >= 3
+    assert runner.metrics.max_event_gap_seconds >= 3
 
 
 def test_dedup_stream_duplicates():
@@ -145,7 +149,7 @@ def test_gap_without_snapshot_skips_resync():
     runner = ResilientRunner(stream_fn=stream, snapshot_fn=None, lag_threshold_seconds=2, sleeper=lambda s: None)
     runner.run(lambda ev: handled.append(ev), stop_on_complete=True)
     assert len(handled) == 2
-    assert runner.metrics.last_lag_seconds >= 10
+    assert runner.metrics.max_event_gap_seconds >= 10
 
 
 def test_pause_policy_limits_ingestion_rate_under_pressure():
@@ -249,7 +253,7 @@ def test_warning_when_lag_exceeds():
     finally:
         logger.handlers = []
         logger.propagate = True
-    assert "Lag exceeds max_lag_seconds" in buffer.getvalue()
+    assert "Event gap exceeds max_lag_seconds" in buffer.getvalue()
 
 
 def test_latency_metrics_updated():
@@ -265,3 +269,57 @@ def test_latency_metrics_updated():
     runner.run(lambda ev: None, stop_on_complete=True)
     assert runner.metrics.last_latency_seconds >= 0
     assert runner.metrics.max_latency_seconds >= runner.metrics.last_latency_seconds
+
+
+def test_out_of_order_event_is_handled_per_policy():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [make_ev(base + timedelta(seconds=10)), make_ev(base)]
+    handled = []
+
+    def stream():
+        for ev in events:
+            yield ev
+
+    runner = ResilientRunner(
+        stream_fn=stream,
+        snapshot_fn=None,
+        temporal_policy="drop",
+        sleeper=lambda s: None,
+    )
+    runner.run(lambda ev: handled.append(ev), stop_on_complete=True)
+
+    assert len(handled) == 1
+    assert runner.metrics.out_of_order_events == 1
+    assert runner.metrics.late_events == 1
+    assert runner.metrics.late_events_dropped == 1
+    assert runner.metrics.max_late_seconds >= 10
+
+
+def test_snapshot_resync_does_not_duplicate_recent_stream_events():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    handled = []
+
+    def stream():
+        yield make_ev(base)
+        yield make_ev(base + timedelta(seconds=12))
+
+    snapshot_events = [
+        make_ev(base + timedelta(seconds=5)),
+        make_ev(base + timedelta(seconds=12)),
+    ]
+
+    runner = ResilientRunner(
+        stream_fn=stream,
+        snapshot_fn=lambda: snapshot_events,
+        lag_threshold_seconds=2,
+        sleeper=lambda s: None,
+    )
+    runner.run(lambda ev: handled.append(ev.event_ts), stop_on_complete=True)
+
+    assert handled == [
+        base,
+        base + timedelta(seconds=5),
+        base + timedelta(seconds=12),
+    ]
+    assert runner.metrics.snapshot_runs == 1
+    assert runner.metrics.snapshot_duplicates_skipped == 1

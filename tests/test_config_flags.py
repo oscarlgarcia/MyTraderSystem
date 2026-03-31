@@ -11,6 +11,7 @@ def test_defaults_flags():
     assert args.ingest_lag_warn is None
     assert args.ingest_buffer_warn is None
     assert args.ingest_backpressure_policy == "pause"
+    assert args.ingest_temporal_policy == "accept"
     assert args.ingest_dedup is True
     assert args.allow_live_fallback is False
     assert args.error_policy is None
@@ -37,10 +38,11 @@ def test_fast_path_flag():
 
 
 def test_ingest_warn_flags():
-    args = parse_args(["--ingest-lag-warn", "1.5", "--ingest-buffer-warn", "3", "--ingest-backpressure-policy", "drop_newest"])
+    args = parse_args(["--ingest-lag-warn", "1.5", "--ingest-buffer-warn", "3", "--ingest-backpressure-policy", "drop_newest", "--ingest-temporal-policy", "drop"])
     assert args.ingest_lag_warn == 1.5
     assert args.ingest_buffer_warn == 3
     assert args.ingest_backpressure_policy == "drop_newest"
+    assert args.ingest_temporal_policy == "drop"
 
 
 def test_allow_live_fallback_flag():
