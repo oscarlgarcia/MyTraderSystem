@@ -28,6 +28,7 @@
 - Fase 4 validacion de entrada y canal de errores: validacion pre/post normalizacion y DLQ local JSONL. [hecho]
 - Fase 5 checkpoints y reanudacion minima: `CheckpointStore` local, `last_event_ts`, metadata de ejecucion y ventana corta de dedup para reinicios. [hecho]
 - Fase 6 deduplicacion robusta y desacoplada: `Deduplicator` dedicado con TTL, capacidad e identidad compartida live/backfill/sink. [hecho]
+- Fase 7 writer robusto y persistencia segura: `tmp + rename`, contadores accepted/persisted y buffer retenido solo para eventos no confirmados. [hecho]
 - Extender CLI con comandos para modos `paper` y `live`.
 - Serializacion JSON de DTOs para debugging e integracion con futuros buses.
 - Validar config contra esquema (ej. `jsonschema`) cuando se permita dependencia externa ligera.

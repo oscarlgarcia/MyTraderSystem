@@ -28,7 +28,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - `ingestion.backfill`
   - Descarga klines historicos, normaliza filas, ordena y opcionalmente deduplica con `--dedup` antes del sink.
 - `ingestion.storage`
-  - `ParquetWriter`: persiste eventos particionados por simbolo y fecha; puede deduplicar contra datos ya existentes.
+  - `ParquetWriter`: persiste eventos particionados por simbolo y fecha; puede deduplicar contra datos ya existentes, escribe con `tmp + rename` y separa eventos aceptados de eventos confirmados en disco.
 - `ingestion.sinks`
   - Define `EventSink` y `ParquetEventSink`.
   - Define `ErrorSink`, `NullErrorSink` y `JsonlErrorSink` para trazado local de payloads rechazados.
@@ -62,6 +62,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - en el handler previo a sink, para no persistirlos aunque entren por una ruta no filtrada.
 - **Backfill opt-in**: `--dedup` permite inspeccionar lotes con duplicados o sanearlos explicitamente segun el caso operativo.
 - **Parquet dedup opcional**: sigue siendo una barrera final sobre particiones existentes, no el mecanismo principal de deduplicacion.
+- **Persistencia atomica por particion**: cada `data.parquet` se reconstruye en un temporal y solo se publica con `replace` cuando la escritura completa termina bien.
 - **Batching de IO en live**: el handler agrupa eventos antes de escribirlos para reducir llamadas al writer; el flush final fuerza la persistencia del lote incompleto.
 - **Modo fast-path (experimental)**: desactiva deduplicacion live, snapshot REST y trazas; usa batching grande y minimiza logs de cierre para priorizar eventos/s.
 - **Alertas experimentales de operacion**: `--ingest-lag-warn` y `--ingest-buffer-warn` emiten `WARNING` una vez por ciclo live si se supera el umbral configurado.
@@ -75,6 +76,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - **DLQ local simple**: los rechazos de payload se escriben en JSONL en `data_dir/errors/ingestion-dlq.jsonl` por defecto. Si el `ErrorSink` falla, el stream sigue vivo y se incrementa `error_sink_failures`.
 - **Checkpoint local minimo**: live persiste `data_dir/<env>/state/ingestion-checkpoint.json` con el ultimo timestamp procesado, metadata minima y una ventana corta de claves dedup para contener duplicados inmediatos tras reinicio.
 - **Memoria acotada**: el deduplicador expira por TTL y expulsa por capacidad para evitar crecimiento sin control en runs largos.
+- **Separacion accepted/persisted**: el writer mantiene contadores de eventos aceptados, persistidos y pendientes, para distinguir buffer en memoria de datos ya confirmados en disco.
 
 ## Trade-offs
 - Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
@@ -89,7 +91,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - Si la clave `_key` no representa bien la identidad real del exchange, puede haber falsos positivos o falsos negativos.
 - La deduplicacion en memoria no persiste estado entre ejecuciones.
 - El checkpoint solo contiene una ventana corta de claves dedup; limita duplicados inmediatos tras reinicio, no garantiza replay perfecto ni exactly-once.
-- `ParquetWriter` sigue dependiendo de merge/dedup en memoria cuando la particion ya existe.
+- `ParquetWriter` sigue dependiendo de merge/dedup en memoria cuando la particion ya existe; la atomicidad protege el archivo final, no el coste de memoria del merge.
 - Si el proceso cae antes del cierre del handler, el lote en memoria aun no persistido se pierde.
 
 ## Que hace y que no debe hacer
@@ -110,7 +112,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 ## Posibles mejoras
 - Sustituir `_key` por ids nativos cuando la fuente los provea.
 - Persistir estado minimo de deduplicacion para reinicios.
-- Hacer atomicas las escrituras Parquet y anadir retencion/rehidratacion.
+- Anadir retencion/rehidratacion y compactacion offline cuando el volumen crezca.
 
 ## Extension rapida de streams
 - Registrar el builder del tipo nuevo con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")`.

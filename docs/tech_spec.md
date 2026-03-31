@@ -53,6 +53,7 @@
   - `source` y `sink` permiten ejecutar el pipeline contra mocks sin tocar Binance ni Parquet.
   - `checkpoint_store` permite inyectar un store explicito; si no se pasa y live usa el wiring real, se usa el store local por defecto.
   - live usa `Deduplicator` tanto en `ResilientRunner` como en la barrera defensiva previa al sink; ambos comparten la misma politica de identidad aunque no el mismo estado interno.
+  - el summary final distingue `events_out` (aceptados por ingestion) de `events_persisted` (confirmados por el sink por defecto).
 - `app.ingestion.sources.BinanceSource(cfg).stream(end_time) -> Iterable[MarketEvent]`
   - Reutiliza `build_ws_url` y `parse_message`, preservando el comportamiento Binance actual.
   - Si recibe raw payload invalido o tipo desconocido, lo registra en `ErrorSink` y continua.
@@ -84,10 +85,16 @@
   - Si hay checkpoint valido, `ResilientRunner` arranca con `last_event_ts` y una ventana corta de claves dedup restauradas.
   - El checkpoint solo se guarda tras un cierre limpio del sink; no se persiste estado parcial si live falla.
   - El handler local puede agrupar eventos antes de llamar a `writer.add`.
+  - `ParquetWriter` mantiene tres contadores relevantes:
+    - `accepted_events`
+    - `persisted_events`
+    - `buffered_events`
+  - Si una particion falla al persistir, el archivo previo se conserva intacto y el writer retiene en buffer solo los eventos aun no confirmados.
   - Metricas logueadas al final: `events_written`, `duplicates_dropped`, `batch_size`, `reconnects`, `buffer_skipped`, `max_latency_seconds`.
   - Ademas se emite `ingestion summary` como JSON consolidado con:
     - `events_in`: eventos observados por source/snapshot antes de dedup del runner
     - `events_out`: eventos unicos realmente entregados al pipeline y devueltos por `collect_events`
+    - `events_persisted`: eventos ya confirmados por el sink al cerrar la ejecucion
     - `duplicates_dropped`: suma de duplicados filtrados por runner y por la barrera defensiva previa al writer
     - `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size`
   - Si live falla, el comportamiento depende de `error_policy`. Errores `sink` nunca se convierten en fallback/degraded.
@@ -132,6 +139,7 @@
 - El checkpoint contiene solo estado minimo de continuidad; no pretende resolver offsets generales ni exactly-once.
 - La deduplicacion de backfill es opt-in; la de live sigue controlada por `--ingest-dedup`.
 - `ParquetWriter(dedup=True)` sigue actuando como barrera defensiva sobre particiones ya existentes.
+- La persistencia sigue siendo por particion `symbol/date`; el cambio de esta fase endurece atomicidad y visibilidad de estado, no rediseña el layout.
 - El resumen agregado de ingest no introduce un sistema nuevo de metricas; reutiliza los contadores ya disponibles en `ResilientRunner` y en el handler live.
 
 ## Relaciones

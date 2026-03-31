@@ -80,6 +80,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `allow_fallback`: solo errores de fuente degradan a `dry`
   - `degraded`: solo errores de fuente devuelven `[]` y quedan logueados como degradacion
 - Deduplicacion live/backfill/sink: ahora comparten `Deduplicator`, con identidad por defecto `(symbol, event_ts, price, size, source)`, TTL corto y capacidad acotada para limitar memoria. El checkpoint persiste solo una ventana reciente de esta identidad.
+- Persistencia Parquet: cada particion se escribe con `tmp + rename`. Si una escritura falla, el `data.parquet` previo queda intacto y el writer conserva en memoria solo los eventos no confirmados.
 - `python -m app --env dev --mode live --fast-path`  
   Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos (sin resumen agregado de ingest), `trace_steps` off y batch size grande.
 - `python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0`  
@@ -189,7 +190,7 @@ Ejemplo de salida:
 ```
 El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 
-En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size`, `duplicates_dropped`, `result` y `error_policy`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
+En ejecuciones normales de ingest (`dry` y `live`) se emite ademas un log final `ingestion summary` con `events_in`, `events_out`, `events_persisted`, `reconnects`, `buffer_skipped`, `max_latency_seconds`, `dedup_on`, `batch_size`, `duplicates_dropped`, `result` y `error_policy`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite ambos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Feature Store inicial
 - Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).

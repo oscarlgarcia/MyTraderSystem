@@ -211,6 +211,7 @@ def test_dry_emits_aggregated_ingestion_summary(monkeypatch):
     assert summary["env"] == "dev"
     assert summary["events_in"] == 2
     assert summary["events_out"] == 2
+    assert summary["events_persisted"] == 2
     assert summary["reconnects"] == 0
     assert summary["buffer_skipped"] == 0
     assert summary["max_latency_seconds"] == 0.0
@@ -246,6 +247,7 @@ def test_live_keeps_original_log_and_adds_aggregated_summary(monkeypatch):
     assert summary["env"] == "dev"
     assert summary["events_in"] == 2
     assert summary["events_out"] == 2
+    assert summary["events_persisted"] == 2
     assert summary["reconnects"] == 0
     assert summary["buffer_skipped"] == 0
     assert isinstance(summary["max_latency_seconds"], float)

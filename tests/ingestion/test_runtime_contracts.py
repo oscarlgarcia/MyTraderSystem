@@ -132,6 +132,7 @@ def test_summary_metrics_match_processed_events(monkeypatch):
     summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
     assert summary["events_in"] == 3
     assert summary["events_out"] == 2
+    assert summary["events_persisted"] == 2
     assert summary["duplicates_dropped"] == 1
     assert summary["dedup_on"] is True
     assert summary["batch_size"] == 1

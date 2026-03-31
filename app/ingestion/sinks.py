@@ -52,3 +52,15 @@ class ParquetEventSink:
 
     def close(self) -> None:
         self.writer.flush()
+
+    @property
+    def accepted_count(self) -> int:
+        return self.writer.accepted_events
+
+    @property
+    def persisted_count(self) -> int:
+        return self.writer.persisted_events
+
+    @property
+    def buffered_count(self) -> int:
+        return self.writer.buffered_events
