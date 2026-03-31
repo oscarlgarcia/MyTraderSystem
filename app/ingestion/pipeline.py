@@ -139,6 +139,9 @@ def _emit_ingestion_summary(
     late_events_dropped: int = 0,
     late_event_max_delay_seconds: float = 0.0,
     snapshot_duplicates_skipped: int = 0,
+    handoff_bootstrap_rows: int = 0,
+    handoff_overlap_dropped: int = 0,
+    handoff_inconsistent: int = 0,
 ) -> None:
     events_invalid = rejected_payloads if events_invalid is None else events_invalid
     events_dedup_skipped = duplicates_dropped if events_dedup_skipped is None else events_dedup_skipped
@@ -162,6 +165,9 @@ def _emit_ingestion_summary(
         "snapshot_runs": int(snapshot_runs),
         "snapshot_rows": int(snapshot_rows),
         "snapshot_duplicates_skipped": int(snapshot_duplicates_skipped),
+        "handoff_bootstrap_rows": int(handoff_bootstrap_rows),
+        "handoff_overlap_dropped": int(handoff_overlap_dropped),
+        "handoff_inconsistent": int(handoff_inconsistent),
         "reconnects": int(reconnects),
         "buffer_skipped": int(buffer_skipped),
         "buffer_overflows": int(buffer_overflows),
@@ -219,6 +225,7 @@ def _emit_health_summary(
     gaps_total: int,
     gap_irreparable_total: int,
     late_events: int,
+    handoff_inconsistent: int,
 ) -> None:
     logger.info(
         "ingestion health",
@@ -240,6 +247,7 @@ def _emit_health_summary(
             "gaps_total": int(gaps_total),
             "gap_irreparable_total": int(gap_irreparable_total),
             "late_events": int(late_events),
+            "handoff_inconsistent": int(handoff_inconsistent),
         },
     )
 
@@ -378,6 +386,9 @@ def collect_events(
                 late_events_dropped=0,
                 late_event_max_delay_seconds=0.0,
                 snapshot_duplicates_skipped=0,
+                handoff_bootstrap_rows=getattr(source_rejected, "handoff_bootstrap_rows", 0),
+                handoff_overlap_dropped=getattr(source_rejected, "handoff_overlap_dropped", 0),
+                handoff_inconsistent=getattr(source_rejected, "handoff_inconsistent", 0),
             )
             _emit_health_summary(
                 logger,
@@ -398,6 +409,7 @@ def collect_events(
                 gaps_total=0,
                 gap_irreparable_total=0,
                 late_events=0,
+                handoff_inconsistent=getattr(source_rejected, "handoff_inconsistent", 0),
             )
         if compute_features_after:
             run_feature_pipeline(events_out)
@@ -422,6 +434,8 @@ def collect_events(
                     "error": str(exc),
                 },
             )
+    if checkpoint_state is not None and hasattr(source_impl, "attach_checkpoint_state"):
+        source_impl.attach_checkpoint_state(checkpoint_state)
 
     runner: ResilientRunner | None = None
     sink_impl: EventSink | None = None
@@ -490,6 +504,9 @@ def collect_events(
             events_dedup_skipped = _safe_int(runner.metrics.dedup_skipped + stats["duplicates_dropped"])
             snapshot_runs = _safe_int(getattr(source_stats, "snapshot_runs", runner.metrics.snapshot_runs), runner.metrics.snapshot_runs)
             snapshot_rows = _safe_int(runner.metrics.snapshot_rows, runner.metrics.snapshot_rows)
+            handoff_bootstrap_rows = _safe_int(getattr(source_stats, "handoff_bootstrap_rows", 0))
+            handoff_overlap_dropped = _safe_int(getattr(source_stats, "handoff_overlap_dropped", 0))
+            handoff_inconsistent = _safe_int(getattr(source_stats, "handoff_inconsistent", 0))
             logger.info(
                 "ingestion live complete",
                 extra={
@@ -512,6 +529,7 @@ def collect_events(
                     "gaps_total": runner.metrics.gaps_total,
                     "gap_irreparable_total": runner.metrics.gap_irreparable_total,
                     "late_events": runner.metrics.late_events,
+                    "handoff_inconsistent": handoff_inconsistent,
                     "temporal_policy": temporal_policy,
                 },
             )
@@ -555,6 +573,9 @@ def collect_events(
                 out_of_order_events=runner.metrics.out_of_order_events,
                 late_events_dropped=runner.metrics.late_events_dropped,
                 late_event_max_delay_seconds=runner.metrics.max_late_seconds,
+                handoff_bootstrap_rows=handoff_bootstrap_rows,
+                handoff_overlap_dropped=handoff_overlap_dropped,
+                handoff_inconsistent=handoff_inconsistent,
             )
             _emit_health_summary(
                 logger,
@@ -575,6 +596,7 @@ def collect_events(
                 gaps_total=runner.metrics.gaps_total,
                 gap_irreparable_total=runner.metrics.gap_irreparable_total,
                 late_events=runner.metrics.late_events,
+                handoff_inconsistent=handoff_inconsistent,
             )
         events_out = list(handler.events)
         if compute_features_after:
@@ -601,6 +623,9 @@ def collect_events(
         late_events_dropped = _safe_int(getattr(runner, "metrics", None).late_events_dropped if runner else 0)
         late_event_max_delay_seconds = _safe_float(getattr(runner, "metrics", None).max_late_seconds if runner else 0.0)
         snapshot_duplicates_skipped = _safe_int(getattr(runner, "metrics", None).snapshot_duplicates_skipped if runner else 0)
+        handoff_bootstrap_rows = _safe_int(getattr(source_stats, "handoff_bootstrap_rows", 0))
+        handoff_overlap_dropped = _safe_int(getattr(source_stats, "handoff_overlap_dropped", 0))
+        handoff_inconsistent = _safe_int(getattr(source_stats, "handoff_inconsistent", 0))
         if err.category == "sink" or effective_error_policy == "fail_fast":
             logger.error(
                 "ingestion failed",
@@ -655,6 +680,9 @@ def collect_events(
                     out_of_order_events=out_of_order_events,
                     late_events_dropped=late_events_dropped,
                     late_event_max_delay_seconds=late_event_max_delay_seconds,
+                    handoff_bootstrap_rows=handoff_bootstrap_rows,
+                    handoff_overlap_dropped=handoff_overlap_dropped,
+                    handoff_inconsistent=handoff_inconsistent,
                 )
                 _emit_health_summary(
                     logger,
@@ -675,6 +703,7 @@ def collect_events(
                     gaps_total=gaps_total,
                     gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
+                    handoff_inconsistent=handoff_inconsistent,
                 )
             raise err
         if effective_error_policy == "degraded":
@@ -731,6 +760,9 @@ def collect_events(
                     out_of_order_events=out_of_order_events,
                     late_events_dropped=late_events_dropped,
                     late_event_max_delay_seconds=late_event_max_delay_seconds,
+                    handoff_bootstrap_rows=handoff_bootstrap_rows,
+                    handoff_overlap_dropped=handoff_overlap_dropped,
+                    handoff_inconsistent=handoff_inconsistent,
                 )
                 _emit_health_summary(
                     logger,
@@ -751,6 +783,7 @@ def collect_events(
                     gaps_total=gaps_total,
                     gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
+                    handoff_inconsistent=handoff_inconsistent,
                 )
             return []
         logger.warning(
@@ -803,10 +836,13 @@ def collect_events(
                     event_gap_seconds=event_gap_seconds,
                     gaps_total=gaps_total,
                     gap_irreparable_total=gap_irreparable_total,
-                    late_events=late_events,
+                late_events=late_events,
                 out_of_order_events=out_of_order_events,
                 late_events_dropped=late_events_dropped,
                 late_event_max_delay_seconds=late_event_max_delay_seconds,
+                handoff_bootstrap_rows=handoff_bootstrap_rows,
+                handoff_overlap_dropped=handoff_overlap_dropped,
+                handoff_inconsistent=handoff_inconsistent,
             )
             _emit_health_summary(
                 logger,
@@ -823,11 +859,12 @@ def collect_events(
                 processing_latency_seconds=0.0,
                 write_latency_seconds=write_latency_seconds,
                 temporal_policy=temporal_policy,
-                    event_gap_seconds=event_gap_seconds,
-                    gaps_total=gaps_total,
-                    gap_irreparable_total=gap_irreparable_total,
-                    late_events=late_events,
-                )
+                event_gap_seconds=event_gap_seconds,
+                gaps_total=gaps_total,
+                gap_irreparable_total=gap_irreparable_total,
+                late_events=late_events,
+                handoff_inconsistent=handoff_inconsistent,
+            )
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out
