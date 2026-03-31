@@ -7,7 +7,7 @@ import pytest
 from app.ingestion import runner
 from app.ingestion.errors import IngestionError
 from app.common.dto import MarketEvent
-from app.ingestion.storage import read_parquet
+from app.ingestion.storage import list_normalized_parquet_files, read_parquet
 from app.observability.logger import get_logger as base_logger
 
 
@@ -34,7 +34,7 @@ def test_dry_run_writes_parquet(monkeypatch, tmp_path):
 
     rc = runner.run(["--env", "dev", "--duration", "0.1", "--dry-run"])
     assert rc == 0
-    files = list(tmp_path.glob("dev/symbol=*/date=*/data.parquet"))
+    files = list_normalized_parquet_files(tmp_path, "dev")
     assert files, "expected parquet output"
     table = read_parquet(files[0])
     assert table.num_rows > 0

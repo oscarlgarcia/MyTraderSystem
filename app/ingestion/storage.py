@@ -1,14 +1,18 @@
-﻿"""
-Buffered Parquet writer for MarketEvent.
+"""
+Buffered Parquet writer for normalized market data.
 
-Partitioning: data/<env>/symbol=XYZ/date=YYYY-MM-DD.parquet
+Normalized v2 layout:
+<data_dir>/normalized/{trades|bars|books}/env=<env>/venue=<venue>/symbol=<symbol>/date=<YYYY-MM-DD>/data.parquet
+
+Legacy v1 reader compatibility is kept for files under:
+<data_dir>/<env>/symbol=<symbol>/date=<YYYY-MM-DD>/data.parquet
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-import time
 from typing import Iterable, List
 
 import pyarrow as pa
@@ -16,6 +20,14 @@ import pyarrow.parquet as pq
 
 from app.common.dto import MarketEvent
 from app.ingestion.dedup import identity_from_fields
+from app.marketdata.models import BaseMarketEvent, IngestionEvent, ensure_legacy_market_event
+from app.marketdata.normalization import NORMALIZER_VERSION, resolve_normalizer_version
+
+FEED_TYPE_BY_SOURCE = {
+    "trade": "trades",
+    "kline": "bars",
+    "book": "books",
+}
 
 
 def validate_output_path(base_dir: Path, *, require_absolute: bool = False) -> Path:
@@ -37,13 +49,57 @@ def validate_output_path(base_dir: Path, *, require_absolute: bool = False) -> P
     return resolved
 
 
+def feed_type_for_source(source: str) -> str:
+    return FEED_TYPE_BY_SOURCE.get(source, source.lower())
+
+
+def event_venue(event: MarketEvent) -> str:
+    return str(event.metadata.get("venue", "BINANCE")).upper()
+
+
+def event_normalizer_version(event: MarketEvent) -> str:
+    return resolve_normalizer_version(event.metadata.get("normalizer_version"))
+
+
+def normalized_partition_path(
+    base_dir: Path,
+    env: str,
+    *,
+    source: str,
+    symbol: str,
+    day: str,
+    venue: str = "BINANCE",
+) -> Path:
+    return (
+        base_dir
+        / "normalized"
+        / feed_type_for_source(source)
+        / f"env={env}"
+        / f"venue={str(venue).upper()}"
+        / f"symbol={symbol}"
+        / f"date={day}"
+        / "data.parquet"
+    )
+
+
+def legacy_partition_path(base_dir: Path, env: str, symbol: str, day: str) -> Path:
+    return base_dir / env / f"symbol={symbol}" / f"date={day}" / "data.parquet"
+
+
+def list_normalized_parquet_files(base_dir: Path, env: str, *, include_legacy: bool = True) -> list[Path]:
+    files = sorted(base_dir.glob(f"normalized/*/env={env}/venue=*/symbol=*/date=*/data.parquet"))
+    if files or not include_legacy:
+        return files
+    return sorted(base_dir.glob(f"{env}/symbol=*/date=*/data.parquet"))
+
+
 @dataclass
 class ParquetWriter:
     base_dir: Path
     env: str
     flush_size: int = 500
     max_dedup_rows: int = 200_000
-    schema_version: str = "v1"
+    schema_version: str = "v2"
     dedup: bool = False
     buffer: List[MarketEvent] = field(default_factory=list)
     accepted_events: int = 0
@@ -56,12 +112,12 @@ class ParquetWriter:
     def __post_init__(self) -> None:
         self.base_dir = validate_output_path(self.base_dir)
 
-    def add(self, event: MarketEvent | Iterable[MarketEvent]) -> None:
-        if isinstance(event, MarketEvent):
-            self.buffer.append(event)
+    def add(self, event: IngestionEvent | Iterable[IngestionEvent]) -> None:
+        if isinstance(event, (MarketEvent, BaseMarketEvent)):
+            self.buffer.append(ensure_legacy_market_event(event))
             self.accepted_events += 1
         else:
-            batch = list(event)
+            batch = [ensure_legacy_market_event(item) for item in event]
             self.buffer.extend(batch)
             self.accepted_events += len(batch)
         if len(self.buffer) >= self.flush_size:
@@ -93,7 +149,6 @@ class ParquetWriter:
                         remaining.extend(later_events)
                     self.buffer = remaining
                     raise
-
             self.buffer.clear()
             self.persisted_events += persisted_now
             self.flush_count += 1
@@ -109,22 +164,21 @@ class ParquetWriter:
         return len(self.buffer)
 
 
-def _group_events_by_partition(events: List[MarketEvent]) -> dict[tuple[str, str], list[MarketEvent]]:
-    grouped: dict[tuple[str, str], list[MarketEvent]] = {}
+def _group_events_by_partition(events: List[MarketEvent]) -> dict[tuple[str, str, str, str], list[MarketEvent]]:
+    grouped: dict[tuple[str, str, str, str], list[MarketEvent]] = {}
     for ev in events:
         day = ev.event_ts.date().isoformat()
-        key = (ev.symbol, day)
+        key = (feed_type_for_source(ev.source), event_venue(ev), ev.symbol, day)
         grouped.setdefault(key, []).append(ev)
     return grouped
-
-
-def _partition_path(base_dir: Path, env: str, symbol: str, day: str) -> Path:
-    return base_dir / env / f"symbol={symbol}" / f"date={day}" / "data.parquet"
 
 
 def _to_table(events: List[MarketEvent]) -> pa.Table:
     events_sorted = sorted(events, key=lambda ev: ev.event_ts)
     data = {
+        "venue": [event_venue(ev) for ev in events_sorted],
+        "feed_type": [feed_type_for_source(ev.source) for ev in events_sorted],
+        "normalizer_version": [event_normalizer_version(ev) for ev in events_sorted],
         "symbol": [ev.symbol for ev in events_sorted],
         "event_ts": [pa.scalar(ev.event_ts).as_py() for ev in events_sorted],
         "price": [ev.price for ev in events_sorted],
@@ -134,6 +188,9 @@ def _to_table(events: List[MarketEvent]) -> pa.Table:
     }
     schema = pa.schema(
         [
+            ("venue", pa.string()),
+            ("feed_type", pa.string()),
+            ("normalizer_version", pa.string()),
             ("symbol", pa.string()),
             ("event_ts", pa.timestamp("ms", tz="UTC")),
             ("price", pa.float64()),
@@ -149,25 +206,41 @@ def _write_partition(
     *,
     base_dir: Path,
     env: str,
-    partition_key: tuple[str, str],
+    partition_key: tuple[str, str, str, str],
     events: list[MarketEvent],
     schema_version: str,
     dedup: bool,
     max_dedup_rows: int,
 ) -> None:
-    symbol, day = partition_key
-    out_path = _partition_path(base_dir, env, symbol, day)
+    feed_type, venue, symbol, day = partition_key
+    out_path = (
+        base_dir
+        / "normalized"
+        / feed_type
+        / f"env={env}"
+        / f"venue={venue}"
+        / f"symbol={symbol}"
+        / f"date={day}"
+        / "data.parquet"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     table = _to_table(events)
-    table = table.replace_schema_metadata({b"schema_version": schema_version.encode("utf-8")})
-    merged = _merge_with_existing(out_path, table, dedup=dedup, max_dedup_rows=max_dedup_rows)
+    table = table.replace_schema_metadata(
+        {
+            b"schema_version": schema_version.encode("utf-8"),
+            b"normalizer_version": NORMALIZER_VERSION.encode("utf-8"),
+        }
+    )
+    fallback_legacy = legacy_partition_path(base_dir, env, symbol, day)
+    existing_path = out_path if out_path.exists() else fallback_legacy if fallback_legacy.exists() else out_path
+    merged = _merge_with_existing(existing_path, table, dedup=dedup, max_dedup_rows=max_dedup_rows)
     _write_table_atomic(merged, out_path)
 
 
 def _merge_with_existing(out_path: Path, new_table: pa.Table, *, dedup: bool, max_dedup_rows: int) -> pa.Table:
     if not out_path.exists():
         return new_table
-    existing = pq.ParquetFile(out_path).read().cast(new_table.schema, safe=False)
+    existing = _read_existing_table_for_merge(out_path, new_table.schema)
     total_rows = existing.num_rows + new_table.num_rows
     if dedup:
         if total_rows <= max_dedup_rows:
@@ -212,9 +285,72 @@ def read_parquet(path: Path) -> pa.Table:
     version = metadata.get(b"schema_version")
     if version is None:
         raise ValueError("schema_version missing in parquet metadata")
-    if version.decode("utf-8") != "v1":
-        raise ValueError(f"unsupported schema_version: {version.decode('utf-8')}")
+    decoded = version.decode("utf-8")
+    if decoded not in {"v1", "v2"}:
+        raise ValueError(f"unsupported schema_version: {decoded}")
+    if decoded == "v2":
+        normalizer_version = metadata.get(b"normalizer_version")
+        resolved = resolve_normalizer_version(
+            normalizer_version.decode("utf-8") if normalizer_version is not None else None
+        )
+        if "normalizer_version" not in table.column_names:
+            rows = []
+            for row in table.to_pylist():
+                row["normalizer_version"] = resolved
+                rows.append(row)
+            table = pa.Table.from_pylist(rows)
+        table = table.replace_schema_metadata(
+            {
+                **(table.schema.metadata or {}),
+                b"schema_version": b"v2",
+                b"normalizer_version": resolved.encode("utf-8"),
+            }
+        )
     return table
+
+
+def _read_existing_table_for_merge(out_path: Path, target_schema: pa.Schema) -> pa.Table:
+    table = pq.ParquetFile(out_path).read()
+    metadata = table.schema.metadata or {}
+    version = metadata.get(b"schema_version", b"v1").decode("utf-8")
+    if version == "v2":
+        rows = []
+        for row in table.to_pylist():
+            metadata_row = row.get("metadata") or {}
+            rows.append(
+                {
+                    "venue": row.get("venue") or str(metadata_row.get("venue", "BINANCE")).upper(),
+                    "feed_type": row.get("feed_type") or feed_type_for_source(row["source"]),
+                    "normalizer_version": resolve_normalizer_version(
+                        row.get("normalizer_version") or metadata_row.get("normalizer_version")
+                    ),
+                    "symbol": row["symbol"],
+                    "event_ts": row["event_ts"],
+                    "price": row["price"],
+                    "size": row["size"],
+                    "source": row["source"],
+                    "metadata": metadata_row,
+                }
+            )
+        return pa.Table.from_pylist(rows, schema=target_schema)
+
+    rows = []
+    for row in table.to_pylist():
+        metadata = row.get("metadata") or {}
+        rows.append(
+            {
+                "venue": str(metadata.get("venue", "BINANCE")).upper(),
+                "feed_type": feed_type_for_source(row["source"]),
+                "normalizer_version": resolve_normalizer_version(metadata.get("normalizer_version")),
+                "symbol": row["symbol"],
+                "event_ts": row["event_ts"],
+                "price": row["price"],
+                "size": row["size"],
+                "source": row["source"],
+                "metadata": metadata,
+            }
+        )
+    return pa.Table.from_pylist(rows, schema=target_schema)
 
 
 def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
@@ -230,6 +366,8 @@ def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
                 price=row["price"],
                 size=row["size"],
                 source=row["source"],
+                venue=row.get("venue"),
+                metadata=row.get("metadata"),
             )
             if key in seen:
                 continue
@@ -253,6 +391,8 @@ def _key_set_from_table(tbl: pa.Table) -> set[tuple]:
                 price=row["price"],
                 size=row["size"],
                 source=row["source"],
+                venue=row.get("venue"),
+                metadata=row.get("metadata"),
             )
         )
     return keys
@@ -268,6 +408,8 @@ def _filter_new_rows(tbl: pa.Table, existing_keys: set[tuple]) -> pa.Table:
             price=row["price"],
             size=row["size"],
             source=row["source"],
+            venue=row.get("venue"),
+            metadata=row.get("metadata"),
         )
         if key in existing_keys:
             continue

@@ -16,6 +16,7 @@ from typing import Iterable, List, Optional
 import pyarrow.dataset as ds
 
 from app.config import load_config
+from app.ingestion.storage import list_normalized_parquet_files
 
 
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -29,7 +30,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 
 def _list_parquet_files(base_dir: Path, env: str) -> List[Path]:
-    return sorted(base_dir.glob(f"{env}/symbol=*/date=*/data.parquet"))
+    return list_normalized_parquet_files(base_dir, env)
 
 
 def collect_events(base_dir: Path, env: str, symbol: Optional[str] = None, date: Optional[str] = None, limit: int = 20) -> List[dict]:

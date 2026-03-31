@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.ingestion import backfill
-from app.ingestion.storage import read_parquet
+from app.ingestion.storage import normalized_partition_path, read_parquet
 from app.common.dto import MarketEvent
 
 
@@ -103,9 +103,9 @@ def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T01:00:00+00:00", "--dedup"])
     backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T01:00:00+00:00", "--dedup"])
 
-    files = list(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet"))
-    assert files
-    table = read_parquet(files[0])
+    path = normalized_partition_path(tmp_path, "dev", source="kline", symbol="BTCUSDT", day="2024-01-01")
+    assert path.exists()
+    table = read_parquet(path)
     assert table.num_rows == 2  # idempotente
     # ordenado por event_ts
     ts_list = table.column("event_ts").to_pylist()
@@ -136,7 +136,7 @@ def test_backfill_dedup_drops_duplicates_and_logs(monkeypatch, tmp_path, capsys)
         ]
     )
 
-    table = read_parquet(next(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet")))
+    table = read_parquet(normalized_partition_path(tmp_path, "dev", source="kline", symbol="BTCUSDT", day="2024-01-01"))
     assert table.num_rows == 1
     assert "backfill duplicates dropped" in capsys.readouterr().out
 
@@ -164,7 +164,7 @@ def test_backfill_without_dedup_keeps_duplicates(monkeypatch, tmp_path):
         ]
     )
 
-    table = read_parquet(next(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet")))
+    table = read_parquet(normalized_partition_path(tmp_path, "dev", source="kline", symbol="BTCUSDT", day="2024-01-01"))
     assert table.num_rows == 2
 
 
@@ -185,7 +185,7 @@ def test_dry_run_creates_no_files(monkeypatch, tmp_path):
     monkeypatch.setattr(backfill, "fetch_klines", lambda **kwargs: rows)
 
     backfill.run(["--env", "dev", "--symbol", "BTCUSDT", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T00:10:00+00:00", "--dry-run"])
-    files = list(tmp_path.glob("dev/symbol=BTCUSDT/date=*/data.parquet"))
+    files = list(tmp_path.glob("normalized/bars/env=dev/venue=*/symbol=BTCUSDT/date=*/data.parquet"))
     assert not files
 
 

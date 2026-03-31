@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.ingestion.storage import ParquetWriter
+from app.ingestion.storage import ParquetWriter, normalized_partition_path
 from app.common.dto import MarketEvent
 from app.ingestion.inspect import collect_events
 
@@ -27,8 +27,8 @@ def test_collect_events_filter_date_and_limit(tmp_path):
     writer.flush()
 
     # Limitar a fecha 2024-01-01
-    files = list(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet"))
-    assert files
+    files = [normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")]
+    assert files[0].exists()
     dataset_rows = collect_events(tmp_path, "dev", symbol="BTCUSDT", date="2024-01-01", limit=1)
     assert len(dataset_rows) == 1
     assert str(dataset_rows[0]["event_ts"]).startswith("2024-01-01")

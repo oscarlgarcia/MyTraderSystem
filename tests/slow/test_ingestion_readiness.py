@@ -12,7 +12,7 @@ from app.ingestion.checkpoints import CheckpointStore
 from app.ingestion.pipeline import collect_events
 from app.ingestion.sinks import ParquetEventSink
 from app.ingestion.sources import BinanceSource, SourceStats, StaticSource
-from app.ingestion.storage import ParquetWriter, read_parquet
+from app.ingestion.storage import ParquetWriter, normalized_partition_path, read_parquet
 from app.observability.logger import clear_trace_id, get_logger, set_trace_id
 
 
@@ -165,7 +165,7 @@ def test_end_to_end_live_mock_with_reconnect_checkpoint_and_sink_flush(tmp_path)
     assert checkpoint is not None
     assert checkpoint.last_event_ts == events[-1].event_ts
 
-    out_path = tmp_path / "test" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
+    out_path = normalized_partition_path(tmp_path, "test", source="trade", symbol="BTCUSDT", day="2024-01-01")
     table = read_parquet(out_path)
     assert table.num_rows == 2
 
@@ -255,7 +255,7 @@ def test_restart_after_partial_failure_preserves_consistency(tmp_path):
     )
 
     assert out == events
-    out_path = tmp_path / "test" / "symbol=BTCUSDT" / "date=2024-01-01" / "data.parquet"
+    out_path = normalized_partition_path(tmp_path, "test", source="trade", symbol="BTCUSDT", day="2024-01-01")
     table = read_parquet(out_path)
     assert table.num_rows == 3
     checkpoint = checkpoint_store.load()

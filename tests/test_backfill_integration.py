@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.ingestion import backfill
-from app.ingestion.storage import read_parquet
+from app.ingestion.storage import normalized_partition_path, read_parquet
 
 
 @pytest.mark.slow
@@ -40,7 +40,7 @@ def test_backfill_integration_local_mock(tmp_path, monkeypatch):
         ]
     )
 
-    files = list(tmp_path.glob("dev/symbol=BTCUSDT/date=2024-01-01/data.parquet"))
-    assert files
-    table = read_parquet(files[0])
+    path = normalized_partition_path(tmp_path, "dev", source="kline", symbol="BTCUSDT", day="2024-01-01")
+    assert path.exists()
+    table = read_parquet(path)
     assert table.num_rows == 5
