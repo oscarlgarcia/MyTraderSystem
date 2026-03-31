@@ -7,6 +7,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - `ingestion.client`
   - Construye URLs de stream (`build_streams`, `build_ws_url`).
   - Parsea mensajes (`parse_message`) y normaliza payloads (`normalize_trade`, `normalize_kline`).
+  - Valida payloads por tipo antes de normalizar (`trade`, `kline`).
   - Expone `_key(event)` como identidad canonica del evento.
   - Permite registrar `stream_builder` por tipo para nuevas fuentes o canales sin tocar el core.
 - `ingestion.sources`
@@ -23,10 +24,12 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - `ParquetWriter`: persiste eventos particionados por simbolo y fecha; puede deduplicar contra datos ya existentes.
 - `ingestion.sinks`
   - Define `EventSink` y `ParquetEventSink`.
+  - Define `ErrorSink`, `NullErrorSink` y `JsonlErrorSink` para trazado local de payloads rechazados.
   - Permite desacoplar live del writer concreto en pruebas y futuros destinos.
 
 ## Relaciones entre modulos
 - `pipeline.collect_events` usa un `Source`, crea `ResilientRunner` y delega la persistencia a un `EventSink`.
+- `BinanceSource` valida payloads raw antes de normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.
 - `ResilientRunner` usa `client._key` para filtrar duplicados del stream.
 - `pipeline._build_live_handler` usa la misma `_key` para evitar que un evento duplicado llegue a `writer.add`.
 - `pipeline._LiveBatchHandler` acumula eventos y llama a `sink.add` por lote (`--ingest-batch-size`), manteniendo `max_buffer` en `ResilientRunner`.
@@ -58,6 +61,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - `allow_fallback`: solo errores de `source` degradan a `dry`
   - `degraded`: solo errores de `source` devuelven `[]` y quedan logueados como degradacion
   - Errores `sink`, `parse` y `validation` no se enmascaran como `source`.
+- **DLQ local simple**: los rechazos de payload se escriben en JSONL en `data_dir/errors/ingestion-dlq.jsonl` por defecto. Si el `ErrorSink` falla, el stream sigue vivo y se incrementa `error_sink_failures`.
 
 ## Trade-offs
 - Doble chequeo de deduplicacion en live aumenta algo el coste CPU, pero reduce el riesgo de filas repetidas.
@@ -76,6 +80,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 ## Que hace y que no debe hacer
 - Hace:
   - normaliza eventos,
+  - valida payloads antes y despues de normalizar,
   - maneja reconexion basica,
   - clasifica errores de source/parse/validation/sink,
   - deduplica con una clave compartida,

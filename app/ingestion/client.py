@@ -7,11 +7,11 @@ Designed to be dependency-light and easily mockable for tests.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, List, Callable, Dict, Tuple
 
 from app.common.dto import MarketEvent, normalize_symbol
+from app.common import validator
 
 
 def _key(event: MarketEvent) -> Tuple[str, datetime, float, float, str]:
@@ -25,6 +25,37 @@ def _ts_from_ms(ms: int) -> datetime:
 def _validate_positive(value: float, name: str) -> None:
     if value < 0:
         raise ValueError(f"{name} must be non-negative")
+
+
+def _require_keys(payload: dict, required: tuple[str, ...]) -> None:
+    missing = [key for key in required if key not in payload]
+    if missing:
+        raise KeyError(",".join(missing))
+
+
+def validate_trade_payload(payload: dict) -> None:
+    _require_keys(payload, ("s", "E", "p", "q"))
+    int(payload["E"])
+    price = float(payload["p"])
+    size = float(payload["q"])
+    _validate_positive(price, "price")
+    _validate_positive(size, "size")
+
+
+def validate_kline_payload(payload: dict) -> None:
+    _require_keys(payload, ("s", "E", "k"))
+    if not isinstance(payload["k"], dict):
+        raise ValueError("k must be a dict")
+    _require_keys(payload["k"], ("c", "q"))
+    int(payload["E"])
+    price = float(payload["k"]["c"])
+    size = float(payload["k"]["q"])
+    _validate_positive(price, "price")
+    _validate_positive(size, "size")
+
+
+def _validate_market_event(event: MarketEvent) -> None:
+    validator.validate_market_payload(event.symbol, event.event_ts, event.price, event.size)
 
 
 def normalize_trade(payload: dict) -> MarketEvent:
@@ -60,6 +91,10 @@ NORMALIZERS: Dict[str, Callable[[dict], MarketEvent]] = {
     "trade": normalize_trade,
     "kline": normalize_kline,
 }
+PAYLOAD_VALIDATORS: Dict[str, Callable[[dict], None]] = {
+    "trade": validate_trade_payload,
+    "kline": validate_kline_payload,
+}
 STREAM_BUILDERS: Dict[str, Callable[[str], str]] = {
     "trade": lambda symbol: f"{symbol}@trade",
     "kline": lambda symbol: f"{symbol}@kline_1m",
@@ -69,6 +104,10 @@ DEFAULT_STREAM_TYPES: Tuple[str, ...] = ("trade", "kline")
 
 def register_normalizer(event_type: str, fn: Callable[[dict], MarketEvent]) -> None:
     NORMALIZERS[event_type] = fn
+
+
+def register_payload_validator(event_type: str, fn: Callable[[dict], None]) -> None:
+    PAYLOAD_VALIDATORS[event_type] = fn
 
 
 def register_stream_builder(stream_type: str, fn: Callable[[str], str]) -> None:
@@ -115,7 +154,12 @@ def parse_message(msg: str) -> MarketEvent:
     event_type = data.get("e")
     if not event_type:
         event_type = "kline" if "kline" in stream else "trade"
+    payload_validator = PAYLOAD_VALIDATORS.get(event_type)
+    if payload_validator is not None:
+        payload_validator(data)
     handler = NORMALIZERS.get(event_type)
     if handler is None:
         raise KeyError(f"Unknown event type: {event_type}")
-    return handler(data)
+    event = handler(data)
+    _validate_market_event(event)
+    return event

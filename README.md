@@ -96,6 +96,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Escribe el lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
 - Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 - Contrato de fuentes/sinks: live ahora se ejecuta sobre un `Source` (`BinanceSource` por defecto) y un `EventSink` (`ParquetEventSink` por defecto), lo que permite tests con mocks sin tocar Binance ni Parquet.
+- Payloads corruptos: `BinanceSource` valida por tipo antes de normalizar y escribe rechazos en un DLQ local JSONL (`<data_dir>/errors/ingestion-dlq.jsonl`) sin matar el stream por errores no fatales.
 
 ### Altas tasas
 - Receta conservadora:

@@ -5,12 +5,19 @@
 - **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
+- **Validacion de payloads**:
+  - `app.ingestion.client.validate_trade_payload`
+  - `app.ingestion.client.validate_kline_payload`
+  - `app.ingestion.client.register_payload_validator`
+  - `parse_message` valida antes de normalizar y vuelve a validar el `MarketEvent` resultante.
 - **Sources/Sinks de ingestion**:
   - `app.ingestion.sources.Source`: contrato minimo `stream(end_time)` / `snapshot()`.
   - `app.ingestion.sources.BinanceSource`: implementacion por defecto WS/REST.
   - `app.ingestion.sources.StaticSource`: fuente en memoria para tests.
   - `app.ingestion.sinks.EventSink`: contrato de salida.
   - `app.ingestion.sinks.ParquetEventSink`: adaptador del writer actual.
+  - `app.ingestion.sinks.ErrorSink`: contrato de trazado para rechazos de payload.
+  - `app.ingestion.sinks.JsonlErrorSink`: DLQ local JSONL.
 - **Feature Store (`app/features/store.py`)**:
   - Entrada: lista de `MarketEvent` por simbolo o llamadas incrementales.
   - Proceso: ventana deslizante configurable; calculos `price`, `ret_1`, agregadores registrados (`sma`, `ema`, `max`, `min`) y transformers opcionales.
@@ -39,8 +46,10 @@
   - `source` y `sink` permiten ejecutar el pipeline contra mocks sin tocar Binance ni Parquet.
 - `app.ingestion.sources.BinanceSource(cfg).stream(end_time) -> Iterable[MarketEvent]`
   - Reutiliza `build_ws_url` y `parse_message`, preservando el comportamiento Binance actual.
+  - Si recibe raw payload invalido o tipo desconocido, lo registra en `ErrorSink` y continua.
 - `app.ingestion.sources.BinanceSource(cfg).snapshot() -> Iterable[MarketEvent]`
   - Reutiliza el snapshot REST de klines en un unico punto.
+  - Si una fila individual de snapshot es invalida, la rechaza y continua con el resto.
 - `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
@@ -58,6 +67,7 @@
   - `collect_events` ya no depende directamente de Binance ni de `ParquetWriter`; consume un `Source` y un `EventSink`.
   - Los errores se clasifican como `source`, `parse`, `validation` o `sink`, y como `transient` o `permanent`.
   - Solo `source/transient` se reintentan en `ResilientRunner`.
+  - Los rechazos de payload no fatales incrementan `rejected_payloads` y se reflejan en `ingestion summary`.
   - La deduplicacion se aplica con la misma clave `_key` en dos puntos:
     - al procesar el stream para evitar reprocesado;
     - justo antes de `writer.add` para evitar duplicados en Parquet live si llegan por una ruta no filtrada.

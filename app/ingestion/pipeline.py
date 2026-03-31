@@ -84,6 +84,8 @@ def _emit_ingestion_summary(
     error_policy: str = "fail_fast",
     error_category: str | None = None,
     error_severity: str | None = None,
+    rejected_payloads: int = 0,
+    error_sink_failures: int = 0,
 ) -> None:
     payload = {
         "mode": mode,
@@ -96,6 +98,8 @@ def _emit_ingestion_summary(
         "dedup_on": bool(dedup_on),
         "batch_size": int(max(1, batch_size)),
         "duplicates_dropped": int(duplicates_dropped),
+        "rejected_payloads": int(rejected_payloads),
+        "error_sink_failures": int(error_sink_failures),
         "result": result,
         "error_policy": error_policy,
     }
@@ -197,6 +201,7 @@ def collect_events(
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
     if mode == "dry":
         events_out = _synthetic_events(max_events)
+        source_rejected = getattr(source, "stats", None)
         if summary_logging:
             _emit_ingestion_summary(
                 logger,
@@ -211,6 +216,8 @@ def collect_events(
                 batch_size=batch_size,
                 duplicates_dropped=0,
                 error_policy=effective_error_policy,
+                rejected_payloads=getattr(source_rejected, "rejected_payloads", 0),
+                error_sink_failures=getattr(source_rejected, "error_sink_failures", 0),
             )
         if compute_features_after:
             run_feature_pipeline(events_out)
@@ -218,6 +225,7 @@ def collect_events(
 
     try:
         source_impl = source or BinanceSource(cfg)
+        source_stats = getattr(source_impl, "stats", None)
         end_time = time.time() + duration_s if duration_s else None
 
         def stream():
@@ -281,6 +289,8 @@ def collect_events(
                 batch_size=batch_size,
                 duplicates_dropped=runner.metrics.dedup_skipped + stats["duplicates_dropped"],
                 error_policy=effective_error_policy,
+                rejected_payloads=getattr(source_stats, "rejected_payloads", 0),
+                error_sink_failures=getattr(source_stats, "error_sink_failures", 0),
             )
         events_out = list(handler.events)
         if compute_features_after:
@@ -326,6 +336,8 @@ def collect_events(
                     error_policy=effective_error_policy,
                     error_category=err.category,
                     error_severity=err.severity,
+                    rejected_payloads=getattr(source_stats, "rejected_payloads", 0),
+                    error_sink_failures=getattr(source_stats, "error_sink_failures", 0),
                 )
             return []
         logger.warning(
@@ -355,6 +367,8 @@ def collect_events(
                 error_policy=effective_error_policy,
                 error_category=err.category,
                 error_severity=err.severity,
+                rejected_payloads=getattr(source_stats, "rejected_payloads", 0),
+                error_sink_failures=getattr(source_stats, "error_sink_failures", 0),
             )
         if compute_features_after:
             run_feature_pipeline(events_out)
