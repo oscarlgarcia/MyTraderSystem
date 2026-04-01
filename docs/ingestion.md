@@ -124,7 +124,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - Define `RecoveryPolicy`, `TradeRecoveryPolicy`, `BarRecoveryPolicy` y `recovery_policy_for_event(...)`.
   - El recovery ya no es generico:
     - `trade`: no acepta snapshots de barras como catch-up. Un gap fuerte sin recovery exacto se marca `gap_irreparable`.
-    - `kline`: usa snapshots filtrados por `(venue, symbol, stream_type)` y elimina el borde duplicado via dedup del runner.
+    - `kline`: usa snapshots filtrados por `(venue, symbol, stream_type)` y elimina el borde duplicado via dedup del runner, pero mientras el resync siga apoyandose en una ventana REST acotada no se declara recovery exacto.
   - `supports_live_recovery(...)` hace explicito que el alcance live actual es bars-only (`kline`).
 - `marketdata.support_matrix`
   - Define `FeedSupport` y `FEED_SUPPORT_MATRIX`.
@@ -135,6 +135,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - Gating actual:
     - cualquier `mode=live` rechaza feeds sin `supports_live`
     - `production_mode` rechaza ademas feeds sin recovery exacto o sin handoff soportado
+    - `kline` conserva `supports_live=True` y `supports_handoff=True`, pero `supports_exact_recovery=False` hasta que exista recovery real basado en ventana/cursor
 - `marketdata.handoff`
   - Define `HistoricalWindow`, `windowed_bootstrap_events(...)` y `HandoffSource`.
   - `HandoffSource` compone:
@@ -335,11 +336,12 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - **Fail-fast por defecto en live**: si la ingesta real falla, `collect_events` propaga el error. El fallback a `dry` solo existe cuando se activa explicitamente `--allow-live-fallback`.
 - **Matriz de soporte live por feed**:
   - `trade`: live no soportado hasta tener exact recovery
-  - `kline`: live permitido con exact recovery y handoff
+  - `kline`: live permitido fuera de `production_mode`, con handoff soportado pero sin exact recovery declarado
   - `book`: live no soportado
   - cualquier `mode=live` rechaza feeds sin `supports_live`
   - `--production-mode` solo admite feeds que cumplan las tres garantias
-  - por tanto, hoy solo `kline` puede arrancar en `mode=live`
+  - por tanto, hoy solo `kline` puede arrancar en `mode=live` no productivo
+  - hoy ningun feed puede arrancar en `--production-mode` porque no existe recovery exacto real demostrado
 - **Politica explicita de error en live**:
   - `fail_fast`: propaga el error
   - `allow_fallback`: solo errores de `source` degradan a `dry`

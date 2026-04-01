@@ -80,24 +80,22 @@ def test_collect_events_rejects_live_trade_until_exact_recovery_exists():
         )
 
 
-def test_collect_events_allows_production_live_kline_when_supported():
+def test_collect_events_rejects_production_live_kline_without_exact_recovery():
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
-    events = [_ev(0, 100)]
 
-    out = pipeline.collect_events(
-        mode="live",
-        cfg=cfg,
-        max_events=10,
-        duration_s=0,
-        logger=mock.Mock(),
-        snapshot_enabled=False,
-        source=StaticSource(events=events),
-        sink=DummySink(),
-        stream_types=("kline",),
-        production_mode=True,
-    )
-
-    assert out == events
+    with pytest.raises(ValueError, match="kline does not support exact recovery"):
+        pipeline.collect_events(
+            mode="live",
+            cfg=cfg,
+            max_events=10,
+            duration_s=0,
+            logger=mock.Mock(),
+            snapshot_enabled=False,
+            source=StaticSource(events=[_ev(0, 100)]),
+            sink=DummySink(),
+            stream_types=("kline",),
+            production_mode=True,
+        )
 
 
 def test_live_collect_events_passes_stream_types_to_default_source(monkeypatch):

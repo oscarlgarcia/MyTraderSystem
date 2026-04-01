@@ -84,10 +84,10 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - `python -m app --env dev --mode live --ingest-stream-types kline`  
   Selecciona los feeds live a ingerir. La matriz actual de soporte es:
   - `trade`: live bloqueado hasta que exista recovery exacto
-  - `kline`: soporta live, recovery exacto y handoff
+  - `kline`: soporta live y handoff, pero no declara recovery exacto mientras el resync siga basado en snapshot REST acotado
   - `book`: no soporta live
   En cualquier `mode=live`, el arranque rechaza feeds sin `supports_live`. En `--production-mode`, ademas exige `supports_exact_recovery` y `supports_handoff`.
-  Con la matriz actual, `mode=live` queda efectivamente limitado a `--ingest-stream-types kline`; `trade` queda bloqueado hasta que exista recovery exacto.
+  Con la matriz actual, `mode=live` no productivo queda limitado a `--ingest-stream-types kline`; `--production-mode` rechaza todos los feeds hasta que exista un recovery exacto real para `kline`.
 - Checkpoint live minimo: las ejecuciones reales de live persisten en `<data_dir>/<env>/state/ingestion-checkpoint.json`:
   - `last_event_ts` global maximo por compatibilidad
   - cursores/watermarks por stream `(venue, symbol, stream_type)`
@@ -267,7 +267,7 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
 - `weak_gap_detection`: heuristico, cuando solo se observa un hueco temporal mayor que el umbral.
   - El recovery ya es especifico por feed:
     - `trade` no intenta rellenarse con snapshots de `kline`; si aparece un gap fuerte sin recovery exacto, se marca `gap_irreparable`.
-    - `kline` puede usar snapshot REST de barras del mismo `venue/symbol/stream_type`, filtrando el borde para no duplicar eventos recientes.
+    - `kline` puede usar snapshot REST de barras del mismo `venue/symbol/stream_type`, filtrando el borde para no duplicar eventos recientes. Mientras ese resync siga limitado a una ventana REST acotada, no se considera recovery exacto.
   - El handoff historico -> live ya tiene contrato explicito:
     - `HandoffSource` emite primero un bootstrap historico por ventana y luego entrega el stream live.
     - Deduplica el solape de borde con la misma identidad fuerte usada por live/storage.

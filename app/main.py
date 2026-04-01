@@ -130,7 +130,7 @@ def _validate_operational_security(
     production_mode = bool(runtime.get("production_mode", False))
     ingest_stream_types = tuple(runtime.get("ingest_stream_types", DEFAULT_INGEST_STREAM_TYPES))
     validate_output_path(cfg.data_dir, require_absolute=production_mode)
-    if mode == "live":
+    if mode == "live" and not production_mode:
         try:
             validate_live_feed_support(
                 ingest_stream_types,
@@ -166,6 +166,15 @@ def _validate_operational_security(
         errors.append("production mode rejects DEBUG logging")
     if errors:
         raise ValueError("Unsafe production configuration: " + "; ".join(errors))
+    if mode == "live":
+        try:
+            validate_live_feed_support(
+                ingest_stream_types,
+                require_exact_recovery=True,
+                require_handoff=True,
+            )
+        except ValueError as exc:
+            raise ValueError("Unsafe production configuration: " + str(exc)) from exc
 
 
 def run_cycle(

@@ -109,7 +109,7 @@
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
   - Para tipos nuevos, requiere `register_stream_builder(...)` y un `register_normalizer(...)` compatible con `parse_message`.
 - `app.config.DEFAULT_INGEST_STREAM_TYPES`
-  - el runtime live usa por defecto `("kline",)` para no ofrecer feeds sin recovery exacto
+  - el runtime live usa por defecto `("kline",)` para no ofrecer feeds fuera del scope live actual; eso no implica exact recovery
 - `app.ingestion.backfill.run(argv=None, sink=None) -> int`
   - `--dedup` activa deduplicacion previa a sink con la misma clave `_key`.
 - `app.features.store.compute_features(events, window=5, windows=None, aggregators=None, feature_set=None, cache=None) -> list[FeatureVector]`
@@ -228,9 +228,10 @@
   - no se aceptan secretos en `config.*.yaml`;
   - el logger no expone claves/valores sensibles en logs JSON;
   - produccion rechaza configuraciones con degradacion silenciosa o perdida implicita;
-  - cualquier `mode=live` rechaza feeds sin `supports_live` segun `app.marketdata.support_matrix`;
-  - produccion rechaza ademas feeds live sin `supports_exact_recovery` y `supports_handoff`;
-  - mientras no exista recovery exacto para trades, el alcance live queda limitado a `kline`;
+- cualquier `mode=live` rechaza feeds sin `supports_live` segun `app.marketdata.support_matrix`;
+- produccion rechaza ademas feeds live sin `supports_exact_recovery` y `supports_handoff`;
+- mientras no exista recovery exacto real para `kline`, `--production-mode` no admite ningun feed live;
+- fuera de produccion, el alcance live actual queda limitado a `kline`;
   - la ruta de persistencia debe ser valida y escribible.
 
 ## Relaciones
@@ -301,9 +302,10 @@
   - `BarRecoveryPolicy`
     - usa `snapshot_fn` filtrado por `(venue, symbol, stream_type)`
     - el runner reaplica dedup para evitar duplicados de borde durante el resync
-  - `supports_live_recovery(...)`
-    - devuelve `True` solo para `kline`
-    - formaliza la decision arquitectonica actual: bars-only para live
+- `supports_live_recovery(...)`
+  - devuelve `True` solo para `kline`
+  - formaliza la decision arquitectonica actual: bars-only para live
+  - no implica por si mismo recovery exacto; ese claim queda gobernado por `support_matrix`
 - Handoff historico -> live:
   - `app.marketdata.handoff.HandoffSource`
   - ejecuta bootstrap historico por ventana antes del stream live
@@ -492,7 +494,7 @@
   - deteccion fuerte de secuencia rota
   - deduplicacion por identidad nativa aunque `timestamp/price/size` coincidan
   - handoff historico -> live limpio o inconsistente segun corresponda
-  - recovery exacto para barras y marcacion explicita de `gap_irreparable` para trades sin recovery exacto
+  - recovery por snapshot para barras, sin declararlo exacto mientras siga acotado, y marcacion explicita de `gap_irreparable` para trades sin recovery exacto
   - soak determinista con evidencia persistida
   - canary baseline vs candidate con comparacion automatica de metricas
 - **Seguridad operativa**:
