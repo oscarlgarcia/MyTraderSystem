@@ -417,6 +417,9 @@
   - un cambio incompatible en la semantica de normalizacion requiere introducir una nueva version
   - no se debe reusar `v1` para cambiar silenciosamente el significado de los datasets ya persistidos
   - `ReplaySource` solo acepta versiones soportadas explicitamente
+  - la evidencia minima de reproducibilidad queda fijada en dos rutas:
+    - live raw -> replay -> normalized (`tests/ingestion/test_raw_normalized_parity.py`)
+    - historical raw -> replay -> normalized (`tests/marketdata/replay/test_replay_guarantees.py`)
 
 ## Readiness operativa
 - La validacion de readiness queda fijada en:
