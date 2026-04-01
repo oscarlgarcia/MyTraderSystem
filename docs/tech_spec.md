@@ -1,7 +1,7 @@
 # Especificacion tecnica y funcional
 
 ## Componentes principales
-- **Ingestion**: normaliza `MarketEvent` desde WS/REST, escribe normalized Parquet v2 en modo live y provee fixtures dry.
+- **Ingestion**: normaliza `IngestionEvent` tipado desde WS/REST, escribe normalized Parquet v2 en modo live y provee fixtures dry.
 - **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
@@ -42,7 +42,7 @@
   - `FeatureVector -> Signal -> OrderIntent -> ExecutionReport -> PortfolioState`.
 
 ## Interfaces relevantes
-- `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, compute_features_after, max_buffer, dedup_enabled) -> list[MarketEvent]`
+- `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, compute_features_after, max_buffer, dedup_enabled) -> list[IngestionEvent]`
   - `dedup_enabled=True` activa deduplicacion live en `ResilientRunner` y una segunda barrera defensiva antes de `writer.add`.
   - `batch_size` controla el lote local antes de escribir en live; el handler hace flush del lote incompleto al cerrar.
   - `error_policy` define el comportamiento de fallo de live:
@@ -228,7 +228,7 @@
   - `ensure_legacy_market_event(...)`
 - El objetivo de esta fase es abrir el contrato nuevo sin romper el stack actual:
   - `Source` y `EventSink` aceptan eventos tipados
-  - `ParquetWriter`, `ResilientRunner` y `collect_events` siguen usando `MarketEvent` legacy como representacion operativa interna hasta que se complete la migracion del modelo.
+- `ParquetWriter` mantiene compatibilidad legacy internamente, pero `collect_events` y el handler live ya operan sobre `IngestionEvent` tipado y no coercionan el flujo principal a `MarketEvent`.
 
 ## Semantica temporal oficial
 - Campos temporales del contrato tipado:

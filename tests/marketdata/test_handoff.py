@@ -81,7 +81,7 @@ def test_handoff_clean_bootstrap_to_live_without_gaps_or_duplicates(tmp_path):
         duration_s=0,
     )
 
-    assert [event.metadata.get("trade_id") for event in out] == ["1", "2", "3", "4"]
+    assert [event.trade_id for event in out] == ["1", "2", "3", "4"]
     assert source.stats.handoff_inconsistent == 0
     assert source.stats.handoff_overlap_dropped == 0
     assert source.stats.handoff_bootstrap_rows == 2
@@ -108,7 +108,7 @@ def test_handoff_duplicate_edge_is_deduplicated(tmp_path):
         duration_s=0,
     )
 
-    assert [event.metadata.get("trade_id") for event in out] == ["1", "2", "3"]
+    assert [event.trade_id for event in out] == ["1", "2", "3"]
     assert source.stats.handoff_overlap_dropped == 1
     assert source.stats.handoff_inconsistent == 0
 
@@ -199,4 +199,4 @@ def test_handoff_uses_checkpoint_to_skip_bootstrap_overlap(tmp_path):
         checkpoint_store=store,
     )
 
-    assert [event.metadata.get("trade_id") for event in out] == ["3", "4"]
+    assert [event.trade_id for event in out] == ["3", "4"]

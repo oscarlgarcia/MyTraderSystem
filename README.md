@@ -127,7 +127,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Escribe el lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
 - Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 - Contrato de fuentes/sinks: live ahora se ejecuta sobre un `Source` (`BinanceSource` por defecto) y un `EventSink` (`ParquetEventSink` por defecto), lo que permite tests con mocks sin tocar Binance ni Parquet.
-- Contrato canonico tipado: `app.marketdata.models` introduce `TradeEvent`, `BarEvent` y `BookEvent` con adapters temporales hacia `app.common.dto.MarketEvent`. La ingestion actual sigue siendo legacy-compatible, pero `Source` y `EventSink` ya aceptan eventos tipados durante la migracion.
+- Contrato canonico tipado: `app.marketdata.models` introduce `TradeEvent`, `BarEvent` y `BookEvent` con adapters temporales hacia `app.common.dto.MarketEvent`. El hot path de `collect_events(...)` ya opera con eventos tipados; los adapters legacy quedan acotados a capas de compatibilidad explicita como storage legacy o consumidores antiguos.
 - Validacion explicita por tipo: `app.marketdata.validators` aplica checks por feed (`trade`, `kline`, `book`) para `NaN`, `inf`, signos, OHLC inconsistente y timestamps absurdos. En `BinanceSource`, los payloads raw invalidados van al DLQ; los eventos tipados invalidados inyectados desde fuentes custom fallan rapido.
 - Semantica temporal explicita: el contrato tipado usa `exchange_ts`, `receive_ts` y `process_ts`. En Binance:
   - `trade.exchange_ts` <- payload `E`

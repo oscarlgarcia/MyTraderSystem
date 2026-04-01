@@ -2,6 +2,7 @@ import pytest
 from unittest import mock
 from app.ingestion import pipeline
 from app.common.dto import MarketEvent
+from app.marketdata.models import TradeEvent
 from datetime import datetime, timedelta, timezone
 import logging
 import io
@@ -40,6 +41,15 @@ class DummySink:
 
     def close(self):
         return None
+
+
+def test_dry_collect_events_returns_typed_trade_events_by_default():
+    cfg = mock.Mock(env="dev", ws_base="", rest_base="", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+
+    out = pipeline.collect_events(mode="dry", cfg=cfg, max_events=2, logger=mock.Mock())
+
+    assert len(out) == 2
+    assert all(isinstance(event, TradeEvent) for event in out)
 
 
 def test_compute_features_after_flag_off(monkeypatch):

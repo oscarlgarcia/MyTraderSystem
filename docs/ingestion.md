@@ -1,7 +1,7 @@
 # Modulo de Ingestion - Arquitectura tecnica
 
 ## Vision general
-El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, aplica resiliencia basica, deduplicacion opcional y persistencia en Parquet. La deduplicacion se apoya en una clave compartida `app.ingestion.client._key(event)` para que live, backfill y escritura en Parquet utilicen la misma nocion de identidad.
+El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` tipado (`TradeEvent`, `BarEvent`, `BookEvent`), aplica resiliencia basica, deduplicacion opcional y persistencia en Parquet. La deduplicacion se apoya en una clave compartida `app.ingestion.client._key(event)` para que live, backfill y escritura en Parquet utilicen la misma nocion de identidad.
 
 ## Modulos principales y responsabilidades
 - `ingestion.client`
@@ -20,7 +20,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
     - `legacy_market_event_to_bar`
     - `typed_event_to_legacy`
     - `ensure_legacy_market_event`
-  - Mantiene compatibilidad transitoria con `app.common.dto.MarketEvent` mientras el resto del pipeline sigue usando el modelo legacy internamente.
+- Mantiene compatibilidad transitoria con `app.common.dto.MarketEvent` en bordes explicitos de compatibilidad, pero `collect_events(...)` y el handler live ya no degradan el flujo principal a legacy.
 - `marketdata.validators`
   - Centraliza validacion explicita por tipo:
     - `validate_trade_payload`, `validate_kline_payload`
@@ -165,7 +165,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - si el feed es `kline`, intenta resync con snapshot compatible del mismo stream;
   - si el feed es `trade`, no rellena el hueco con barras y deja el gap fuerte como `gap_irreparable`.
 - Si el source usado es `HandoffSource`, `collect_events` le inyecta el checkpoint local cargado antes de arrancar live para que el bootstrap historico no reprocesse borde ya cubierto.
-- `Source` y `EventSink` ya aceptan eventos tipados (`TradeEvent`, `BarEvent`, `BookEvent`) o `MarketEvent` legacy; el handler live y el sink por defecto convierten a `MarketEvent` solo en el borde de compatibilidad.
+- `Source` y `EventSink` aceptan eventos tipados (`TradeEvent`, `BarEvent`, `BookEvent`) o `MarketEvent` legacy; el handler live ya no convierte a `MarketEvent` en el hot path y devuelve `list[IngestionEvent]`.
 - Si el path live es el real (sin `source`/`sink` custom), `collect_events` carga `ingestion-checkpoint.json` al arrancar y lo reescribe tras un cierre limpio del sink.
 - `BinanceSource` valida payloads raw antes de normalizar y valida el evento resultante tras normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.
 

@@ -12,9 +12,10 @@ from typing import List, Optional, Dict
 from uuid import uuid4
 
 from app import common, execution, features, ingestion, observability, ops, portfolio, risk, strategy  # noqa: F401
-from app.common.dto import MarketEvent, TraceContext
+from app.common.dto import TraceContext
 from app.config import AppConfig, DEFAULT_INGEST_STREAM_TYPES, load_config, parse_args
 from app.marketdata.support_matrix import validate_live_feed_support
+from app.marketdata.models import IngestionEvent
 from app.observability.logger import get_logger, set_trace_id
 from app.ingestion.pipeline import collect_events
 from app.ingestion.storage import validate_output_path
@@ -42,7 +43,7 @@ def _mark(recorder: Optional[List[str]], step: str) -> None:
         recorder.append(step)
 
 
-def _price_map_from_events(events: List[MarketEvent]) -> Dict[str, float]:
+def _price_map_from_events(events: List[IngestionEvent]) -> Dict[str, float]:
     price_by_symbol: Dict[str, float] = {}
     for ev in events:
         price_by_symbol[ev.symbol] = ev.price

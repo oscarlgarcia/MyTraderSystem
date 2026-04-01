@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from app.common.dto import MarketEvent, normalize_symbol
+from app.common.dto import normalize_symbol
 from app.config import AppConfig
 from app.features.pipeline import run_feature_pipeline
 from app.ingestion.client import _key
@@ -28,7 +28,7 @@ from app.ingestion.shadow import (
 from app.ingestion.sinks import EventSink, MirroredEventSink, ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
-from app.marketdata.models import IngestionEvent, ensure_legacy_market_event
+from app.marketdata.models import IngestionEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, NullRawSink
 from app.marketdata.support_matrix import validate_live_feed_support
 from app.observability.alerts import emit_operational_alert
@@ -134,20 +134,19 @@ def _shadow_snapshot(
     )
 
 
-def _synthetic_events(max_events: int) -> List[MarketEvent]:
+def _synthetic_events(max_events: int) -> List[IngestionEvent]:
     now = time.time()
-    events: List[MarketEvent] = []
+    events: List[IngestionEvent] = []
     price = 100.0
     for index in range(max_events):
         ts = now + index
         price += 0.1
         events.append(
-            MarketEvent(
+            TradeEvent(
                 symbol=normalize_symbol("BTCUSDT"),
-                event_ts=datetime.fromtimestamp(ts, tz=timezone.utc),
+                exchange_ts=datetime.fromtimestamp(ts, tz=timezone.utc),
                 price=price,
                 size=0.01 + index * 0.001,
-                source="trade",
                 metadata={"mode": "dry"},
             )
         )
@@ -369,19 +368,18 @@ class _LiveBatchHandler:
         self.dedup_enabled = dedup_enabled
         self.batch_size = max(1, batch_size)
         self.deduplicator = Deduplicator()
-        self.pending: List[MarketEvent] = []
-        self.events: List[MarketEvent] = []
+        self.pending: List[IngestionEvent] = []
+        self.events: List[IngestionEvent] = []
 
     def __call__(self, event: IngestionEvent) -> None:
-        legacy_event = ensure_legacy_market_event(event)
         if self.dedup_enabled:
-            event_key = _key(legacy_event)
+            event_key = _key(event)
             if self.deduplicator.contains_key(event_key):
                 self.stats["duplicates_dropped"] += 1
                 return
             self.deduplicator.remember_key(event_key)
-        self.events.append(legacy_event)
-        self.pending.append(legacy_event)
+        self.events.append(event)
+        self.pending.append(event)
         if self.stats["written"] + len(self.pending) >= self.max_events:
             self._flush_pending()
             if self.stats["written"] >= self.max_events:
@@ -445,7 +443,7 @@ def collect_events(
     shadow_block_on_diff: bool = False,
     stream_types: tuple[str, ...] = ("trade", "kline"),
     production_mode: bool = False,
-) -> List[MarketEvent]:
+) -> List[IngestionEvent]:
     logger = logger or logging.getLogger("ingest")
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
     if mode == "live":

@@ -186,7 +186,7 @@ def test_typed_event_to_legacy_bar_roundtrip():
     assert roundtrip.process_ts == process_ts
 
 
-def test_pipeline_accepts_typed_trade_events_with_legacy_output():
+def test_pipeline_accepts_typed_trade_events_without_legacy_coercion():
     typed_events = [
         TradeEvent(
             symbol="BTCUSDT",
@@ -232,6 +232,7 @@ def test_pipeline_accepts_typed_trade_events_with_legacy_output():
         snapshot_enabled=False,
     )
 
-    assert all(isinstance(item, MarketEvent) for item in out)
+    assert all(isinstance(item, TradeEvent) for item in out)
     assert [event.price for event in out] == [100.0, 101.0]
-    assert [event.metadata["trade_id"] for event in sink.items] == ["1", "2"]
+    assert [event.trade_id for event in out] == ["1", "2"]
+    assert all(isinstance(item, TradeEvent) for item in sink.items)
