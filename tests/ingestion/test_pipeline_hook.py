@@ -339,6 +339,8 @@ def test_sink_latency_metric_records_flush_cost(monkeypatch, tmp_path):
     summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
     assert summary["events_persisted"] == 1
     assert summary["write_latency_seconds"] > 0.0
+    stream_metric = next(metric for metric in summary["stream_metrics"] if metric["symbol"] == "BTCUSDT")
+    assert stream_metric["normalized_write_latency"] > 0.0
 
 
 def test_late_event_metrics_are_reported_separately():
@@ -375,3 +377,41 @@ def test_late_event_metrics_are_reported_separately():
     assert summary["out_of_order_events"] == 1
     assert summary["late_events_dropped"] == 0
     assert summary["late_event_max_delay_seconds"] == 15.0
+
+
+def test_stream_metrics_make_incident_attributable_to_specific_stream():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.summary.stream_metrics", level="INFO", stream=buffer)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [
+        MarketEvent(symbol="BTCUSDT", event_ts=base, price=100.0, size=1.0, source="trade", metadata={"trade_id": "1"}),
+        MarketEvent(symbol="BTCUSDT", event_ts=base + timedelta(seconds=1), price=101.0, size=1.0, source="trade", metadata={"trade_id": "3"}),
+    ]
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        logger=logger,
+        max_events=10,
+        duration_s=0,
+        dedup_enabled=True,
+        snapshot_enabled=False,
+        summary_logging=True,
+        source=StaticSource(events=events),
+        sink=DummySink(),
+        error_policy="fail_fast",
+    )
+
+    assert len(out) == 2
+    logs = _json_lines(buffer)
+    summary = next(record for record in logs if record["message"] == "ingestion summary")
+    health = next(record for record in logs if record["message"] == "ingestion health")
+    stream_metric = next(metric for metric in summary["stream_metrics"] if metric["symbol"] == "BTCUSDT")
+
+    assert stream_metric["venue"] == "BINANCE"
+    assert stream_metric["stream_type"] == "trade"
+    assert stream_metric["messages_in_total"] == 2
+    assert stream_metric["gaps_total"] == 1
+    assert stream_metric["gap_irreparable_total"] == 1
+    assert "BINANCE:BTCUSDT:trade" in health["streams_degraded"]

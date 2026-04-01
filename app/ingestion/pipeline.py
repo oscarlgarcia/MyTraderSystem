@@ -23,6 +23,20 @@ from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
 from app.marketdata.models import IngestionEvent, ensure_legacy_market_event
 from app.marketdata.raw_sink import JsonlRawSink, NullRawSink
+from app.observability.alerts import emit_operational_alert
+
+
+STREAM_COUNTER_FIELDS = {
+    "messages_invalid_total",
+    "duplicates_total",
+    "gaps_total",
+    "gap_irreparable_total",
+    "reconnects_total",
+    "heartbeat_missed_total",
+    "buffer_dropped_total",
+}
+STREAM_LATENCY_FIELDS = {"raw_write_latency", "normalized_write_latency"}
+STREAM_MAX_FIELDS = {"messages_in_total"}
 
 
 def _safe_int(value: object, default: int = 0) -> int:
@@ -37,6 +51,60 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _merge_stream_metrics(*metric_maps: object) -> list[dict[str, object]]:
+    merged: dict[str, dict[str, object]] = {}
+    for metric_map in metric_maps:
+        if not isinstance(metric_map, dict):
+            continue
+        for label, raw_metric in metric_map.items():
+            if not isinstance(raw_metric, dict):
+                continue
+            venue = str(raw_metric.get("venue", "BINANCE")).upper()
+            symbol = str(raw_metric.get("symbol", "UNKNOWN"))
+            stream_type = str(raw_metric.get("stream_type", "unknown"))
+            metric = merged.setdefault(
+                str(label),
+                {
+                    "venue": venue,
+                    "symbol": symbol,
+                    "stream_type": stream_type,
+                },
+            )
+            metric["venue"] = venue
+            metric["symbol"] = symbol
+            metric["stream_type"] = stream_type
+            for key, value in raw_metric.items():
+                if key in {"venue", "symbol", "stream_type"}:
+                    continue
+                if key in STREAM_COUNTER_FIELDS:
+                    metric[key] = _safe_int(metric.get(key, 0)) + _safe_int(value)
+                    continue
+                if key in STREAM_MAX_FIELDS:
+                    metric[key] = max(_safe_int(metric.get(key, 0)), _safe_int(value))
+                    continue
+                if key in STREAM_LATENCY_FIELDS:
+                    metric[key] = max(_safe_float(metric.get(key, 0.0)), _safe_float(value))
+                    continue
+                metric[key] = value
+    return [merged[label] for label in sorted(merged)]
+
+
+def _degraded_streams(stream_metrics: list[dict[str, object]]) -> list[str]:
+    degraded = []
+    for metric in stream_metrics:
+        if (
+            _safe_int(metric.get("messages_invalid_total")) > 0
+            or _safe_int(metric.get("duplicates_total")) > 0
+            or _safe_int(metric.get("gaps_total")) > 0
+            or _safe_int(metric.get("gap_irreparable_total")) > 0
+            or _safe_int(metric.get("reconnects_total")) > 0
+            or _safe_int(metric.get("heartbeat_missed_total")) > 0
+            or _safe_int(metric.get("buffer_dropped_total")) > 0
+        ):
+            degraded.append(f"{metric['venue']}:{metric['symbol']}:{metric['stream_type']}")
+    return degraded
 
 
 def _synthetic_events(max_events: int) -> List[MarketEvent]:
@@ -142,6 +210,7 @@ def _emit_ingestion_summary(
     handoff_bootstrap_rows: int = 0,
     handoff_overlap_dropped: int = 0,
     handoff_inconsistent: int = 0,
+    stream_metrics: list[dict[str, object]] | None = None,
 ) -> None:
     events_invalid = rejected_payloads if events_invalid is None else events_invalid
     events_dedup_skipped = duplicates_dropped if events_dedup_skipped is None else events_dedup_skipped
@@ -168,6 +237,7 @@ def _emit_ingestion_summary(
         "handoff_bootstrap_rows": int(handoff_bootstrap_rows),
         "handoff_overlap_dropped": int(handoff_overlap_dropped),
         "handoff_inconsistent": int(handoff_inconsistent),
+        "stream_metrics": stream_metrics or [],
         "reconnects": int(reconnects),
         "buffer_skipped": int(buffer_skipped),
         "buffer_overflows": int(buffer_overflows),
@@ -226,7 +296,9 @@ def _emit_health_summary(
     gap_irreparable_total: int,
     late_events: int,
     handoff_inconsistent: int,
+    stream_metrics: list[dict[str, object]] | None = None,
 ) -> None:
+    stream_metrics = stream_metrics or []
     logger.info(
         "ingestion health",
         extra={
@@ -248,6 +320,8 @@ def _emit_health_summary(
             "gap_irreparable_total": int(gap_irreparable_total),
             "late_events": int(late_events),
             "handoff_inconsistent": int(handoff_inconsistent),
+            "streams_observed": len(stream_metrics),
+            "streams_degraded": _degraded_streams(stream_metrics),
         },
     )
 
@@ -345,6 +419,7 @@ def collect_events(
     if mode == "dry":
         events_out = _synthetic_events(max_events)
         source_rejected = getattr(source, "stats", None)
+        stream_metrics = _merge_stream_metrics(getattr(source_rejected, "stream_metrics", {}))
         if summary_logging:
             _emit_ingestion_summary(
                 logger,
@@ -389,6 +464,7 @@ def collect_events(
                 handoff_bootstrap_rows=getattr(source_rejected, "handoff_bootstrap_rows", 0),
                 handoff_overlap_dropped=getattr(source_rejected, "handoff_overlap_dropped", 0),
                 handoff_inconsistent=getattr(source_rejected, "handoff_inconsistent", 0),
+                stream_metrics=stream_metrics,
             )
             _emit_health_summary(
                 logger,
@@ -410,6 +486,7 @@ def collect_events(
                 gap_irreparable_total=0,
                 late_events=0,
                 handoff_inconsistent=getattr(source_rejected, "handoff_inconsistent", 0),
+                stream_metrics=stream_metrics,
             )
         if compute_features_after:
             run_feature_pipeline(events_out)
@@ -507,6 +584,11 @@ def collect_events(
             handoff_bootstrap_rows = _safe_int(getattr(source_stats, "handoff_bootstrap_rows", 0))
             handoff_overlap_dropped = _safe_int(getattr(source_stats, "handoff_overlap_dropped", 0))
             handoff_inconsistent = _safe_int(getattr(source_stats, "handoff_inconsistent", 0))
+            stream_metrics = _merge_stream_metrics(
+                getattr(source_stats, "stream_metrics", {}),
+                runner.metrics.temporal_streams,
+                getattr(sink_impl, "stream_write_metrics", {}),
+            )
             logger.info(
                 "ingestion live complete",
                 extra={
@@ -530,6 +612,7 @@ def collect_events(
                     "gap_irreparable_total": runner.metrics.gap_irreparable_total,
                     "late_events": runner.metrics.late_events,
                     "handoff_inconsistent": handoff_inconsistent,
+                    "stream_metrics": stream_metrics,
                     "temporal_policy": temporal_policy,
                 },
             )
@@ -576,6 +659,7 @@ def collect_events(
                 handoff_bootstrap_rows=handoff_bootstrap_rows,
                 handoff_overlap_dropped=handoff_overlap_dropped,
                 handoff_inconsistent=handoff_inconsistent,
+                stream_metrics=stream_metrics,
             )
             _emit_health_summary(
                 logger,
@@ -597,6 +681,7 @@ def collect_events(
                 gap_irreparable_total=runner.metrics.gap_irreparable_total,
                 late_events=runner.metrics.late_events,
                 handoff_inconsistent=handoff_inconsistent,
+                stream_metrics=stream_metrics,
             )
         events_out = list(handler.events)
         if compute_features_after:
@@ -626,6 +711,23 @@ def collect_events(
         handoff_bootstrap_rows = _safe_int(getattr(source_stats, "handoff_bootstrap_rows", 0))
         handoff_overlap_dropped = _safe_int(getattr(source_stats, "handoff_overlap_dropped", 0))
         handoff_inconsistent = _safe_int(getattr(source_stats, "handoff_inconsistent", 0))
+        stream_metrics = _merge_stream_metrics(
+            getattr(source_stats, "stream_metrics", {}),
+            getattr(runner, "metrics", None).temporal_streams if runner else {},
+            getattr(sink_impl, "stream_write_metrics", {}) if sink_impl is not None else {},
+        )
+        if err.category == "sink":
+            emit_operational_alert(
+                logger,
+                alert_type="sink_failure",
+                observed=1,
+                extra={
+                    "sink_component": type(sink_impl).__name__ if sink_impl is not None else "unknown",
+                    "error": str(err),
+                    "error_category": err.category,
+                    "error_severity": err.severity,
+                },
+            )
         if err.category == "sink" or effective_error_policy == "fail_fast":
             logger.error(
                 "ingestion failed",
@@ -683,6 +785,7 @@ def collect_events(
                     handoff_bootstrap_rows=handoff_bootstrap_rows,
                     handoff_overlap_dropped=handoff_overlap_dropped,
                     handoff_inconsistent=handoff_inconsistent,
+                    stream_metrics=stream_metrics,
                 )
                 _emit_health_summary(
                     logger,
@@ -704,6 +807,7 @@ def collect_events(
                     gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
                     handoff_inconsistent=handoff_inconsistent,
+                    stream_metrics=stream_metrics,
                 )
             raise err
         if effective_error_policy == "degraded":
@@ -763,6 +867,7 @@ def collect_events(
                     handoff_bootstrap_rows=handoff_bootstrap_rows,
                     handoff_overlap_dropped=handoff_overlap_dropped,
                     handoff_inconsistent=handoff_inconsistent,
+                    stream_metrics=stream_metrics,
                 )
                 _emit_health_summary(
                     logger,
@@ -784,6 +889,7 @@ def collect_events(
                     gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
                     handoff_inconsistent=handoff_inconsistent,
+                    stream_metrics=stream_metrics,
                 )
             return []
         logger.warning(
@@ -843,6 +949,7 @@ def collect_events(
                 handoff_bootstrap_rows=handoff_bootstrap_rows,
                 handoff_overlap_dropped=handoff_overlap_dropped,
                 handoff_inconsistent=handoff_inconsistent,
+                stream_metrics=stream_metrics,
             )
             _emit_health_summary(
                 logger,
@@ -864,6 +971,7 @@ def collect_events(
                 gap_irreparable_total=gap_irreparable_total,
                 late_events=late_events,
                 handoff_inconsistent=handoff_inconsistent,
+                stream_metrics=stream_metrics,
             )
         if compute_features_after:
             run_feature_pipeline(events_out)

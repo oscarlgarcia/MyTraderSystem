@@ -1,13 +1,18 @@
 import io
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest import mock
+
+import pytest
 
 from app.common.dto import MarketEvent
 from app.ingestion import pipeline
+from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sources import BinanceSource, StaticSource
 from app.marketdata.models import TradeEvent
+from app.marketdata.raw_sink import JsonlRawSink
 from app.observability.logger import get_logger
 
 
@@ -99,6 +104,26 @@ def test_binance_source_captures_receive_and_process_timestamps_on_raw_stream():
     assert out[0].exchange_ts <= out[0].receive_ts <= out[0].process_ts
 
 
+def test_binance_source_records_per_stream_raw_latency(tmp_path: Path):
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
+
+    def fake_ws_stream(url: str, end_time=None):
+        del url, end_time
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","t":7}}'
+
+    source = BinanceSource(
+        cfg,
+        ws_stream=fake_ws_stream,
+        raw_sink=JsonlRawSink(tmp_path / "raw", env="dev"),
+    )
+    out = list(source.stream())
+
+    assert len(out) == 1
+    metric = source.stats.stream_metrics["BINANCE:BTCUSDT:trade"]
+    assert metric["messages_in_total"] == 1
+    assert metric["raw_write_latency"] >= 0.0
+
+
 def test_stream_without_heartbeat_triggers_reconnect():
     cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
 
@@ -156,6 +181,95 @@ def test_stream_without_heartbeat_triggers_reconnect():
     assert len(handled) == 1
 
 
+def test_reconnect_storm_and_heartbeat_alerts_are_emitted():
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    get_logger(name="ingest.source", level="INFO", stream=buffer)
+
+    class FakeConnection:
+        def __init__(self, mode: str):
+            self.mode = mode
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def recv(self, timeout=None):
+            del timeout
+            if self.mode == "dead":
+                raise TimeoutError("idle")
+            if getattr(self, "_sent", False):
+                raise StopIteration
+            self._sent = True
+            return '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","t":7}}'
+
+        def ping(self):
+            class Pong:
+                def wait(self, timeout=None):
+                    del timeout
+                    return False
+
+            return Pong()
+
+    attempts = {"n": 0}
+    monotonic_values = iter([
+        0.0, 1.0, 10.0, 10.0,
+        20.0, 21.0, 30.0, 30.0,
+        40.0, 41.0, 50.0, 50.0,
+        60.0, 60.5, 61.0,
+    ])
+
+    def fake_connect(_url: str):
+        attempts["n"] += 1
+        return FakeConnection("dead" if attempts["n"] <= 3 else "live")
+
+    source = BinanceSource(
+        cfg,
+        ws_connect_fn=fake_connect,
+        monotonic_fn=lambda: next(monotonic_values),
+    )
+    runner = ResilientRunner(
+        stream_fn=lambda: source.stream(),
+        sleeper=lambda _seconds: None,
+        jitter_fn=lambda delay: delay,
+    )
+
+    handled: list[object] = []
+    runner.run(lambda event: handled.append(event), stop_on_complete=True, max_retries=3)
+
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    assert any(record["alert_type"] == "heartbeat_missed" for record in alerts)
+    storm = next(record for record in alerts if record["alert_type"] == "reconnect_storm")
+    assert storm["venue"] == "BINANCE"
+    assert storm["symbol"] == "BTCUSDT"
+    assert storm["stream_type"] == "trade"
+    assert storm["threshold"] == 3
+
+
+def test_dlq_spike_alert_is_emitted_after_repeated_invalid_payloads():
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    get_logger(name="ingest.source", level="INFO", stream=buffer)
+
+    def fake_ws_stream(url: str, end_time=None):
+        del url, end_time
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"NaN","q":"1","t":1}}'
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067201000,"p":"NaN","q":"1","t":2}}'
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067202000,"p":"NaN","q":"1","t":3}}'
+
+    source = BinanceSource(cfg, ws_stream=fake_ws_stream)
+    assert list(source.stream()) == []
+
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    spike = next(record for record in alerts if record["alert_type"] == "dlq_spike")
+    assert spike["venue"] == "BINANCE"
+    assert spike["symbol"] == "BTCUSDT"
+    assert spike["stream_type"] == "trade"
+    assert spike["observed"] == 3
+
+
 def test_snapshot_optional_on_source():
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     events = [_ev(0, 100), _ev(10, 101)]
@@ -179,3 +293,35 @@ def test_snapshot_optional_on_source():
     summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
     assert summary["events_in"] == 2
     assert summary["events_out"] == 2
+
+
+def test_sink_failure_alert_is_emitted_when_normalized_sink_fails():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.alerts.sink_failure", level="INFO", stream=buffer)
+
+    class FailingSink:
+        def add(self, event):
+            del event
+            raise RuntimeError("disk full")
+
+        def close(self):
+            return None
+
+    with pytest.raises(IngestionError):
+        pipeline.collect_events(
+            mode="live",
+            cfg=cfg,
+            max_events=10,
+            duration_s=0,
+            logger=logger,
+            snapshot_enabled=False,
+            source=StaticSource(events=[_ev(0, 100)]),
+            sink=FailingSink(),
+            error_policy="fail_fast",
+        )
+
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    sink_failure = next(record for record in alerts if record["alert_type"] == "sink_failure")
+    assert sink_failure["sink_component"] == "FailingSink"
+    assert sink_failure["alert_severity"] == "error"

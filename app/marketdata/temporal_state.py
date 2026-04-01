@@ -27,6 +27,13 @@ class TemporalStreamState:
     last_event_ts: datetime | None = None
     cursor_kind: str | None = None
     cursor_value: str | None = None
+    messages_in_total: int = 0
+    duplicates_total: int = 0
+    reconnects_total: int = 0
+    heartbeat_missed_total: int = 0
+    buffer_dropped_total: int = 0
+    raw_write_latency: float = 0.0
+    normalized_write_latency: float = 0.0
     gap_detected: bool = False
     gap_irreparable: bool = False
     gaps_total: int = 0

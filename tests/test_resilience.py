@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -8,6 +9,7 @@ from app.common.dto import MarketEvent
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
 from app.marketdata.models import BarEvent, TradeEvent
+from app.observability.logger import get_logger
 
 
 def make_ev(ts: datetime) -> MarketEvent:
@@ -34,6 +36,10 @@ def make_bar(symbol: str, ts: datetime) -> BarEvent:
         open_ts=ts - timedelta(minutes=1),
         close_ts=ts,
     )
+
+
+def _json_lines(buffer: io.StringIO) -> list[dict[str, object]]:
+    return [json.loads(line) for line in buffer.getvalue().splitlines() if line.strip()]
 
 
 def test_reconnect_after_drop(monkeypatch):
@@ -470,6 +476,51 @@ def test_temporal_gap_heuristic_is_marked_weak_not_strong():
     assert stream_metrics["last_gap_detection_mode"] == "weak_gap_detection"
     assert stream_metrics["last_gap_missing_count"] == 0
     assert stream_metrics["last_gap_seconds"] == 10.0
+
+
+def test_gap_alerts_are_emitted_with_stream_context():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    buffer = io.StringIO()
+    get_logger(name="ingest.resilience", level="INFO", stream=buffer)
+    events = [
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=base,
+            receive_ts=base,
+            process_ts=base,
+            venue="BINANCE",
+            price=100.0,
+            size=1.0,
+            trade_id="1",
+        ),
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=base + timedelta(seconds=1),
+            receive_ts=base + timedelta(seconds=1),
+            process_ts=base + timedelta(seconds=1),
+            venue="BINANCE",
+            price=101.0,
+            size=1.0,
+            trade_id="3",
+        ),
+    ]
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(events),
+        snapshot_fn=None,
+        lag_threshold_seconds=0.5,
+        sleeper=lambda _: None,
+    )
+    runner.run(lambda _event: None, stop_on_complete=True)
+
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    detected = next(record for record in alerts if record["alert_type"] == "gap_detected")
+    irreparable = next(record for record in alerts if record["alert_type"] == "gap_irreparable")
+    assert detected["venue"] == "BINANCE"
+    assert detected["symbol"] == "BTCUSDT"
+    assert detected["stream_type"] == "trade"
+    assert detected["alert_severity"] == "warning"
+    assert irreparable["alert_severity"] == "error"
 
 
 def test_trade_gap_without_exact_recovery_is_marked_irreparable_even_with_snapshot():

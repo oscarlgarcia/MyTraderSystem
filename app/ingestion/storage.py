@@ -28,6 +28,7 @@ FEED_TYPE_BY_SOURCE = {
     "kline": "bars",
     "book": "books",
 }
+STREAM_TYPE_BY_FEED_TYPE = {value: key for key, value in FEED_TYPE_BY_SOURCE.items()}
 
 
 def validate_output_path(base_dir: Path, *, require_absolute: bool = False) -> Path:
@@ -108,6 +109,7 @@ class ParquetWriter:
     total_write_latency_seconds: float = 0.0
     last_write_latency_seconds: float = 0.0
     max_write_latency_seconds: float = 0.0
+    stream_write_metrics: dict[str, dict[str, object]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.base_dir = validate_output_path(self.base_dir)
@@ -133,6 +135,7 @@ class ParquetWriter:
         try:
             for index, (partition_key, events) in enumerate(grouped):
                 try:
+                    partition_started = time.perf_counter()
                     _write_partition(
                         base_dir=self.base_dir,
                         env=self.env,
@@ -142,6 +145,7 @@ class ParquetWriter:
                         dedup=self.dedup,
                         max_dedup_rows=self.max_dedup_rows,
                     )
+                    self._record_stream_write_metric(partition_key, time.perf_counter() - partition_started)
                     persisted_now += len(events)
                 except Exception:
                     remaining.extend(events)
@@ -162,6 +166,21 @@ class ParquetWriter:
     @property
     def buffered_events(self) -> int:
         return len(self.buffer)
+
+    def _record_stream_write_metric(self, partition_key: tuple[str, str, str, str], duration: float) -> None:
+        feed_type, venue, symbol, _day = partition_key
+        stream_type = STREAM_TYPE_BY_FEED_TYPE.get(feed_type, feed_type)
+        label = f"{venue}:{symbol}:{stream_type}"
+        metric = self.stream_write_metrics.setdefault(
+            label,
+            {
+                "venue": venue,
+                "symbol": symbol,
+                "stream_type": stream_type,
+                "normalized_write_latency": 0.0,
+            },
+        )
+        metric["normalized_write_latency"] = max(float(metric["normalized_write_latency"]), max(0.0, duration))
 
 
 def _group_events_by_partition(events: List[MarketEvent]) -> dict[tuple[str, str, str, str], list[MarketEvent]]:

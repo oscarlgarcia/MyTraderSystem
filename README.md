@@ -238,6 +238,28 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
   - `BinanceSource` define heartbeat esperado por feed (`trade`, `kline`, `book`) y deriva un watchdog de inactividad para el websocket compartido.
   - Si no entran frames dentro del umbral, intenta `ping/pong` antes de declarar timeout.
   - Los errores de conector (`timeout`, `connection closed`, `OSError`) se clasifican de forma uniforme como `source/transient`, de modo que el runner reintenta con backoff + jitter.
+- Observabilidad per-stream:
+  - Todas las vistas por stream usan etiquetas obligatorias: `venue`, `symbol`, `stream_type`.
+  - `ingestion summary` ahora incluye `stream_metrics`, una lista agregada por stream con:
+    - `messages_in_total`
+    - `messages_invalid_total`
+    - `duplicates_total`
+    - `gaps_total`
+    - `gap_irreparable_total`
+    - `reconnects_total`
+    - `heartbeat_missed_total`
+    - `buffer_dropped_total`
+    - `raw_write_latency`
+    - `normalized_write_latency`
+  - `ingestion health` añade `streams_observed` y `streams_degraded` para localizar rapidamente el stream afectado.
+  - Las alertas operativas minimas salen como logs `operational alert` con `alert_type`, `alert_severity`, `observed`, `threshold` y `recommended_action`.
+  - Tipos soportados y umbrales por defecto:
+    - `reconnect_storm` (`warning`, 3 reconnects del mismo stream)
+    - `gap_detected` (`warning`, 1 gap)
+    - `gap_irreparable` (`error`, 1 gap irreparable)
+    - `heartbeat_missed` (`warning`, 1 watchdog timeout)
+    - `dlq_spike` (`warning`, 3 payloads invalidos del mismo stream)
+    - `sink_failure` (`error`, 1 fallo de raw/error/normalized sink)
 Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Seguridad operativa minima

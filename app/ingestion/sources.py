@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Protocol
+from typing import Any, Callable, Iterable, Optional, Protocol
 
 import httpx
 from websockets.sync.client import connect
@@ -31,6 +31,7 @@ from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
 from app.marketdata.validators import validate_ingestion_event, validate_kline_payload
+from app.observability.alerts import emit_operational_alert, should_emit_threshold_alert
 from app.observability.logger import get_trace_id
 
 
@@ -51,6 +52,7 @@ class SourceStats:
     handoff_bootstrap_rows: int = 0
     handoff_overlap_dropped: int = 0
     handoff_inconsistent: int = 0
+    stream_metrics: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +62,58 @@ class HeartbeatPolicy:
     ping_timeout_seconds: float
     inactivity_timeout_seconds: float
     expected_idle_seconds_by_stream: dict[str, float]
+
+
+def stream_metric_label(*, venue: str, symbol: str, stream_type: str) -> str:
+    return f"{str(venue).upper()}:{symbol}:{stream_type}"
+
+
+def _ensure_stream_metric(
+    stats: SourceStats,
+    *,
+    venue: str,
+    symbol: str,
+    stream_type: str,
+) -> dict[str, object]:
+    label = stream_metric_label(venue=venue, symbol=symbol, stream_type=stream_type)
+    metric = stats.stream_metrics.setdefault(
+        label,
+        {
+            "venue": str(venue).upper(),
+            "symbol": symbol,
+            "stream_type": stream_type,
+            "messages_in_total": 0,
+            "messages_invalid_total": 0,
+            "duplicates_total": 0,
+            "gaps_total": 0,
+            "gap_irreparable_total": 0,
+            "reconnects_total": 0,
+            "heartbeat_missed_total": 0,
+            "buffer_dropped_total": 0,
+            "raw_write_latency": 0.0,
+            "normalized_write_latency": 0.0,
+        },
+    )
+    return metric
+
+
+def _event_stream_context(event: IngestionEvent) -> tuple[str, str, str]:
+    venue = getattr(event, "venue", "BINANCE")
+    return str(venue).upper(), event.symbol, event.source
+
+
+def _raw_message_context(raw_message: object) -> tuple[str, str, str]:
+    venue = "BINANCE"
+    symbol = "UNKNOWN"
+    stream_type = "unknown"
+    try:
+        payload, data, stream_name, event_type = parse_message_parts(str(raw_message))
+        del payload, stream_name
+        symbol = str(data.get("s", symbol)).upper()
+        stream_type = str(event_type)
+    except Exception:
+        return venue, symbol, stream_type
+    return venue, symbol, stream_type
 
 
 def heartbeat_policy_for_streams(stream_types: Iterable[str]) -> HeartbeatPolicy:
@@ -155,6 +209,9 @@ class BinanceSource:
             )
         if self.heartbeat_policy is None:
             self.heartbeat_policy = heartbeat_policy_for_streams(self.stream_types)
+        for symbol in self.cfg.symbols:
+            for stream_type in self.stream_types:
+                _ensure_stream_metric(self.stats, venue="BINANCE", symbol=symbol, stream_type=stream_type)
 
     def _write_raw_record(
         self,
@@ -166,24 +223,67 @@ class BinanceSource:
     ) -> None:
         if isinstance(self.raw_sink, NullRawSink):
             return
+        venue, symbol, stream_type_label = _event_stream_context(event)
+        metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type_label)
         record = RawRecord(
             payload=payload,
-            venue=getattr(event, "venue", "BINANCE"),
+            venue=venue,
             stream_type=stream_type,
-            symbol=event.symbol,
+            symbol=symbol,
             exchange_ts=event.event_ts,
             receive_ts=receive_ts,
             trace_id=get_trace_id(),
             source_id=getattr(event, "source_id", None),
         )
         try:
+            started = time.perf_counter()
             self.raw_sink.write(record)
+            duration = max(0.0, time.perf_counter() - started)
+            metric["raw_write_latency"] = max(float(metric["raw_write_latency"]), duration)
         except Exception as exc:
+            logging.getLogger("ingest.source").error(
+                "raw sink failed",
+                extra={
+                    "venue": venue,
+                    "symbol": symbol,
+                    "stream_type": stream_type_label,
+                    "error": str(exc),
+                },
+            )
+            emit_operational_alert(
+                logging.getLogger("ingest.source"),
+                alert_type="sink_failure",
+                observed=1,
+                extra={
+                    "venue": venue,
+                    "symbol": symbol,
+                    "stream_type": stream_type_label,
+                    "sink_component": "raw_sink",
+                    "error": str(exc),
+                },
+            )
             raise IngestionError("sink", "transient", f"raw sink write failed: {exc}") from exc
 
     def _record_rejected(self, raw_message: object, error: IngestionError, *, context: dict[str, object]) -> None:
         self.stats.events_invalid += 1
         self.stats.rejected_payloads += 1
+        venue, symbol, stream_type = _raw_message_context(raw_message)
+        metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
+        metric["messages_invalid_total"] = int(metric["messages_invalid_total"]) + 1
+        invalid_total = int(metric["messages_invalid_total"])
+        if should_emit_threshold_alert("dlq_spike", invalid_total):
+            emit_operational_alert(
+                logging.getLogger("ingest.source"),
+                alert_type="dlq_spike",
+                observed=invalid_total,
+                extra={
+                    "venue": venue,
+                    "symbol": symbol,
+                    "stream_type": stream_type,
+                    "error_category": error.category,
+                    "error_severity": error.severity,
+                },
+            )
         try:
             self.error_sink.write(raw_message, error, context=context)
         except Exception as sink_exc:
@@ -195,6 +295,18 @@ class BinanceSource:
                     "original_error": str(error),
                     "error_category": error.category,
                     "error_severity": error.severity,
+                },
+            )
+            emit_operational_alert(
+                logging.getLogger("ingest.source"),
+                alert_type="sink_failure",
+                observed=self.stats.error_sink_failures,
+                extra={
+                    "venue": venue,
+                    "symbol": symbol,
+                    "stream_type": stream_type,
+                    "sink_component": "error_sink",
+                    "error": str(sink_exc),
                 },
             )
 
@@ -215,6 +327,9 @@ class BinanceSource:
                 self.stats.source_events_in += 1
                 if isinstance(item, (MarketEvent, BaseMarketEvent)):
                     validate_ingestion_event(item)
+                    venue, symbol, stream_type = _event_stream_context(item)
+                    metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
+                    metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
                     self.stats.events_valid += 1
                     yield item
                     continue
@@ -228,6 +343,13 @@ class BinanceSource:
                         allowed_event_types=("trade", "kline"),
                     )
                     validate_ingestion_event(event)
+                    metric = _ensure_stream_metric(
+                        self.stats,
+                        venue=getattr(event, "venue", "BINANCE"),
+                        symbol=event.symbol,
+                        stream_type=event_type,
+                    )
+                    metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
                     self._write_raw_record(
                         payload=payload,
                         event=event,
@@ -253,6 +375,49 @@ class BinanceSource:
         except IngestionError:
             raise
         except Exception as exc:
+            if isinstance(exc, TimeoutError):
+                for symbol in self.cfg.symbols:
+                    for stream_type in self.stream_types:
+                        metric = _ensure_stream_metric(self.stats, venue="BINANCE", symbol=symbol, stream_type=stream_type)
+                        metric["heartbeat_missed_total"] = int(metric["heartbeat_missed_total"]) + 1
+                        metric["reconnects_total"] = int(metric["reconnects_total"]) + 1
+                        emit_operational_alert(
+                            logging.getLogger("ingest.source"),
+                            alert_type="heartbeat_missed",
+                            observed=int(metric["heartbeat_missed_total"]),
+                            extra={
+                                "venue": "BINANCE",
+                                "symbol": symbol,
+                                "stream_type": stream_type,
+                            },
+                        )
+                        if should_emit_threshold_alert("reconnect_storm", int(metric["reconnects_total"])):
+                            emit_operational_alert(
+                                logging.getLogger("ingest.source"),
+                                alert_type="reconnect_storm",
+                                observed=int(metric["reconnects_total"]),
+                                extra={
+                                    "venue": "BINANCE",
+                                    "symbol": symbol,
+                                    "stream_type": stream_type,
+                                },
+                            )
+            else:
+                for symbol in self.cfg.symbols:
+                    for stream_type in self.stream_types:
+                        metric = _ensure_stream_metric(self.stats, venue="BINANCE", symbol=symbol, stream_type=stream_type)
+                        metric["reconnects_total"] = int(metric["reconnects_total"]) + 1
+                        if should_emit_threshold_alert("reconnect_storm", int(metric["reconnects_total"])):
+                            emit_operational_alert(
+                                logging.getLogger("ingest.source"),
+                                alert_type="reconnect_storm",
+                                observed=int(metric["reconnects_total"]),
+                                extra={
+                                    "venue": "BINANCE",
+                                    "symbol": symbol,
+                                    "stream_type": stream_type,
+                                },
+                            )
             raise classify_connector_error(exc) from exc
 
     def snapshot(self) -> Iterable[IngestionEvent]:
@@ -287,6 +452,13 @@ class BinanceSource:
                             process_ts=receive_ts,
                         )
                         validate_ingestion_event(event)
+                        metric = _ensure_stream_metric(
+                            self.stats,
+                            venue=getattr(event, "venue", "BINANCE"),
+                            symbol=event.symbol,
+                            stream_type="kline",
+                        )
+                        metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
                         self._write_raw_record(
                             payload=payload,
                             event=event,
@@ -320,6 +492,9 @@ class StaticSource:
             validate_ingestion_event(event)
             self.stats.source_events_in += 1
             self.stats.events_valid += 1
+            venue, symbol, stream_type = _event_stream_context(event)
+            metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
+            metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
             yield event
 
     def snapshot(self) -> Optional[Iterable[IngestionEvent]]:
@@ -328,6 +503,9 @@ class StaticSource:
             return None
         for event in self.snapshot_events:
             validate_ingestion_event(event)
+            venue, symbol, stream_type = _event_stream_context(event)
+            metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
+            metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
         self.stats.source_events_in += len(self.snapshot_events)
         self.stats.events_valid += len(self.snapshot_events)
         self.stats.snapshot_rows += len(self.snapshot_events)

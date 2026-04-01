@@ -72,3 +72,7 @@ class ParquetEventSink:
     @property
     def last_write_latency_seconds(self) -> float:
         return self.writer.last_write_latency_seconds
+
+    @property
+    def stream_write_metrics(self) -> dict[str, dict[str, object]]:
+        return self.writer.stream_write_metrics

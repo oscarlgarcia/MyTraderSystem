@@ -73,6 +73,12 @@
     - `ping_timeout_seconds ~= ping_interval/2`
     - `inactivity_timeout_seconds = max(expected_idle_seconds_by_stream)`
   - si `pong.wait(...)` falla o se supera `inactivity_timeout_seconds`, el conector se considera no saludable y se fuerza reconnect
+  - `SourceStats.stream_metrics` agrega contadores por `(venue, symbol, stream_type)` con:
+    - `messages_in_total`
+    - `messages_invalid_total`
+    - `reconnects_total`
+    - `heartbeat_missed_total`
+    - `raw_write_latency`
   - `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
@@ -92,6 +98,10 @@
 - `ResilientRunner` maneja reconexion, buffer, gap temporal, eventos tardios y contadores de snapshot (`snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`).
   - el reconnect duerme usando `jitter_fn(delay)`; por defecto aplica jitter multiplicativo suave y en tests puede inyectarse una funcion determinista
   - `collect_events` ya no depende directamente de Binance ni de `ParquetWriter`; consume un `Source` y un `EventSink`.
+  - `collect_events` fusiona tres superficies observables en `stream_metrics`:
+    1. source (`messages_in_total`, `messages_invalid_total`, `reconnects_total`, `heartbeat_missed_total`, `raw_write_latency`)
+    2. runner (`duplicates_total`, `gaps_total`, `gap_irreparable_total`, `buffer_dropped_total`)
+    3. sink (`normalized_write_latency`)
   - Los errores se clasifican como `source`, `parse`, `validation` o `sink`, y como `transient` o `permanent`.
   - Solo `source/transient` se reintentan en `ResilientRunner`.
   - Los rechazos de payload no fatales incrementan `rejected_payloads` y se reflejan en `ingestion summary`.
@@ -277,6 +287,20 @@
   - el cursor por stream es best-effort y deriva de `trade_id`, `sequence_id` o `source_id` cuando existen
   - no equivale a un offset transaccional del exchange
   - el watchdog de heartbeat observa la salud del transporte WS, no garantiza frecuencia minima de negocio por simbolo cuando el mercado esta inactivo
+- Health summary:
+  - `ingestion summary` contiene `stream_metrics` con breakdown completo por stream
+  - `ingestion health` contiene `streams_observed` y `streams_degraded` para diagnóstico rápido
+
+- Alertas operativas canonicas:
+  - formato comun: `message = operational alert`
+  - campos comunes: `alert_type`, `alert_severity`, `observed`, `threshold`, `recommended_action`
+  - tipos soportados:
+    - `reconnect_storm`: `warning`, umbral 3 reconnects del mismo stream
+    - `gap_detected`: `warning`, umbral 1
+    - `gap_irreparable`: `error`, umbral 1
+    - `heartbeat_missed`: `warning`, umbral 1 watchdog timeout
+    - `dlq_spike`: `warning`, umbral 3 payloads invalidos del mismo stream
+    - `sink_failure`: `error`, umbral 1 fallo de persistencia o de DLQ
 
 ## Raw landing append-only
 - `app.marketdata.raw_sink` introduce la capa raw minima:

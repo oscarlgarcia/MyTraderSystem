@@ -107,6 +107,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
     - `recv_timeout_seconds`: timeout corto de polling
     - `ping_interval_seconds`: a partir de aqui intenta `ping/pong`
     - `inactivity_timeout_seconds`: si no hay frames ni `pong`, se considera feed no saludable y fuerza reconnect
+  - `SourceStats.stream_metrics` agrega contadores por `(venue, symbol, stream_type)` y mide latencia raw por stream.
 - `ingestion.resilience`
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de entrada/salida/duplicados/gap temporal/eventos tardios/latencia/buffer.
   - Gestiona una cola bounded y una politica explicita de saturacion: `pause`, `drop_oldest`, `drop_newest`, `fail`.
@@ -116,6 +117,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
     - trades -> sin recovery generico desde barras
   - El reconnect usa backoff exponencial con `jitter_fn` inyectable para mantener tests deterministas.
   - Mantiene watermarks por `(venue, symbol, stream_type)` via `TemporalStateStore`; las metricas agregadas siguen saliendo en el summary, pero se calculan sin mezclar streams distintos.
+  - `temporal_streams` ya no solo guarda watermarks; tambien mantiene contadores por stream (`messages_in_total`, `duplicates_total`, `buffer_dropped_total`) y etiquetas obligatorias (`venue`, `symbol`, `stream_type`).
   - Mantiene estado de gap por stream:
     - `gap_detected`
     - `gap_irreparable`
@@ -157,6 +159,49 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - `Source` y `EventSink` ya aceptan eventos tipados (`TradeEvent`, `BarEvent`, `BookEvent`) o `MarketEvent` legacy; el handler live y el sink por defecto convierten a `MarketEvent` solo en el borde de compatibilidad.
 - Si el path live es el real (sin `source`/`sink` custom), `collect_events` carga `ingestion-checkpoint.json` al arrancar y lo reescribe tras un cierre limpio del sink.
 - `BinanceSource` valida payloads raw antes de normalizar y valida el evento resultante tras normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.
+
+## Taxonomia de logs y metricas per-stream
+- Etiquetas obligatorias para cualquier breakdown:
+  - `venue`
+  - `symbol`
+  - `stream_type`
+- Contadores por stream expuestos en `ingestion summary.stream_metrics`:
+  - `messages_in_total`
+  - `messages_invalid_total`
+  - `duplicates_total`
+  - `gaps_total`
+  - `gap_irreparable_total`
+  - `reconnects_total`
+  - `heartbeat_missed_total`
+  - `buffer_dropped_total`
+  - `raw_write_latency`
+  - `normalized_write_latency`
+- Logs estructurados operativos:
+  - `gap detected`
+  - `gap irreparable`
+  - `recovery started`
+  - `recovery completed`
+  - `recovery failed`
+  - `handoff bootstrap started`
+  - `handoff bootstrap completed`
+  - `handoff overlap dropped`
+  - `handoff inconsistent`
+- Alertas operativas canonicas (`message = operational alert`):
+  - `reconnect_storm` -> `warning`, umbral 3 reconnects del mismo stream
+  - `gap_detected` -> `warning`, umbral 1
+  - `gap_irreparable` -> `error`, umbral 1
+  - `heartbeat_missed` -> `warning`, umbral 1 watchdog timeout
+  - `dlq_spike` -> `warning`, umbral 3 payloads invalidos del mismo stream
+  - `sink_failure` -> `error`, umbral 1 fallo de `raw_sink`, `error_sink` o `normalized` sink
+- Campos estandar de alerta:
+  - `alert_type`
+  - `alert_severity`
+  - `observed`
+  - `threshold`
+  - `recommended_action`
+- `ingestion health` resume ademas:
+  - `streams_observed`
+  - `streams_degraded`
 - Mapping temporal actual para Binance:
   - trade WS -> `exchange_ts = E`
   - kline WS/REST -> `exchange_ts = k.T` si existe, si no `E`

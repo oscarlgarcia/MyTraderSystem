@@ -64,3 +64,32 @@ Runbook minimo para operar la ingestion en entorno controlado, reproducir incide
 ## Limitaciones conocidas
 - Los benchmarks son deterministas y locales; no sustituyen soak test largo ni canary real.
 - La suite no usa Binance real en CI a propósito.
+
+## Alertas operativas minimas
+- `reconnect_storm` (warning, umbral 3):
+  - comprobar conectividad hacia el vendor
+  - revisar si el websocket esta inestable o si hay rate limit
+- `gap_detected` (warning, umbral 1):
+  - revisar `stream_metrics` del stream afectado
+  - confirmar si el recovery aplicable se ejecuto
+- `gap_irreparable` (error, umbral 1):
+  - tratar el stream como degradado
+  - no asumir continuidad para paper/live hasta rehacer bootstrap o reiniciar la sesion
+- `heartbeat_missed` (warning, umbral 1):
+  - verificar watchdog y latencia de red
+  - confirmar que hubo reconnect posterior
+- `dlq_spike` (warning, umbral 3):
+  - inspeccionar `data/errors/ingestion-dlq.jsonl`
+  - buscar schema drift o payloads corruptos por stream
+- `sink_failure` (error, umbral 1):
+  - detener confianza en persistencia
+  - revisar raw sink, normalized sink o error sink segun `sink_component`
+
+## Campos estandar de alerta
+- `message = operational alert`
+- `alert_type`
+- `alert_severity`
+- `observed`
+- `threshold`
+- `recommended_action`
+

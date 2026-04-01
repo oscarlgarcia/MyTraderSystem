@@ -4,6 +4,7 @@ Historical-to-live handoff helpers.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterable, Protocol
@@ -61,11 +62,18 @@ class HandoffSource:
         self.checkpoint_state = state
 
     def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]:
+        logger = logging.getLogger("ingest.handoff")
         bootstrap_events = self._bootstrap_events()
         emitted_bootstrap: dict[str, IngestionEvent] = {}
         seen_bootstrap_keys = set()
         checkpoint_keys = self._checkpoint_seen_keys()
 
+        logger.info(
+            "handoff bootstrap started",
+            extra={
+                "bootstrap_rows": len(bootstrap_events),
+            },
+        )
         for event in bootstrap_events:
             partition = temporal_partition_key(event).label()
             event_key = _key(event)
@@ -76,7 +84,15 @@ class HandoffSource:
             self.stats.source_events_in += 1
             self.stats.events_valid += 1
             self.stats.snapshot_rows += 1
+            self._record_stream_metric(event, "messages_in_total", 1)
             yield event
+        logger.info(
+            "handoff bootstrap completed",
+            extra={
+                "bootstrap_rows": len(bootstrap_events),
+                "bootstrap_emitted": len(seen_bootstrap_keys),
+            },
+        )
 
         reconciled_partitions: set[str] = set()
         for event in self.live_source.stream(end_time=end_time):
@@ -84,6 +100,15 @@ class HandoffSource:
             event_key = _key(event)
             if event_key in seen_bootstrap_keys or event_key in checkpoint_keys:
                 self.stats.handoff_overlap_dropped += 1
+                self._record_stream_metric(event, "duplicates_total", 1)
+                logger.info(
+                    "handoff overlap dropped",
+                    extra={
+                        "venue": temporal_partition_key(event).venue,
+                        "symbol": event.symbol,
+                        "stream_type": event.source,
+                    },
+                )
                 continue
             if partition in emitted_bootstrap and partition not in reconciled_partitions:
                 self._assert_handoff_consistency(
@@ -93,6 +118,7 @@ class HandoffSource:
                 reconciled_partitions.add(partition)
             self.stats.source_events_in += 1
             self.stats.events_valid += 1
+            self._record_stream_metric(event, "messages_in_total", 1)
             yield event
 
     def snapshot(self) -> Iterable[IngestionEvent] | None:
@@ -149,8 +175,37 @@ class HandoffSource:
 
     def _mark_handoff_inconsistent(self, message: str) -> None:
         self.stats.handoff_inconsistent += 1
+        logging.getLogger("ingest.handoff").error(
+            "handoff inconsistent",
+            extra={
+                "error": message,
+            },
+        )
         if self.strict:
             raise IngestionError("validation", "permanent", message)
+
+    def _record_stream_metric(self, event: IngestionEvent, key: str, delta: int) -> None:
+        partition = temporal_partition_key(event)
+        label = partition.label()
+        metric = self.stats.stream_metrics.setdefault(
+            label,
+            {
+                "venue": partition.venue,
+                "symbol": partition.symbol,
+                "stream_type": partition.stream_type,
+                "messages_in_total": 0,
+                "messages_invalid_total": 0,
+                "duplicates_total": 0,
+                "gaps_total": 0,
+                "gap_irreparable_total": 0,
+                "reconnects_total": 0,
+                "heartbeat_missed_total": 0,
+                "buffer_dropped_total": 0,
+                "raw_write_latency": 0.0,
+                "normalized_write_latency": 0.0,
+            },
+        )
+        metric[key] = int(metric.get(key, 0)) + delta
 
 
 def _cursor_gap(previous: str, current: str) -> int:

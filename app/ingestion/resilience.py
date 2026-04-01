@@ -29,6 +29,7 @@ from app.marketdata.temporal_state import (
     TemporalStreamState,
     cursor_from_event,
 )
+from app.observability.alerts import emit_operational_alert
 
 
 SnapshotFn = Callable[[], Iterable[IngestionEvent]]
@@ -211,6 +212,7 @@ class ResilientRunner:
             buffer.append(ev)
             return
         self.metrics.buffer_overflows += 1
+        dropped_partition_key, dropped_stream_state = self.temporal_state.state_for_event(ev)
         logger = logging.getLogger("ingest.resilience")
         if self.backpressure_policy == "pause":
             self.metrics.buffer_pauses += 1
@@ -228,9 +230,12 @@ class ResilientRunner:
             return
         if self.backpressure_policy == "drop_oldest":
             if buffer:
-                buffer.popleft()
+                dropped = buffer.popleft()
+                dropped_partition_key, dropped_stream_state = self.temporal_state.state_for_event(dropped)
             self.metrics.buffer_skipped += 1
             self.metrics.buffer_drop_oldest += 1
+            dropped_stream_state.buffer_dropped_total += 1
+            self._update_temporal_metrics(dropped_partition_key, dropped_stream_state)
             buffer.append(ev)
             logger.warning(
                 "backpressure drop_oldest applied",
@@ -239,12 +244,17 @@ class ResilientRunner:
                     "buffer_size": len(buffer),
                     "buffer_skipped": self.metrics.buffer_skipped,
                     "buffer_drop_oldest": self.metrics.buffer_drop_oldest,
+                    "venue": dropped_partition_key.venue,
+                    "symbol": dropped_partition_key.symbol,
+                    "stream_type": dropped_partition_key.stream_type,
                 },
             )
             return
         if self.backpressure_policy == "drop_newest":
             self.metrics.buffer_skipped += 1
             self.metrics.buffer_drop_newest += 1
+            dropped_stream_state.buffer_dropped_total += 1
+            self._update_temporal_metrics(dropped_partition_key, dropped_stream_state)
             logger.warning(
                 "backpressure drop_newest applied",
                 extra={
@@ -252,6 +262,9 @@ class ResilientRunner:
                     "buffer_size": len(buffer),
                     "buffer_skipped": self.metrics.buffer_skipped,
                     "buffer_drop_newest": self.metrics.buffer_drop_newest,
+                    "venue": dropped_partition_key.venue,
+                    "symbol": dropped_partition_key.symbol,
+                    "stream_type": dropped_partition_key.stream_type,
                 },
             )
             return
@@ -291,11 +304,15 @@ class ResilientRunner:
         self.metrics.events_in += 1
         k = _key(ev)
         partition_key, stream_state = self.temporal_state.state_for_event(ev)
+        stream_state.messages_in_total += 1
+        self._update_temporal_metrics(partition_key, stream_state)
         recovery_policy = self.recovery_policy_resolver(ev)
         # dedup
         if self.dedup_enabled:
             if self.deduplicator.contains_key(k):
                 self.metrics.dedup_skipped += 1
+                stream_state.duplicates_total += 1
+                self._update_temporal_metrics(partition_key, stream_state)
                 return
 
         # gap detection
@@ -369,27 +386,65 @@ class ResilientRunner:
     ) -> None:
         if not recovery_policy.can_recover(self.snapshot_fn):
             return
+        logger = logging.getLogger("ingest.resilience")
+        logger.info(
+            "recovery started",
+            extra={
+                "venue": partition_key.venue,
+                "symbol": partition_key.symbol,
+                "stream_type": partition_key.stream_type,
+                "recovery_policy": recovery_policy.name,
+            },
+        )
         self.metrics.snapshot_runs += 1
-        for ev in recovery_policy.recover(self.snapshot_fn, partition=partition_key):
-            event_partition_key, stream_state = self.temporal_state.state_for_event(ev)
-            self.metrics.snapshot_rows += 1
-            self.metrics.events_in += 1
-            k = _key(ev)
-            if self.dedup_enabled and self.deduplicator.contains_key(k):
-                self.metrics.dedup_skipped += 1
-                self.metrics.snapshot_duplicates_skipped += 1
-                continue
-            handler(ev)
-            self.metrics.events_out += 1
-            if self.dedup_enabled:
-                self.deduplicator.remember_key(k)
-                self._remember_stream_key(event_partition_key, k)
-            cursor_kind, cursor_value = cursor_from_event(ev)
-            if cursor_kind is not None:
-                stream_state.cursor_kind = cursor_kind
-                stream_state.cursor_value = cursor_value
-            stream_state.last_event_ts = max(stream_state.last_event_ts or ev.event_ts, ev.event_ts)
-            self._update_temporal_metrics(event_partition_key, stream_state)
+        recovered_rows = 0
+        try:
+            for ev in recovery_policy.recover(self.snapshot_fn, partition=partition_key):
+                event_partition_key, stream_state = self.temporal_state.state_for_event(ev)
+                self.metrics.snapshot_rows += 1
+                self.metrics.events_in += 1
+                stream_state.messages_in_total += 1
+                k = _key(ev)
+                if self.dedup_enabled and self.deduplicator.contains_key(k):
+                    self.metrics.dedup_skipped += 1
+                    self.metrics.snapshot_duplicates_skipped += 1
+                    stream_state.duplicates_total += 1
+                    self._update_temporal_metrics(event_partition_key, stream_state)
+                    continue
+                handler(ev)
+                self.metrics.events_out += 1
+                recovered_rows += 1
+                if self.dedup_enabled:
+                    self.deduplicator.remember_key(k)
+                    self._remember_stream_key(event_partition_key, k)
+                cursor_kind, cursor_value = cursor_from_event(ev)
+                if cursor_kind is not None:
+                    stream_state.cursor_kind = cursor_kind
+                    stream_state.cursor_value = cursor_value
+                stream_state.last_event_ts = max(stream_state.last_event_ts or ev.event_ts, ev.event_ts)
+                self._update_temporal_metrics(event_partition_key, stream_state)
+        except Exception:
+            logger.error(
+                "recovery failed",
+                extra={
+                    "venue": partition_key.venue,
+                    "symbol": partition_key.symbol,
+                    "stream_type": partition_key.stream_type,
+                    "recovery_policy": recovery_policy.name,
+                },
+            )
+            raise
+        logger.info(
+            "recovery completed",
+            extra={
+                "venue": partition_key.venue,
+                "symbol": partition_key.symbol,
+                "stream_type": partition_key.stream_type,
+                "recovery_policy": recovery_policy.name,
+                "recovered_rows": recovered_rows,
+                "snapshot_duplicates_skipped": self.metrics.snapshot_duplicates_skipped,
+            },
+        )
 
     def _handle_out_of_order(
         self,
@@ -417,6 +472,9 @@ class ResilientRunner:
         logger.warning(
             "Out-of-order event detected",
             extra={
+                "venue": partition_key.venue,
+                "symbol": partition_key.symbol,
+                "stream_type": partition_key.stream_type,
                 "temporal_policy": self.temporal_policy,
                 "late_seconds": late_seconds,
                 "last_event_ts": previous_ts.isoformat(),
@@ -447,6 +505,13 @@ class ResilientRunner:
             "venue": partition_key.venue,
             "symbol": partition_key.symbol,
             "stream_type": partition_key.stream_type,
+            "messages_in_total": stream_state.messages_in_total,
+            "duplicates_total": stream_state.duplicates_total,
+            "reconnects_total": stream_state.reconnects_total,
+            "heartbeat_missed_total": stream_state.heartbeat_missed_total,
+            "buffer_dropped_total": stream_state.buffer_dropped_total,
+            "raw_write_latency": stream_state.raw_write_latency,
+            "normalized_write_latency": stream_state.normalized_write_latency,
             "last_event_ts": stream_state.last_event_ts.isoformat() if stream_state.last_event_ts else None,
             "cursor_kind": stream_state.cursor_kind,
             "cursor_value": stream_state.cursor_value,
@@ -498,6 +563,25 @@ class ResilientRunner:
         logger.warning(
             "gap detected",
             extra={
+                "venue": partition_key.venue,
+                "symbol": partition_key.symbol,
+                "stream_type": partition_key.stream_type,
+                "temporal_partition": partition_key.label(),
+                "gap_detection_mode": observation.mode,
+                "gap_missing_count": observation.missing_count,
+                "gap_seconds": observation.gap_seconds,
+                "gap_strong": observation.strong,
+                "gap_irreparable": observation.irreparable,
+            },
+        )
+        emit_operational_alert(
+            logger,
+            alert_type="gap_detected",
+            observed=stream_state.gaps_total,
+            extra={
+                "venue": partition_key.venue,
+                "symbol": partition_key.symbol,
+                "stream_type": partition_key.stream_type,
                 "temporal_partition": partition_key.label(),
                 "gap_detection_mode": observation.mode,
                 "gap_missing_count": observation.missing_count,
@@ -510,6 +594,23 @@ class ResilientRunner:
             logger.error(
                 "gap irreparable",
                 extra={
+                    "venue": partition_key.venue,
+                    "symbol": partition_key.symbol,
+                    "stream_type": partition_key.stream_type,
+                    "temporal_partition": partition_key.label(),
+                    "gap_detection_mode": observation.mode,
+                    "gap_missing_count": observation.missing_count,
+                    "gap_seconds": observation.gap_seconds,
+                },
+            )
+            emit_operational_alert(
+                logger,
+                alert_type="gap_irreparable",
+                observed=stream_state.gap_irreparable_total,
+                extra={
+                    "venue": partition_key.venue,
+                    "symbol": partition_key.symbol,
+                    "stream_type": partition_key.stream_type,
                     "temporal_partition": partition_key.label(),
                     "gap_detection_mode": observation.mode,
                     "gap_missing_count": observation.missing_count,
