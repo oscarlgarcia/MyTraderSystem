@@ -1,7 +1,7 @@
 """
 Source contracts and concrete ingestion sources.
 
-Keep this layer small: it only knows how to fetch/stream normalized MarketEvent data.
+Keep this layer small: it only knows how to fetch/stream normalized typed ingestion events.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from websockets.sync.client import connect
 
 from app.common.dto import MarketEvent
 from app.config import AppConfig
+from app.ingestion.circuit_breaker import CircuitBreaker
 from app.ingestion.client import (
     DEFAULT_STREAM_TYPES,
     build_ws_url,
@@ -33,6 +34,10 @@ from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
 from app.marketdata.validators import validate_ingestion_event, validate_kline_payload
 from app.observability.alerts import emit_operational_alert, should_emit_threshold_alert
 from app.observability.logger import get_trace_id
+
+
+def _identity_delay(delay: float) -> float:
+    return delay
 
 
 class Source(Protocol):
@@ -200,6 +205,13 @@ class BinanceSource:
     heartbeat_policy: HeartbeatPolicy | None = None
     ws_connect_fn: Callable[[str], object] = connect
     monotonic_fn: Callable[[], float] = time.monotonic
+    snapshot_sleeper: Callable[[float], None] = time.sleep
+    snapshot_jitter_fn: Callable[[float], float] = _identity_delay
+    snapshot_retries_429: int = 3
+    snapshot_retries_5xx: int = 2
+    snapshot_backoff_base_seconds: float = 0.5
+    snapshot_backoff_max_seconds: float = 4.0
+    snapshot_breaker: CircuitBreaker | None = None
     stats: SourceStats = field(default_factory=SourceStats)
 
     def __post_init__(self) -> None:
@@ -209,6 +221,12 @@ class BinanceSource:
             )
         if self.heartbeat_policy is None:
             self.heartbeat_policy = heartbeat_policy_for_streams(self.stream_types)
+        if self.snapshot_breaker is None:
+            self.snapshot_breaker = CircuitBreaker(
+                failure_threshold=3,
+                reset_timeout_seconds=30.0,
+                monotonic_fn=self.monotonic_fn,
+            )
         for symbol in self.cfg.symbols:
             for stream_type in self.stream_types:
                 _ensure_stream_metric(self.stats, venue="BINANCE", symbol=symbol, stream_type=stream_type)
@@ -309,6 +327,92 @@ class BinanceSource:
                     "error": str(sink_exc),
                 },
             )
+
+    def _snapshot_retry_limit(self, exc: Exception) -> int:
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code if exc.response is not None else None
+            if status == 429:
+                return self.snapshot_retries_429
+            if status in {500, 502, 503, 504}:
+                return self.snapshot_retries_5xx
+            return 0
+        if isinstance(exc, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.ConnectError, OSError)):
+            return self.snapshot_retries_5xx
+        return 0
+
+    def _snapshot_retry_delay(self, attempt: int) -> float:
+        base_delay = min(
+            self.snapshot_backoff_base_seconds * (2 ** max(0, attempt - 1)),
+            self.snapshot_backoff_max_seconds,
+        )
+        return max(0.0, float(self.snapshot_jitter_fn(base_delay)))
+
+    def _emit_snapshot_retry_exhausted(
+        self,
+        *,
+        symbol: str,
+        url: str,
+        observed: int,
+        reason: str,
+    ) -> None:
+        emit_operational_alert(
+            logging.getLogger("ingest.source"),
+            alert_type="snapshot_retry_exhausted",
+            observed=observed,
+            extra={
+                "venue": "BINANCE",
+                "symbol": symbol,
+                "stream_type": "kline",
+                "endpoint": url,
+                "breaker_state": self.snapshot_breaker.state if self.snapshot_breaker else "disabled",
+                "reason": reason,
+            },
+        )
+
+    def _snapshot_get(self, *, symbol: str, url: str) -> httpx.Response:
+        if self.snapshot_breaker is not None and not self.snapshot_breaker.allow_request():
+            self._emit_snapshot_retry_exhausted(
+                symbol=symbol,
+                url=url,
+                observed=self.snapshot_breaker.failure_count,
+                reason="circuit_breaker_open",
+            )
+            raise IngestionError(
+                "source",
+                "transient",
+                f"snapshot circuit breaker open for {symbol}",
+            )
+
+        retries = 0
+        while True:
+            try:
+                response = self.http_get(
+                    url,
+                    params={"symbol": symbol, "interval": "1m", "limit": 5},
+                    timeout=5.0,
+                )
+                response.raise_for_status()
+                if self.snapshot_breaker is not None:
+                    self.snapshot_breaker.record_success()
+                return response
+            except Exception as exc:
+                retry_limit = self._snapshot_retry_limit(exc)
+                if retries < retry_limit:
+                    retries += 1
+                    self.snapshot_sleeper(self._snapshot_retry_delay(retries))
+                    continue
+                if self.snapshot_breaker is not None:
+                    self.snapshot_breaker.record_failure()
+                    observed = self.snapshot_breaker.failure_count
+                else:
+                    observed = 1
+                self._emit_snapshot_retry_exhausted(
+                    symbol=symbol,
+                    url=url,
+                    observed=observed,
+                    reason=type(exc).__name__,
+                )
+                raise classify_connector_error(exc) from exc
 
     def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]:
         url = build_ws_url(self.cfg.ws_base, self.cfg.symbols, self.stream_types)
@@ -426,8 +530,7 @@ class BinanceSource:
             self.stats.snapshot_runs += 1
             for symbol in self.cfg.symbols:
                 url = f"{self.cfg.rest_base.rstrip('/')}/api/v3/klines"
-                resp = self.http_get(url, params={"symbol": symbol, "interval": "1m", "limit": 5}, timeout=5.0)
-                resp.raise_for_status()
+                resp = self._snapshot_get(symbol=symbol, url=url)
                 receive_ts = datetime.now(timezone.utc)
                 for row in resp.json():
                     self.stats.source_events_in += 1
@@ -475,6 +578,8 @@ class BinanceSource:
                             context={"stage": "snapshot", "symbol": symbol},
                         )
                         continue
+        except IngestionError:
+            raise
         except Exception as exc:
             raise classify_connector_error(exc) from exc
         return events

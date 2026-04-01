@@ -266,6 +266,11 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
   - `BinanceSource` define heartbeat esperado por feed (`trade`, `kline`, `book`) y deriva un watchdog de inactividad para el websocket compartido.
   - Si no entran frames dentro del umbral, intenta `ping/pong` antes de declarar timeout.
   - Los errores de conector (`timeout`, `connection closed`, `OSError`) se clasifican de forma uniforme como `source/transient`, de modo que el runner reintenta con backoff + jitter.
+  - El snapshot REST de recovery usa retry por endpoint:
+    - `429`: politica mas permisiva
+    - `5xx` / timeout / connect error: politica corta con backoff exponencial + jitter inyectable
+  - Si los retries del snapshot se agotan, emite `snapshot_retry_exhausted`.
+  - Un circuit breaker simple (`closed/open/half-open`) evita tormentas de retries mientras el endpoint REST sigue degradado.
 - Observabilidad per-stream:
   - Todas las vistas por stream usan etiquetas obligatorias: `venue`, `symbol`, `stream_type`.
   - `ingestion summary` ahora incluye `stream_metrics`, una lista agregada por stream con:
@@ -286,6 +291,7 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
     - `gap_detected` (`warning`, 1 gap)
     - `gap_irreparable` (`error`, 1 gap irreparable)
     - `heartbeat_missed` (`warning`, 1 watchdog timeout)
+    - `snapshot_retry_exhausted` (`error`, 1 agotamiento de retries REST o breaker abierto)
     - `dlq_spike` (`warning`, 3 payloads invalidos del mismo stream)
     - `sink_failure` (`error`, 1 fallo de raw/error/normalized sink)
 - Shadow mode / doble escritura:

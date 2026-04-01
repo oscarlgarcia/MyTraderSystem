@@ -11,6 +11,7 @@ AlertType = Literal[
     "gap_detected",
     "gap_irreparable",
     "heartbeat_missed",
+    "snapshot_retry_exhausted",
     "dlq_spike",
     "sink_failure",
 ]
@@ -43,6 +44,11 @@ ALERT_SPECS: dict[AlertType, AlertSpec] = {
         severity="warning",
         threshold=1,
         recommended_action="Reconnect the stream and verify liveness thresholds for the connector.",
+    ),
+    "snapshot_retry_exhausted": AlertSpec(
+        severity="error",
+        threshold=1,
+        recommended_action="Treat snapshot recovery as degraded until the REST endpoint and breaker recover.",
     ),
     "dlq_spike": AlertSpec(
         severity="warning",

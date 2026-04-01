@@ -140,6 +140,8 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `recv_timeout_seconds`: timeout corto de polling
     - `ping_interval_seconds`: a partir de aqui intenta `ping/pong`
     - `inactivity_timeout_seconds`: si no hay frames ni `pong`, se considera feed no saludable y fuerza reconnect
+  - El snapshot REST usa retry por endpoint con backoff exponencial + jitter inyectable.
+  - Un `CircuitBreaker` simple (`closed`, `open`, `half-open`) protege el path de snapshot/recovery frente a tormentas de retries cuando el endpoint sigue degradado.
   - `SourceStats.stream_metrics` agrega contadores por `(venue, symbol, stream_type)` y mide latencia raw por stream.
 - `ingestion.resilience`
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de entrada/salida/duplicados/gap temporal/eventos tardios/latencia/buffer.
@@ -224,6 +226,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - `gap_detected` -> `warning`, umbral 1
   - `gap_irreparable` -> `error`, umbral 1
   - `heartbeat_missed` -> `warning`, umbral 1 watchdog timeout
+  - `snapshot_retry_exhausted` -> `error`, umbral 1 agotamiento de retries REST o breaker abierto
   - `dlq_spike` -> `warning`, umbral 3 payloads invalidos del mismo stream
   - `sink_failure` -> `error`, umbral 1 fallo de `raw_sink`, `error_sink` o `normalized` sink
 - Campos estandar de alerta:

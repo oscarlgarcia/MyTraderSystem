@@ -4,9 +4,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
+import httpx
 import pytest
 
 from app.common.dto import MarketEvent
+from app.ingestion.circuit_breaker import CircuitBreaker
 from app.ingestion import pipeline
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
@@ -293,6 +295,131 @@ def test_snapshot_optional_on_source():
     summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
     assert summary["events_in"] == 2
     assert summary["events_out"] == 2
+
+
+def test_snapshot_retries_use_injected_jitter_deterministically():
+    cfg = mock.Mock(
+        env="dev",
+        ws_base="wss://stream.binance.com:9443",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+        data_dir=".",
+        log_level="INFO",
+    )
+    attempts = {"n": 0}
+    sleeps: list[float] = []
+
+    def fake_http_get(url: str, **kwargs):
+        del kwargs
+        attempts["n"] += 1
+        request = httpx.Request("GET", url)
+        if attempts["n"] <= 2:
+            return httpx.Response(503, request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            json=[[1704067200000, "100", "101", "99", "100.5", "5", 1704067259999]],
+        )
+
+    source = BinanceSource(
+        cfg,
+        http_get=fake_http_get,
+        snapshot_sleeper=lambda seconds: sleeps.append(seconds),
+        snapshot_jitter_fn=lambda delay: delay + 0.25,
+        snapshot_retries_5xx=2,
+        snapshot_backoff_base_seconds=1.0,
+        snapshot_backoff_max_seconds=5.0,
+    )
+
+    events = list(source.snapshot())
+
+    assert len(events) == 1
+    assert attempts["n"] == 3
+    assert sleeps == [1.25, 2.25]
+
+
+def test_snapshot_retry_exhaustion_emits_specific_operational_alert():
+    cfg = mock.Mock(
+        env="dev",
+        ws_base="wss://stream.binance.com:9443",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+        data_dir=".",
+        log_level="INFO",
+    )
+    buffer = io.StringIO()
+    get_logger(name="ingest.source", level="INFO", stream=buffer)
+
+    def fake_http_get(url: str, **kwargs):
+        del kwargs
+        request = httpx.Request("GET", url)
+        return httpx.Response(503, request=request)
+
+    source = BinanceSource(
+        cfg,
+        http_get=fake_http_get,
+        snapshot_sleeper=lambda _seconds: None,
+        snapshot_jitter_fn=lambda delay: delay,
+        snapshot_retries_5xx=1,
+        snapshot_breaker=CircuitBreaker(
+            failure_threshold=1,
+            reset_timeout_seconds=60.0,
+            monotonic_fn=lambda: 0.0,
+        ),
+    )
+
+    with pytest.raises(IngestionError) as exc_info:
+        list(source.snapshot())
+
+    assert exc_info.value.category == "source"
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    snapshot_alert = next(record for record in alerts if record["alert_type"] == "snapshot_retry_exhausted")
+    assert snapshot_alert["venue"] == "BINANCE"
+    assert snapshot_alert["symbol"] == "BTCUSDT"
+    assert snapshot_alert["stream_type"] == "kline"
+    assert snapshot_alert["alert_severity"] == "error"
+
+
+def test_snapshot_circuit_breaker_fails_fast_after_threshold():
+    cfg = mock.Mock(
+        env="dev",
+        ws_base="wss://stream.binance.com:9443",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+        data_dir=".",
+        log_level="INFO",
+    )
+    buffer = io.StringIO()
+    get_logger(name="ingest.source", level="INFO", stream=buffer)
+    attempts = {"n": 0}
+
+    def fake_http_get(url: str, **kwargs):
+        del kwargs
+        attempts["n"] += 1
+        request = httpx.Request("GET", url)
+        return httpx.Response(503, request=request)
+
+    breaker = CircuitBreaker(
+        failure_threshold=1,
+        reset_timeout_seconds=60.0,
+        monotonic_fn=lambda: 0.0,
+    )
+    source = BinanceSource(
+        cfg,
+        http_get=fake_http_get,
+        snapshot_sleeper=lambda _seconds: None,
+        snapshot_retries_5xx=0,
+        snapshot_breaker=breaker,
+    )
+
+    with pytest.raises(IngestionError):
+        list(source.snapshot())
+    with pytest.raises(IngestionError):
+        list(source.snapshot())
+
+    assert attempts["n"] == 1
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    assert sum(1 for record in alerts if record["alert_type"] == "snapshot_retry_exhausted") >= 2
 
 
 def test_sink_failure_alert_is_emitted_when_normalized_sink_fails():

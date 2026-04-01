@@ -61,6 +61,7 @@
 - `app.ingestion.sources.BinanceSource(cfg).snapshot() -> Iterable[MarketEvent]`
   - Reutiliza el snapshot REST de klines en un unico punto.
   - Si una fila individual de snapshot es invalida, la rechaza y continua con el resto.
+  - El snapshot REST usa retry por endpoint, jitter inyectable y un circuit breaker simple para evitar tormentas de retries.
  - Liveness / heartbeat del conector WS:
   - `HeartbeatPolicy` se deriva de los `stream_types` activos.
   - valores iniciales por feed:
@@ -309,6 +310,7 @@
     - `gap_detected`: `warning`, umbral 1
     - `gap_irreparable`: `error`, umbral 1
     - `heartbeat_missed`: `warning`, umbral 1 watchdog timeout
+    - `snapshot_retry_exhausted`: `error`, umbral 1 agotamiento de retries REST o breaker abierto
     - `dlq_spike`: `warning`, umbral 3 payloads invalidos del mismo stream
     - `sink_failure`: `error`, umbral 1 fallo de persistencia o de DLQ
 
