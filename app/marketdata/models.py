@@ -1,9 +1,10 @@
 """
 Canonical typed market data models plus temporary legacy adapters.
 
-These models are introduced incrementally. The rest of the ingestion stack still
-works with ``app.common.dto.MarketEvent`` internally, so the helpers in this
-module provide explicit loss-aware conversions during the migration window.
+`TradeEvent` and `BarEvent` are the only canonical event types currently
+supported by ingestion/storage/runtime. `BookEvent` remains as an experimental
+placeholder for future depth/quote work and is intentionally out of scope for
+the supported ingestion surface.
 """
 
 from __future__ import annotations
@@ -169,6 +170,12 @@ class BookEvent(BaseMarketEvent):
 
 CanonicalMarketEvent: TypeAlias = TradeEvent | BarEvent | BookEvent
 IngestionEvent: TypeAlias = MarketEvent | CanonicalMarketEvent
+SUPPORTED_MARKETDATA_SOURCES: tuple[str, ...] = ("trade", "kline")
+EXPERIMENTAL_MARKETDATA_SOURCES: tuple[str, ...] = ("book",)
+
+
+def is_supported_marketdata_source(source: str) -> bool:
+    return str(source).lower() in SUPPORTED_MARKETDATA_SOURCES
 
 
 def legacy_market_event_to_trade(

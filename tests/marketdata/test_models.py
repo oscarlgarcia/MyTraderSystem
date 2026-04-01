@@ -9,8 +9,11 @@ from app.ingestion.sources import StaticSource
 from app.marketdata.models import (
     BarEvent,
     BookEvent,
+    EXPERIMENTAL_MARKETDATA_SOURCES,
+    SUPPORTED_MARKETDATA_SOURCES,
     TradeEvent,
     ensure_legacy_market_event,
+    is_supported_marketdata_source,
     legacy_market_event_to_bar,
     legacy_market_event_to_trade,
     typed_event_to_legacy,
@@ -75,6 +78,13 @@ def test_book_event_construction_and_validation():
     assert event.source == "book"
     assert event.price == 100.5
     assert event.size == 3.0
+
+
+def test_book_event_is_explicitly_out_of_supported_ingestion_scope():
+    assert "trade" in SUPPORTED_MARKETDATA_SOURCES
+    assert "kline" in SUPPORTED_MARKETDATA_SOURCES
+    assert "book" in EXPERIMENTAL_MARKETDATA_SOURCES
+    assert is_supported_marketdata_source("book") is False
 
 
 def test_bar_event_rejects_inconsistent_ohlc():

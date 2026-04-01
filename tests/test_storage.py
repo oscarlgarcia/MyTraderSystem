@@ -8,7 +8,7 @@ import pytest
 from app.common.dto import MarketEvent
 from app.ingestion.sinks import ParquetEventSink
 from app.marketdata import NORMALIZER_VERSION
-from app.marketdata.models import BarEvent, TradeEvent
+from app.marketdata.models import BarEvent, BookEvent, TradeEvent
 from app.ingestion.storage import (
     ParquetWriter,
     legacy_partition_path,
@@ -531,6 +531,24 @@ def test_bar_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):
     assert loaded.column("receive_ts").to_pylist()[0] == old_receive_ts
     assert loaded.column("process_ts").to_pylist()[0] == old_process_ts
     assert loaded.column("source_id").to_pylist() == ["bar-legacy", "bar-new"]
+
+
+def test_normalized_storage_rejects_book_feed_as_out_of_scope(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
+
+    with pytest.raises(ValueError, match="book feed is out of scope for normalized storage"):
+        writer.add(
+            BookEvent(
+                symbol="BTCUSDT",
+                exchange_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                venue="BINANCE",
+                bid_price=100.0,
+                bid_size=1.0,
+                ask_price=101.0,
+                ask_size=1.0,
+                sequence_id="42",
+            )
+        )
 
 
 def test_read_parquet_backfills_missing_normalizer_version_for_old_v2_files(tmp_path):

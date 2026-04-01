@@ -240,7 +240,8 @@
 - `app.marketdata.models` introduce una capa de contratos tipados para market data:
   - `TradeEvent`: `price`, `size`, `trade_id`, `side`
   - `BarEvent`: `open`, `high`, `low`, `close`, `volume`, `interval`
-  - `BookEvent`: `bid_price`, `bid_size`, `ask_price`, `ask_size`, `sequence_id`
+  - `BookEvent`: `bid_price`, `bid_size`, `ask_price`, `ask_size`, `sequence_id` como placeholder experimental, fuera del scope soportado de ingestion/storage
+- El surface soportado publicamente hoy es `TradeEvent` + `BarEvent`; `BookEvent` se mantiene para evolucion futura sin prometer soporte operativo actual.
 - Todos comparten:
   - `symbol`
   - `exchange_ts`
@@ -399,16 +400,17 @@
 - Regla operativa:
   - payload raw invalido de `BinanceSource` -> `ErrorSink` / DLQ local
   - evento tipado invalido inyectado por una fuente custom -> fallo rapido del source
+  - `BookEvent` no entra en el scope soportado de runtime/storage; si llega a `ParquetWriter`, el writer falla explicitamente
 - Se considera timestamp absurdo cualquier timestamp con mas de 5 minutos de adelanto respecto al reloj del proceso.
 
 ## Normalized storage v2
 - `app.ingestion.storage` escribe ahora en:
-  - `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
-  - `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
-  - `<data_dir>/normalized/books/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+- `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+- `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
 - El schema `v2` a?ade:
   - `venue`
   - `feed_type`
+- `book` queda fuera de scope hasta que exista un feed real y un schema typed first-class dedicado
   - `normalizer_version`
   - y conserva:
     - `symbol`

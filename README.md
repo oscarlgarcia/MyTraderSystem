@@ -107,7 +107,6 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - Layout normalized v2:
   - `data/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
   - `data/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
-  - `data/normalized/books/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
   - cada dataset `v2` incluye `normalizer_version` como columna y como metadata de Parquet; la politica actual es global y fija `v1`
   - `normalized/trades` ya persiste columnas first-class:
     - `trade_id`
@@ -147,7 +146,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Escribe raw + normalized del lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
 - Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 - Contrato de fuentes/sinks: live ahora se ejecuta sobre un `Source` (`BinanceSource` por defecto) y un `EventSink` (`ParquetEventSink` por defecto), lo que permite tests con mocks sin tocar Binance ni Parquet.
-- Contrato canonico tipado: `app.marketdata.models` introduce `TradeEvent`, `BarEvent` y `BookEvent` con adapters temporales hacia `app.common.dto.MarketEvent`. El hot path de `collect_events(...)` ya opera con eventos tipados; los adapters legacy quedan acotados a capas de compatibilidad explicita como storage legacy o consumidores antiguos.
+- Contrato canonico tipado: `app.marketdata.models` introduce `TradeEvent` y `BarEvent` como surface soportada de ingestion/storage/runtime. `BookEvent` se conserva como placeholder experimental para trabajo futuro de depth/quotes, pero hoy esta fuera de scope publico y `normalized` rechaza ese feed explicitamente. El hot path de `collect_events(...)` ya opera con eventos tipados; los adapters legacy quedan acotados a capas de compatibilidad explicita como storage legacy o consumidores antiguos.
 - Orquestacion desacoplada:
   - `app.ingestion.service.run_ingestion_service(...)` ejecuta solo ingestion
   - `app.main.run_trading_cycle(...)` ejecuta features, strategy, risk, execution y portfolio a partir de eventos ya ingeridos

@@ -2,7 +2,7 @@
 Buffered Parquet writer for normalized market data.
 
 Normalized v2 layout:
-<data_dir>/normalized/{trades|bars|books}/env=<env>/venue=<venue>/symbol=<symbol>/date=<YYYY-MM-DD>/data.parquet
+<data_dir>/normalized/{trades|bars}/env=<env>/venue=<venue>/symbol=<symbol>/date=<YYYY-MM-DD>/data.parquet
 
 Legacy v1 reader compatibility is kept for files under:
 <data_dir>/<env>/symbol=<symbol>/date=<YYYY-MM-DD>/data.parquet
@@ -21,13 +21,19 @@ import pyarrow.parquet as pq
 
 from app.common.dto import MarketEvent
 from app.ingestion.dedup import identity_from_fields
-from app.marketdata.models import BarEvent, BaseMarketEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
+from app.marketdata.models import (
+    BarEvent,
+    BaseMarketEvent,
+    IngestionEvent,
+    TradeEvent,
+    ensure_legacy_market_event,
+    is_supported_marketdata_source,
+)
 from app.marketdata.normalization import NORMALIZER_VERSION, resolve_normalizer_version
 
 FEED_TYPE_BY_SOURCE = {
     "trade": "trades",
     "kline": "bars",
-    "book": "books",
 }
 STREAM_TYPE_BY_FEED_TYPE = {value: key for key, value in FEED_TYPE_BY_SOURCE.items()}
 
@@ -53,6 +59,14 @@ def validate_output_path(base_dir: Path, *, require_absolute: bool = False) -> P
 
 def feed_type_for_source(source: str) -> str:
     return FEED_TYPE_BY_SOURCE.get(source, source.lower())
+
+
+def _assert_supported_storage_source(source: str) -> None:
+    normalized = str(source).lower()
+    if not is_supported_marketdata_source(normalized):
+        raise ValueError(
+            f"{normalized} feed is out of scope for normalized storage; only trade and kline are supported"
+        )
 
 
 def _metadata_mapping(value: object | None) -> dict[str, str]:
@@ -329,6 +343,7 @@ def normalized_partition_path(
     day: str,
     venue: str = "BINANCE",
 ) -> Path:
+    _assert_supported_storage_source(source)
     return (
         base_dir
         / "normalized"
@@ -444,6 +459,7 @@ class ParquetWriter:
 def _group_events_by_partition(events: List[IngestionEvent]) -> dict[tuple[str, str, str, str], list[IngestionEvent]]:
     grouped: dict[tuple[str, str, str, str], list[IngestionEvent]] = {}
     for ev in events:
+        _assert_supported_storage_source(ev.source)
         day = ev.event_ts.date().isoformat()
         key = (feed_type_for_source(ev.source), event_venue(ev), ev.symbol, day)
         grouped.setdefault(key, []).append(ev)
@@ -525,6 +541,8 @@ def _write_partition(
         out_path = legacy_partition_path(base_dir, env, symbol, day)
         table = _to_legacy_table(events)
     else:
+        source = STREAM_TYPE_BY_FEED_TYPE.get(feed_type, feed_type)
+        _assert_supported_storage_source(source)
         out_path = (
             base_dir
             / "normalized"
@@ -540,7 +558,9 @@ def _write_partition(
         elif feed_type == "bars":
             table = BarParquetWriter.to_table(events)
         else:
-            table = _to_table(events)
+            raise ValueError(
+                f"{source} feed is out of scope for normalized storage; only trade and kline are supported"
+            )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     table = table.replace_schema_metadata(
         {

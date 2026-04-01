@@ -1,7 +1,7 @@
 # Modulo de Ingestion - Arquitectura tecnica
 
 ## Vision general
-El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` tipado (`TradeEvent`, `BarEvent`, `BookEvent`), aplica resiliencia basica, deduplicacion opcional y persistencia en Parquet. La deduplicacion se apoya en una clave compartida `app.ingestion.client._key(event)` para que live, backfill y escritura en Parquet utilicen la misma nocion de identidad.
+El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` tipado y soporta publicamente `TradeEvent` y `BarEvent`. `BookEvent` permanece como placeholder experimental para trabajo futuro de depth/quotes y hoy esta fuera de scope para runtime live y storage normalized. La deduplicacion se apoya en una clave compartida `app.ingestion.client._key(event)` para que live, backfill y escritura en Parquet utilicen la misma nocion de identidad.
 
 ## Modulos principales y responsabilidades
 - `ingestion.client`
@@ -17,7 +17,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - Define el contrato canonico tipado:
     - `TradeEvent`
     - `BarEvent`
-    - `BookEvent`
+    - `BookEvent` solo como placeholder experimental; no forma parte del scope soportado de ingestion/storage
   - Expone adapters temporales de migracion:
     - `legacy_market_event_to_trade`
     - `legacy_market_event_to_bar`
@@ -192,7 +192,8 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - `ingestion.backfill`
   - Descarga klines historicos, normaliza filas a `BarEvent`, escribe raw append-only reutilizando `JsonlRawSink`, ordena y opcionalmente deduplica con `--dedup` antes del sink normalized.
 - `ingestion.storage`
-  - `ParquetWriter`: persiste eventos normalized v2 separados por tipo (`trades`, `bars`, `books`) y particionados por `env`, `venue`, `symbol`, `date`; puede deduplicar contra datos ya existentes, escribe con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
+  - `ParquetWriter`: persiste eventos normalized v2 separados por tipo (`trades`, `bars`) y particionados por `env`, `venue`, `symbol`, `date`; puede deduplicar contra datos ya existentes, escribe con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
+  - `book` queda fuera de scope en storage normalized hasta que exista un feed real y un schema typed first-class; el writer falla explicitamente si recibe ese tipo.
   - Cada dataset normalized `v2` persiste `normalizer_version` como columna de datos y como metadata de Parquet.
   - Helpers de layout:
     - `normalized_partition_path(...)`
@@ -212,7 +213,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - si el feed es `kline`, intenta resync con snapshot compatible del mismo stream;
   - si el feed es `trade`, no rellena el hueco con barras y deja el gap fuerte como `gap_irreparable`.
 - Si el source usado es `HandoffSource`, `collect_events` le inyecta el checkpoint local cargado antes de arrancar live para que el bootstrap historico no reprocesse borde ya cubierto.
-- `Source` y `EventSink` aceptan eventos tipados (`TradeEvent`, `BarEvent`, `BookEvent`) o `MarketEvent` legacy; el handler live ya no convierte a `MarketEvent` en el hot path y devuelve `list[IngestionEvent]`.
+- `Source` y `EventSink` aceptan eventos tipados o `MarketEvent` legacy como interfaz de compatibilidad; el surface soportado publicamente hoy es `TradeEvent` + `BarEvent`. `BookEvent` no entra en el runtime soportado y el handler live ya no convierte a `MarketEvent` en el hot path.
 - Si el path live es el real (sin `source`/`sink` custom), `collect_events` carga `ingestion-checkpoint.json` al arrancar y lo reescribe tras un cierre limpio del sink.
 - `BinanceSource` valida payloads raw antes de normalizar y valida el evento resultante tras normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.
 
@@ -319,11 +320,11 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - en el handler previo a sink, para no persistirlos aunque entren por una ruta no filtrada.
 - **Backfill opt-in**: `--dedup` permite inspeccionar lotes con duplicados o sanearlos explicitamente segun el caso operativo.
 - **Parquet dedup opcional**: sigue siendo una barrera final sobre particiones existentes, no el mecanismo principal de deduplicacion.
-- **Persistencia normalized v2 por tipo**: trades, bars y books ya no comparten particion. El layout actual es:
+- **Persistencia normalized v2 por tipo**: trades y bars ya no comparten particion. El layout actual es:
   - `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
   - `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
-  - `<data_dir>/normalized/books/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
   - Cada `data.parquet` `v2` incluye `schema_version=v2` y `normalizer_version=v1` en metadata, ademas de una columna `normalizer_version` para inspeccion directa del dataset.
+  - `book` queda explicitamente fuera de scope hasta que exista feed real + schema typed dedicado; no comparte storage con `trades`/`bars`.
 - **Persistencia atomica por particion**: cada `data.parquet` se reconstruye en un temporal y solo se publica con `replace` cuando la escritura completa termina bien.
 - **Batching de IO en live**: el handler agrupa eventos antes de escribirlos para reducir llamadas al writer; el flush final fuerza la persistencia del lote incompleto.
 - **Backpressure explicito**: el runner ya no usa un pseudo-buffer binario; usa una cola bounded y aplica una politica visible cuando la cola se llena.
