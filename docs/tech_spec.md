@@ -2,6 +2,9 @@
 
 ## Componentes principales
 - **Ingestion**: normaliza `IngestionEvent` tipado desde WS/REST, escribe normalized Parquet v2 en modo live y provee fixtures dry.
+- **Servicio de ingestion**:
+  - `app.ingestion.service.run_ingestion_service(...)` ejecuta solo captura/validacion/dedup/persistencia de market data
+  - `app.main.run_trading_cycle(...)` consume eventos ya ingeridos y ejecuta el resto del pipeline cuantitativo
 - **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).

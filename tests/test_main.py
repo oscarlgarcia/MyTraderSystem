@@ -6,6 +6,7 @@ import pytest
 from app import main
 from app.common.dto import MarketEvent
 from app.config import load_config
+from app.ingestion.service import run_ingestion_service
 from app.observability.logger import get_logger
 from app.ingestion import pipeline
 
@@ -89,6 +90,62 @@ def test_features_after_ingest_runs_pipeline(monkeypatch, caplog):
         compute_features_after_ingest=True,
     )
     assert any("feature pipeline done" in rec.message for rec in caplog.records)
+
+
+def test_run_ingestion_service_executes_without_trading_stages(monkeypatch):
+    cfg = load_config("dev")
+    logger = get_logger(level="INFO")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    expected_events = [
+        MarketEvent(
+            symbol="BTCUSDT",
+            event_ts=base,
+            price=100.0,
+            size=1.0,
+            source="trade",
+        )
+    ]
+
+    monkeypatch.setattr("app.ingestion.service.collect_events", lambda **kwargs: expected_events)
+    monkeypatch.setattr(main, "run_feature_pipeline", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("features should not run")))
+    monkeypatch.setattr(main, "generate_signals", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("strategy should not run")))
+
+    events = run_ingestion_service(cfg=cfg, logger=logger, mode="dry", max_events=1)
+
+    assert events == expected_events
+
+
+def test_run_cycle_composes_ingestion_and_trading_cycles(monkeypatch):
+    cfg = load_config("dev")
+    logger = get_logger(level="INFO")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [
+        MarketEvent(
+            symbol="BTCUSDT",
+            event_ts=base,
+            price=100.0,
+            size=1.0,
+            source="trade",
+        )
+    ]
+    called = {}
+
+    def fake_ingestion(**kwargs):
+        called["ingestion"] = kwargs["mode"]
+        return events
+
+    def fake_trading(input_events, **kwargs):
+        called["trading"] = list(input_events)
+        return {"events": len(input_events), "features": 0, "signals": 0, "orders": 0, "fills": 0, "positions": {}, "cash": 0.0}
+
+    monkeypatch.setattr(main, "run_ingestion_service", fake_ingestion)
+    monkeypatch.setattr(main, "run_trading_cycle", fake_trading)
+
+    metrics = main.run_cycle(cfg=cfg, logger=logger, mode="dry", max_events=1)
+
+    assert called["ingestion"] == "dry"
+    assert called["trading"] == events
+    assert metrics["events"] == 1
 
 
 def test_fast_path_derives_runtime_flags():

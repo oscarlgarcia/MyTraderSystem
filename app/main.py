@@ -14,10 +14,10 @@ from uuid import uuid4
 from app import common, execution, features, ingestion, observability, ops, portfolio, risk, strategy  # noqa: F401
 from app.common.dto import TraceContext
 from app.config import AppConfig, DEFAULT_INGEST_STREAM_TYPES, load_config, parse_args
+from app.ingestion.service import run_ingestion_service
 from app.marketdata.support_matrix import validate_live_feed_support
 from app.marketdata.models import IngestionEvent
 from app.observability.logger import get_logger, set_trace_id
-from app.ingestion.pipeline import collect_events
 from app.ingestion.storage import validate_output_path
 from app.features.pipeline import run_feature_pipeline
 from app.features.engine import FeatureEngine
@@ -48,6 +48,51 @@ def _price_map_from_events(events: List[IngestionEvent]) -> Dict[str, float]:
     for ev in events:
         price_by_symbol[ev.symbol] = ev.price
     return price_by_symbol
+
+
+def run_trading_cycle(
+    events: List[IngestionEvent],
+    *,
+    logger,
+    recorder: Optional[List[str]] = None,
+    trace_steps: bool = False,
+):
+    _trace(logger, trace_steps, "features", "start")
+    feature_engine = FeatureEngine()
+    fvs = run_feature_pipeline(events, engine=feature_engine)
+    _trace(logger, trace_steps, "features", "done", {"count": len(fvs)})
+    _mark(recorder, "features")
+
+    _trace(logger, trace_steps, "strategy", "start")
+    signals = generate_signals(fvs)
+    _trace(logger, trace_steps, "strategy", "done", {"count": len(signals)})
+    _mark(recorder, "strategy")
+
+    price_by_symbol = _price_map_from_events(events)
+    _trace(logger, trace_steps, "risk", "start")
+    order_intents = apply_risk(signals, price_by_symbol=price_by_symbol)
+    _trace(logger, trace_steps, "risk", "done", {"count": len(order_intents)})
+    _mark(recorder, "risk")
+
+    _trace(logger, trace_steps, "execution", "start")
+    reports = paper_execute(order_intents, price_by_symbol=price_by_symbol)
+    _trace(logger, trace_steps, "execution", "done", {"count": len(reports)})
+    _mark(recorder, "execution")
+
+    _trace(logger, trace_steps, "portfolio", "start")
+    portfolio_state = update_portfolio(reports)
+    _trace(logger, trace_steps, "portfolio", "done", {"positions": portfolio_state.positions})
+    _mark(recorder, "portfolio")
+
+    return {
+        "events": len(events),
+        "features": len(fvs),
+        "signals": len(signals),
+        "orders": len(order_intents),
+        "fills": len([r for r in reports if r.status == "filled"]),
+        "positions": portfolio_state.positions,
+        "cash": portfolio_state.cash,
+    }
 
 
 def _resolve_runtime_options(args) -> Dict[str, object]:
@@ -158,79 +203,44 @@ def run_cycle(
     cfg = cfg or load_config()
     logger = logger or get_logger(level=cfg.log_level)
 
-    # Ingestión
     _trace(logger, trace_steps, "ingestion", "start")
-    events = collect_events(
-        mode=mode,
+    events = run_ingestion_service(
         cfg=cfg,
+        logger=logger,
+        mode=mode,
         max_events=max_events,
         duration_s=duration_s,
-        logger=logger,
-        compute_features_after=compute_features_after_ingest,
-        max_buffer=ingest_max_buffer,
-        dedup_enabled=ingest_dedup,
-        batch_size=ingest_batch_size,
+        compute_features_after_ingest=compute_features_after_ingest,
+        ingest_max_buffer=ingest_max_buffer,
+        ingest_dedup=ingest_dedup,
+        ingest_batch_size=ingest_batch_size,
         snapshot_enabled=snapshot_enabled,
-        summary_logging=live_summary_logging,
-        lag_warn_threshold=ingest_lag_warn,
-        buffer_warn_threshold=ingest_buffer_warn,
+        live_summary_logging=live_summary_logging,
+        ingest_lag_warn=ingest_lag_warn,
+        ingest_buffer_warn=ingest_buffer_warn,
+        ingest_backpressure_policy=ingest_backpressure_policy,
+        ingest_temporal_policy=ingest_temporal_policy,
+        ingest_pipeline_version=ingest_pipeline_version,
+        ingest_shadow_mode=ingest_shadow_mode,
+        ingest_shadow_block_on_diff=ingest_shadow_block_on_diff,
+        ingest_stream_types=ingest_stream_types,
+        production_mode=production_mode,
         allow_live_fallback=allow_live_fallback,
         error_policy=error_policy,
-        backpressure_policy=ingest_backpressure_policy,
-        temporal_policy=ingest_temporal_policy,
-        pipeline_version=ingest_pipeline_version,
-        shadow_mode=ingest_shadow_mode,
-        shadow_block_on_diff=ingest_shadow_block_on_diff,
-        stream_types=ingest_stream_types,
-        production_mode=production_mode,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
 
-    # Features
-    _trace(logger, trace_steps, "features", "start")
-    feature_engine = FeatureEngine()
-    fvs = run_feature_pipeline(events, engine=feature_engine)
-    _trace(logger, trace_steps, "features", "done", {"count": len(fvs)})
-    _mark(recorder, "features")
-
-    # Estrategia
-    _trace(logger, trace_steps, "strategy", "start")
-    signals = generate_signals(fvs)
-    _trace(logger, trace_steps, "strategy", "done", {"count": len(signals)})
-    _mark(recorder, "strategy")
-
-    # Riesgo
-    price_by_symbol = _price_map_from_events(events)
-    _trace(logger, trace_steps, "risk", "start")
-    order_intents = apply_risk(signals, price_by_symbol=price_by_symbol)
-    _trace(logger, trace_steps, "risk", "done", {"count": len(order_intents)})
-    _mark(recorder, "risk")
-
-    # Ejecución (paper)
-    _trace(logger, trace_steps, "execution", "start")
-    reports = paper_execute(order_intents, price_by_symbol=price_by_symbol)
-    _trace(logger, trace_steps, "execution", "done", {"count": len(reports)})
-    _mark(recorder, "execution")
-
-    # Portfolio
-    _trace(logger, trace_steps, "portfolio", "start")
-    portfolio_state = update_portfolio(reports)
-    _trace(logger, trace_steps, "portfolio", "done", {"positions": portfolio_state.positions})
-    _mark(recorder, "portfolio")
-
-    return {
-        "events": len(events),
-        "features": len(fvs),
-        "signals": len(signals),
-        "orders": len(order_intents),
-        "fills": len([r for r in reports if r.status == "filled"]),
-        "positions": portfolio_state.positions,
-        "cash": portfolio_state.cash,
-    }
+    return run_trading_cycle(
+        events,
+        logger=logger,
+        recorder=recorder,
+        trace_steps=trace_steps,
+    )
 
 
 def run() -> int:
+
     """Bootstrap principal; devuelve 0 en éxito."""
     args = parse_args()
     config = load_config(args.env)

@@ -180,6 +180,8 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - Se usa para reanudar live desde el ultimo estado local conocido sin pretender exactly-once.
 - `ingestion.pipeline`
   - `collect_events`: orquesta dry/live, ejecuta un `Source`, consume un `EventSink`, aplica una segunda barrera de deduplicacion antes de persistir, soporta batching local de IO, carga/guarda checkpoints live y emite un resumen agregado final de la ejecucion.
+- `ingestion.service`
+  - `run_ingestion_service(...)`: entrypoint aislado para ingestion. Ejecuta `collect_events(...)` sin invocar feature engineering, strategy, risk ni execution.
 - `ingestion.backfill`
   - Descarga klines historicos, normaliza filas a `BarEvent`, escribe raw append-only reutilizando `JsonlRawSink`, ordena y opcionalmente deduplica con `--dedup` antes del sink normalized.
 - `ingestion.storage`
