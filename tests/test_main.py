@@ -72,26 +72,6 @@ def test_trace_steps_false_emits_no_phase(monkeypatch):
     assert '"phase": "ingestion"' not in out
 
 
-def test_features_after_ingest_runs_pipeline(monkeypatch, caplog):
-    import io
-
-    caplog.set_level("INFO")
-    buffer = io.StringIO()
-    logger = get_logger(stream=buffer, level="INFO")
-    cfg = load_config("dev")
-
-    main.run_cycle(
-        cfg=cfg,
-        logger=logger,
-        mode="dry",
-        max_events=2,
-        recorder=[],
-        trace_steps=False,
-        compute_features_after_ingest=True,
-    )
-    assert any("feature pipeline done" in rec.message for rec in caplog.records)
-
-
 def test_run_ingestion_service_executes_without_trading_stages(monkeypatch):
     cfg = load_config("dev")
     logger = get_logger(level="INFO")
@@ -153,7 +133,6 @@ def test_fast_path_derives_runtime_flags():
         fast_path=True,
         production_mode=True,
         trace_steps=True,
-        features_after_ingest=False,
         ingest_max_buffer=10_000,
         ingest_dedup=True,
         ingest_batch_size=4,
@@ -188,6 +167,26 @@ def test_fast_path_derives_runtime_flags():
     assert runtime["ingest_stream_types"] == ("kline",)
     assert runtime["allow_live_fallback"] is True
     assert runtime["error_policy"] == "degraded"
+
+
+def test_run_cycle_does_not_pass_removed_feature_flag_to_ingestion(monkeypatch):
+    cfg = load_config("dev")
+    logger = get_logger(level="INFO")
+    called = {}
+
+    def fake_ingestion(**kwargs):
+        called["kwargs"] = kwargs
+        return []
+
+    def fake_trading(events, **kwargs):
+        return {"events": len(events), "features": 0, "signals": 0, "orders": 0, "fills": 0, "positions": {}, "cash": 0.0}
+
+    monkeypatch.setattr(main, "run_ingestion_service", fake_ingestion)
+    monkeypatch.setattr(main, "run_trading_cycle", fake_trading)
+
+    main.run_cycle(cfg=cfg, logger=logger, mode="dry", max_events=1)
+
+    assert "compute_features_after_ingest" not in called["kwargs"]
 
 
 def test_production_mode_rejects_unsafe_fallback(tmp_path):

@@ -53,7 +53,6 @@ def main() -> int:
         max_events=args.max_events,
         duration_s=args.duration,
         logger=logger,
-        compute_features_after=False,  # los calculamos abajo para mostrar resumen
     )
     features = run_feature_pipeline(events, window=5)
 

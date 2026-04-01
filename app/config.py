@@ -144,11 +144,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Emite trazas start/done por fase del pipeline para debugging visual",
     )
     parser.add_argument(
-        "--features-after-ingest",
-        action="store_true",
-        help="Ejecuta feature pipeline tras ingest/backfill (solo logging, no encadena a strategy)",
-    )
-    parser.add_argument(
         "--ingest-max-buffer",
         type=int,
         default=10_000,

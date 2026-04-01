@@ -6,7 +6,7 @@ def test_defaults_flags():
     assert args.mode == "dry"
     assert args.production_mode is False
     assert args.trace_steps is False
-    assert args.features_after_ingest is False
+    assert not hasattr(args, "features_after_ingest")
     assert args.ingest_max_buffer == 10_000
     assert args.ingest_batch_size == 1
     assert args.ingest_lag_warn is None
@@ -17,13 +17,6 @@ def test_defaults_flags():
     assert args.allow_live_fallback is False
     assert args.error_policy is None
     assert args.ingest_stream_types == ("kline",)
-
-
-def test_features_after_ingest_flag():
-    args = parse_args(["--features-after-ingest"])
-    assert args.features_after_ingest is True
-
-
 def test_trace_steps_flag():
     args = parse_args(["--trace-steps"])
     assert args.trace_steps is True

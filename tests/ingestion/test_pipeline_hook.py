@@ -52,37 +52,31 @@ def test_dry_collect_events_returns_typed_trade_events_by_default():
     assert all(isinstance(event, TradeEvent) for event in out)
 
 
-def test_compute_features_after_flag_off(monkeypatch):
+def test_collect_events_does_not_expose_feature_pipeline_flag(monkeypatch):
     cfg = mock.Mock(env="dev", ws_base="", rest_base="", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     events = [_ev(0, 100)]
     monkeypatch.setattr(pipeline, "_synthetic_events", lambda n: events)
-    feats_mock = mock.Mock(return_value=[])
-    monkeypatch.setattr(pipeline, "run_feature_pipeline", feats_mock)
 
-    out = pipeline.collect_events(mode="dry", cfg=cfg, max_events=1, logger=mock.Mock(), compute_features_after=False)
+    out = pipeline.collect_events(mode="dry", cfg=cfg, max_events=1, logger=mock.Mock())
     assert out == events
-    feats_mock.assert_not_called()
+    assert not hasattr(pipeline, "run_feature_pipeline")
 
 
-def test_compute_features_after_flag_on(monkeypatch, caplog):
-    caplog.set_level("INFO")
+def test_collect_events_rejects_removed_feature_pipeline_flag(monkeypatch):
     cfg = mock.Mock(env="dev", ws_base="", rest_base="", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     events = [_ev(0, 100), _ev(60, 101)]
     monkeypatch.setattr(pipeline, "_synthetic_events", lambda n: events)
-    feats_mock = mock.Mock(return_value=[1, 2])
-    monkeypatch.setattr(pipeline, "run_feature_pipeline", feats_mock)
 
-    out = pipeline.collect_events(
-        mode="dry",
-        cfg=cfg,
-        max_events=2,
-        logger=mock.Mock(),
-        compute_features_after=True,
-        max_buffer=5,
-        dedup_enabled=True,
-    )
-    assert out == events
-    feats_mock.assert_called_once()
+    with pytest.raises(TypeError, match="compute_features_after"):
+        pipeline.collect_events(
+            mode="dry",
+            cfg=cfg,
+            max_events=2,
+            logger=mock.Mock(),
+            compute_features_after=True,
+            max_buffer=5,
+            dedup_enabled=True,
+        )
 
 
 def test_live_handler_dedups_before_writer_add():

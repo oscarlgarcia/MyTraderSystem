@@ -15,7 +15,6 @@ flowchart LR
     I --> J[Portfolio]
     classDef trace fill:#e0f7fa,stroke:#26a69a;
     T[Trace optional<br/>--trace-steps<br/>phase=start/done]:::trace
-    P[run_feature_pipeline<br/>--features-after-ingest]:::trace
     A --> T
     B --> T
     C --> T
@@ -26,7 +25,6 @@ flowchart LR
     H --> T
     I --> T
     J --> T
-    A --> P
 ```
 
 - **FeatureState** (app/features/store.py): ventanas por símbolo, log-return seguro, agregadores registrados (sma/ema/max/min) y transformers opcionales; actualiza estado evento a evento.

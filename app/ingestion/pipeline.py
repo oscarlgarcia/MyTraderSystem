@@ -12,7 +12,6 @@ from typing import List, Optional
 
 from app.common.dto import normalize_symbol
 from app.config import AppConfig, DEFAULT_INGEST_STREAM_TYPES
-from app.features.pipeline import run_feature_pipeline
 from app.ingestion.client import _key
 from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
 from app.ingestion.dedup import Deduplicator
@@ -439,7 +438,6 @@ def collect_events(
     max_events: int = 50,
     duration_s: Optional[float] = None,
     logger: Optional[logging.Logger] = None,
-    compute_features_after: bool = False,
     max_buffer: int = 10_000,
     dedup_enabled: bool = True,
     batch_size: int = 1,
@@ -549,8 +547,6 @@ def collect_events(
                 invalid_timestamp_total=invalid_timestamp_total,
                 stream_metrics=stream_metrics,
             )
-        if compute_features_after:
-            run_feature_pipeline(events_out)
         return events_out
 
     source_impl = source or BinanceSource(cfg, stream_types=stream_types)
@@ -840,8 +836,6 @@ def collect_events(
                 stream_metrics=stream_metrics,
             )
         events_out = list(handler.events)
-        if compute_features_after:
-            run_feature_pipeline(events_out)
         return events_out
     except ShadowPromotionError:
         raise
@@ -1152,6 +1146,4 @@ def collect_events(
                 invalid_timestamp_total=invalid_timestamp_total,
                 stream_metrics=stream_metrics,
             )
-        if compute_features_after:
-            run_feature_pipeline(events_out)
         return events_out

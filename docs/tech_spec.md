@@ -56,7 +56,7 @@
   - `FeatureVector -> Signal -> OrderIntent -> ExecutionReport -> PortfolioState`.
 
 ## Interfaces relevantes
-- `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, compute_features_after, max_buffer, dedup_enabled) -> list[IngestionEvent]`
+- `app.ingestion.pipeline.collect_events(mode, cfg, max_events, duration_s, logger, max_buffer, dedup_enabled) -> list[IngestionEvent]`
   - `dedup_enabled=True` activa deduplicacion live en `ResilientRunner` y una segunda barrera defensiva antes de `writer.add`.
   - `batch_size` controla el lote local antes de escribir en live; el handler hace flush del lote incompleto al cerrar.
   - `error_policy` define el comportamiento de fallo de live:

@@ -18,7 +18,6 @@ make backfill-dev                 # backfill en memoria (ejemplo 1h BTCUSDT)
 python -m app --env dev --mode dry                          # pipeline determinista (default)
 python -m app --env dev --mode live --duration 30 --max-events 200  # pipeline live acotado WS/REST+Parquet
 python -m app --env dev --mode dry --trace-steps                   # pipeline con trazas start/done por fase
-python -m app --env dev --mode live --features-after-ingest        # ejecuta feature pipeline tras ingesta (solo log)
 python -m app --env dev --mode live --ingest-max-buffer 20000      # ajusta buffer del runner (escalabilidad)
 python -m app --env dev --mode live --ingest-batch-size 50         # agrupa escrituras al writer en lotes locales
 python -m app --env dev --mode live --ingest-backpressure-policy drop_newest  # politica de saturacion: pause/drop_oldest/drop_newest/fail
@@ -364,7 +363,6 @@ Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exact
 
 ### Feature Store inicial
 - Cálculos: `price`, `ret_1` (log), `sma_N` (ventana configurable).
-- Uso CLI: `python -m app --env dev --features-after-ingest` (solo logging de features tras ingesta).
 - Uso directo en código (batch): `from app.features.pipeline import run_feature_pipeline`; pasar lista de `MarketEvent`.
 - Uso incremental con caché: 
   ```python
