@@ -210,6 +210,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - El raw valido se escribe inmediatamente despues de validar y normalizar el mensaje, antes de hacer `yield` al pipeline. Si el sink normalized falla despues, el raw ya queda preservado para diagnostico/replay.
 - `ReplaySource` se apoya en raw landing; no lee normalized Parquet. Esto permite re-ejecutar normalizacion de forma determinista para backtesting/debugging sin depender del layout final del sink.
 - `normalizer_version` queda fijada explicitamente tanto en replay como en normalized. Si mañana cambia la normalizacion, el contrato exige introducir una nueva version y no sobreescribir silenciosamente el significado de los datasets ya escritos.
+- La suite cuantitativa dedicada queda separada por area:
+  - `tests/marketdata/replay/test_replay_guarantees.py`: orden exacto raw -> replay y paridad raw/normalized
+  - `tests/marketdata/temporal/test_temporal_guarantees.py`: multi-simbolo intercalado y secuencia rota
+  - `tests/marketdata/dedup/test_dedup_guarantees.py`: identidad nativa frente a colisiones heuristicas
 - `ResilientRunner` usa `client._key` para filtrar duplicados del stream.
 - `ResilientRunner`, el handler live, `backfill.run` y `ParquetWriter` usan ahora la misma semantica de identidad via `ingestion.dedup`.
 - `ResilientRunner` exporta el estado minimo necesario para checkpoint (`last_event_ts` + claves dedup recientes).
