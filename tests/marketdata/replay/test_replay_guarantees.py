@@ -204,6 +204,67 @@ def test_replay_prefers_ingestion_seq_across_date_partitions_with_same_receive_t
     assert [entry.path.parent.name for entry in entries] == ["date=2024-01-02", "date=2024-01-01"]
 
 
+def test_replay_preserves_multi_run_append_only_order_with_same_partition_and_receive_ts(tmp_path: Path):
+    first_sink = JsonlRawSink(tmp_path / "raw", env="test", run_id="20240101T000000000001Z-run01")
+    second_sink = JsonlRawSink(tmp_path / "raw", env="test", run_id="20240101T000000000002Z-run02")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    shared_receive_ts = base + timedelta(seconds=10)
+
+    _write_raw_trade(
+        first_sink,
+        symbol="BTCUSDT",
+        event_ts=base,
+        receive_ts=shared_receive_ts,
+        trade_id=401,
+        price="100",
+    )
+    _write_raw_trade(
+        first_sink,
+        symbol="BTCUSDT",
+        event_ts=base + timedelta(seconds=1),
+        receive_ts=shared_receive_ts,
+        trade_id=402,
+        price="101",
+    )
+    _write_raw_trade(
+        second_sink,
+        symbol="BTCUSDT",
+        event_ts=base,
+        receive_ts=shared_receive_ts,
+        trade_id=501,
+        price="102",
+    )
+    _write_raw_trade(
+        second_sink,
+        symbol="BTCUSDT",
+        event_ts=base + timedelta(seconds=1),
+        receive_ts=shared_receive_ts,
+        trade_id=502,
+        price="103",
+    )
+
+    entries = read_raw_entries(tmp_path / "raw", "test", symbol="BTCUSDT", stream_types=("trade",))
+    replayed = list(
+        ReplaySource(
+            base_dir=tmp_path / "raw",
+            env="test",
+            symbol="BTCUSDT",
+            stream_types=("trade",),
+            normalizer_version=NORMALIZER_VERSION,
+        ).stream()
+    )
+
+    assert [(entry.record.run_id, entry.record.ingestion_seq) for entry in entries] == [
+        ("20240101T000000000001Z-run01", 1),
+        ("20240101T000000000001Z-run01", 2),
+        ("20240101T000000000002Z-run02", 1),
+        ("20240101T000000000002Z-run02", 2),
+    ]
+    assert all(entry.record.receive_ts == shared_receive_ts for entry in entries)
+    assert all(entry.path.parent.name == "date=2024-01-01" for entry in entries)
+    assert [event.trade_id for event in replayed] == ["401", "402", "501", "502"]
+
+
 def test_raw_and_normalized_parity_holds_for_replayed_trade_dataset(tmp_path: Path):
     sink = JsonlRawSink(tmp_path / "raw", env="test")
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
