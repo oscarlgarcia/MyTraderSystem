@@ -181,6 +181,9 @@ def test_normalize_trade_typed_sets_process_ts_when_not_provided():
 
     assert ev.exchange_ts.tzinfo is not None
     assert ev.process_ts is not None
+    assert ev.metadata["base_asset"] == "BTC"
+    assert ev.metadata["quote_asset"] == "USDT"
+    assert ev.metadata["contract_type"] == "spot"
 
 
 def test_normalize_kline_typed_sets_receive_ts_when_provided():
@@ -202,3 +205,12 @@ def test_normalize_kline_typed_sets_receive_ts_when_provided():
     ev = normalize_kline_typed(payload, receive_ts=receive_ts)
 
     assert ev.receive_ts == receive_ts
+    assert ev.metadata["base_asset"] == "BTC"
+    assert ev.metadata["quote_asset"] == "USDT"
+
+
+def test_normalize_trade_typed_rejects_unknown_instrument_symbol():
+    payload = {"s": "BTCUNKNOWN", "E": 1710000000000, "p": "100", "q": "1", "t": 1}
+
+    with pytest.raises(KeyError, match="unsupported instrument"):
+        normalize_trade_typed(payload)

@@ -5,6 +5,11 @@
 - **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
+- **Catalogo minimo de instrumentos**:
+  - `app.marketdata.instruments.Instrument`
+  - `app.marketdata.instruments.InstrumentCatalog`
+  - resolucion por `(venue, symbol)` para `base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`
+  - los normalizadores typed consultan este catalogo y fallan si el simbolo no esta soportado
 - **Validacion de payloads**:
   - `app.ingestion.client.validate_trade_payload`
   - `app.ingestion.client.validate_kline_payload`

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 
+from app.marketdata.instruments import ensure_default_instruments
 from app.marketdata.support_matrix import normalize_feed_types
 
 DEFAULT_ENV = "dev"
@@ -92,6 +93,7 @@ def load_config(env: str | None = None) -> AppConfig:
     symbols = [str(symbol).upper() for symbol in raw.get("symbols", [])]
     if not symbols:
         raise ValueError("symbols list cannot be empty")
+    ensure_default_instruments(symbols, venue="BINANCE")
 
     for endpoint_key in ("ws_base", "rest_base"):
         if not str(raw.get(endpoint_key, "")).startswith(("ws://", "wss://", "http://", "https://")):

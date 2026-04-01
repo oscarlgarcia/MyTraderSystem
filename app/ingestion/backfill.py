@@ -20,6 +20,7 @@ from app.config import load_config
 from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_market_events
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
+from app.marketdata.instruments import ensure_default_instruments
 from app.marketdata.models import BarEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
 from app.observability.logger import get_logger, set_trace_id
@@ -194,6 +195,7 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
     args = parse_args(argv)
     cfg = load_config(args.env)
     symbol = normalize_symbol(args.symbol)
+    ensure_default_instruments([symbol], venue="BINANCE")
     start_ms = to_ms(args.start)
     end_ms = to_ms(args.end)
     interval_ms = _interval_to_ms(args.interval)

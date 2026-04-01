@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.config import AppConfig, load_config, parse_args
+from app.marketdata.instruments import resolve_instrument
 
 
 def test_load_dev_config():
@@ -93,6 +94,22 @@ def test_symbols_required_and_upper(monkeypatch, tmp_path):
     )
     cfg = load_config("dev")
     assert cfg.symbols == ["ETHUSDT"]
+
+
+def test_load_config_registers_symbols_in_instrument_catalog(monkeypatch, tmp_path):
+    cfg_path = tmp_path / "config.dev.yaml"
+    cfg_path.write_text(
+        '{"env": "dev", "data_dir": "./data/dev", "log_level": "INFO", "ws_base": "wss://x", "rest_base": "https://x", "symbols": ["solusdt"]}',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    cfg = load_config("dev")
+
+    instrument = resolve_instrument("SOLUSDT", venue="BINANCE")
+    assert cfg.symbols == ["SOLUSDT"]
+    assert instrument.base_asset == "SOL"
+    assert instrument.quote_asset == "USDT"
 
 
 def test_parse_args_accepts_pytest_flags():

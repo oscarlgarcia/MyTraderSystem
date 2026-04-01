@@ -12,6 +12,7 @@ from typing import Iterable, List, Callable, Dict, Collection
 
 from app.common.dto import MarketEvent, normalize_symbol
 from app.ingestion.dedup import EventIdentity, identity_from_event
+from app.marketdata.instruments import resolve_instrument
 from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
 from app.marketdata.normalization import stamp_normalizer_version
 from app.marketdata.validators import (
@@ -44,6 +45,10 @@ def _kline_exchange_ts(payload: dict) -> datetime:
     return _ts_from_ms(int(payload["E"]))
 
 
+def _instrument_metadata(symbol: str, venue: str) -> dict[str, str]:
+    return resolve_instrument(symbol, venue=venue).as_metadata()
+
+
 def normalize_trade_typed(
     payload: dict,
     *,
@@ -59,7 +64,7 @@ def normalize_trade_typed(
         process_ts=_process_ts(process_ts),
         venue=venue,
         source_id=str(payload.get("t")) if payload.get("t") is not None else None,
-        metadata=stamp_normalizer_version({}),
+        metadata=stamp_normalizer_version(_instrument_metadata(str(payload["s"]), venue)),
         price=float(payload["p"]),
         size=float(payload["q"]),
         trade_id=str(payload.get("t")) if payload.get("t") is not None else None,
@@ -94,7 +99,7 @@ def normalize_kline_typed(
         process_ts=_process_ts(process_ts),
         venue=venue,
         source_id=str(k.get("t")) if k.get("t") is not None else None,
-        metadata=stamp_normalizer_version({}),
+        metadata=stamp_normalizer_version(_instrument_metadata(str(payload["s"]), venue)),
         open=float(k.get("o", k["c"])),
         high=float(k.get("h", k["c"])),
         low=float(k.get("l", k["c"])),

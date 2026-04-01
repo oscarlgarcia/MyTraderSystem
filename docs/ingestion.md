@@ -20,7 +20,18 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `legacy_market_event_to_bar`
     - `typed_event_to_legacy`
     - `ensure_legacy_market_event`
-- Mantiene compatibilidad transitoria con `app.common.dto.MarketEvent` en bordes explicitos de compatibilidad, pero `collect_events(...)` y el handler live ya no degradan el flujo principal a legacy.
+  - Mantiene compatibilidad transitoria con `app.common.dto.MarketEvent` en bordes explicitos de compatibilidad, pero `collect_events(...)` y el handler live ya no degradan el flujo principal a legacy.
+- `marketdata.instruments`
+  - Define `Instrument` e `InstrumentCatalog`.
+  - Resuelve metadata minima por `(venue, symbol)`:
+    - `base_asset`
+    - `quote_asset`
+    - `contract_type`
+    - `tick_size`
+    - `step_size`
+    - `price_precision`
+    - `size_precision`
+  - Los normalizadores consultan este catalogo; un simbolo no soportado falla rapido durante la normalizacion.
 - `marketdata.validators`
   - Centraliza validacion explicita por tipo:
     - `validate_trade_payload`, `validate_kline_payload`

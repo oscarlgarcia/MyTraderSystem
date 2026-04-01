@@ -17,6 +17,16 @@ from .models import (
 from .normalization import NORMALIZER_VERSION, SUPPORTED_NORMALIZER_VERSIONS, resolve_normalizer_version
 from .raw_sink import JsonlRawSink, NullRawSink, RawRecord, RawSink
 from .gaps import GapObservation, detect_gap
+from .instruments import (
+    DEFAULT_INSTRUMENT_CATALOG,
+    DEFAULT_INSTRUMENTS,
+    Instrument,
+    InstrumentCatalog,
+    ensure_default_instruments,
+    get_default_instrument_catalog,
+    infer_spot_assets,
+    resolve_instrument,
+)
 from .recovery import BarRecoveryPolicy, RecoveryPolicy, TradeRecoveryPolicy, recovery_policy_for_event
 from .support_matrix import (
     FEED_SUPPORT_MATRIX,
@@ -68,6 +78,14 @@ __all__ = [
     "JsonlRawSink",
     "GapObservation",
     "detect_gap",
+    "Instrument",
+    "InstrumentCatalog",
+    "DEFAULT_INSTRUMENTS",
+    "DEFAULT_INSTRUMENT_CATALOG",
+    "infer_spot_assets",
+    "get_default_instrument_catalog",
+    "ensure_default_instruments",
+    "resolve_instrument",
     "FeedSupport",
     "FEED_SUPPORT_MATRIX",
     "feed_support",

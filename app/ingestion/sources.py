@@ -30,6 +30,7 @@ from app.ingestion.client import (
 from app.ingestion.errors import IngestionError, classify_connector_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
+from app.marketdata.instruments import ensure_default_instruments
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
 from app.marketdata.validators import validate_ingestion_event, validate_kline_payload
 from app.observability.alerts import emit_operational_alert, should_emit_threshold_alert
@@ -231,6 +232,7 @@ class BinanceSource:
     stats: SourceStats = field(default_factory=SourceStats)
 
     def __post_init__(self) -> None:
+        ensure_default_instruments(self.cfg.symbols, venue="BINANCE")
         if isinstance(self.error_sink, NullErrorSink):
             self.error_sink = JsonlErrorSink(
                 Path(self.cfg.data_dir) / "errors" / "ingestion-dlq.jsonl"
