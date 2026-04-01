@@ -83,11 +83,11 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Permite fallback explicito a `dry` si la ingesta real falla. Sin este flag, live ahora falla fuerte por defecto.
 - `python -m app --env dev --mode live --ingest-stream-types kline`  
   Selecciona los feeds live a ingerir. La matriz actual de soporte es:
-  - `trade`: soporta live, pero no recovery exacto
+  - `trade`: live bloqueado hasta que exista recovery exacto
   - `kline`: soporta live, recovery exacto y handoff
   - `book`: no soporta live
-  En `--production-mode`, el arranque rechaza cualquier feed sin `supports_live`, `supports_exact_recovery` y `supports_handoff`.
-  Con la matriz actual, `--production-mode --mode live` obliga a usar `--ingest-stream-types kline`; `trade` queda bloqueado hasta que exista recovery exacto.
+  En cualquier `mode=live`, el arranque rechaza feeds sin `supports_live`. En `--production-mode`, ademas exige `supports_exact_recovery` y `supports_handoff`.
+  Con la matriz actual, `mode=live` queda efectivamente limitado a `--ingest-stream-types kline`; `trade` queda bloqueado hasta que exista recovery exacto.
 - Checkpoint live minimo: las ejecuciones reales de live persisten en `<data_dir>/<env>/state/ingestion-checkpoint.json`:
   - `last_event_ts` global maximo por compatibilidad
   - cursores/watermarks por stream `(venue, symbol, stream_type)`
@@ -219,7 +219,7 @@ print(url)
 ```
 - El builder define el fragmento de URL del stream.
 - El normalizer debe devolver `MarketEvent`.
-- Si no pasas `stream_types`, se conserva el comportamiento por defecto (`trade` + `kline`).
+- Si no pasas `stream_types`, el runtime live usa por defecto `kline`.
 
 Ejemplo de uso con contratos `Source/Sink` en tests:
 ```python

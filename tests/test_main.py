@@ -179,7 +179,32 @@ def test_production_mode_rejects_live_trade_without_exact_recovery(tmp_path):
         "ingest_stream_types": ("trade",),
     }
 
-    with pytest.raises(ValueError, match="trade does not support exact recovery"):
+    with pytest.raises(ValueError, match="trade does not support live ingestion"):
+        main._validate_operational_security(cfg, mode="live", runtime=runtime)
+
+
+def test_live_mode_rejects_trade_feed_until_exact_recovery_exists(tmp_path):
+    cfg = load_config("dev")
+    cfg = type(cfg)(
+        env=cfg.env,
+        data_dir=tmp_path.resolve(),
+        log_level=cfg.log_level,
+        ws_base=cfg.ws_base,
+        rest_base=cfg.rest_base,
+        symbols=cfg.symbols,
+    )
+    runtime = {
+        "production_mode": False,
+        "fast_path": False,
+        "allow_live_fallback": False,
+        "error_policy": None,
+        "ingest_dedup": True,
+        "summary_logging": True,
+        "ingest_backpressure_policy": "pause",
+        "ingest_stream_types": ("trade",),
+    }
+
+    with pytest.raises(ValueError, match="trade does not support live ingestion"):
         main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 

@@ -58,15 +58,16 @@ def test_live_collect_events_returns_processed_events_after_flush(monkeypatch):
         snapshot_enabled=False,
         source=StaticSource(events=events),
         sink=DummySink(),
+        stream_types=("kline",),
     )
 
     assert out == events
 
 
-def test_collect_events_rejects_production_live_trade_without_exact_recovery():
+def test_collect_events_rejects_live_trade_until_exact_recovery_exists():
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
 
-    with pytest.raises(ValueError, match="trade does not support exact recovery"):
+    with pytest.raises(ValueError, match="trade does not support live ingestion"):
         pipeline.collect_events(
             mode="live",
             cfg=cfg,
@@ -76,7 +77,6 @@ def test_collect_events_rejects_production_live_trade_without_exact_recovery():
             snapshot_enabled=False,
             sink=DummySink(),
             stream_types=("trade",),
-            production_mode=True,
         )
 
 
@@ -150,7 +150,15 @@ def test_live_failure_fail_fast_by_default(monkeypatch):
             return None
 
     with pytest.raises(IngestionError) as exc_info:
-        pipeline.collect_events(mode="live", cfg=cfg, duration_s=0, logger=mock.Mock(), source=BrokenSource(), sink=DummySink())
+        pipeline.collect_events(
+            mode="live",
+            cfg=cfg,
+            duration_s=0,
+            logger=mock.Mock(),
+            source=BrokenSource(),
+            sink=DummySink(),
+            stream_types=("kline",),
+        )
 
     assert exc_info.value.category == "source"
     synthetic.assert_not_called()
@@ -202,6 +210,7 @@ def test_summary_metrics_match_processed_events(monkeypatch):
         summary_logging=True,
         source=StaticSource(events=events),
         sink=DummySink(),
+        stream_types=("kline",),
     )
 
     assert out == [event_a, event_b]
@@ -232,6 +241,7 @@ def test_shadow_mode_writes_v1_and_v2_and_persists_comparison(tmp_path: Path):
         source=StaticSource(events=events),
         shadow_mode=True,
         pipeline_version="v2",
+        stream_types=("kline",),
     )
 
     assert out == events
@@ -279,4 +289,5 @@ def test_shadow_block_on_diff_raises_promotion_error(monkeypatch, tmp_path: Path
             shadow_mode=True,
             shadow_block_on_diff=True,
             pipeline_version="v2",
+            stream_types=("kline",),
         )

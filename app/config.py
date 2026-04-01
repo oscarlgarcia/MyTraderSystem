@@ -16,7 +16,7 @@ from typing import Any, Dict
 from app.marketdata.support_matrix import normalize_feed_types
 
 DEFAULT_ENV = "dev"
-DEFAULT_INGEST_STREAM_TYPES = ("trade", "kline")
+DEFAULT_INGEST_STREAM_TYPES = ("kline",)
 REQUIRED_KEYS = {"env", "data_dir", "log_level", "ws_base", "rest_base", "symbols"}
 ALLOWED_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
 SECRET_ENV_PREFIX = "APP_SECRET_"
@@ -202,7 +202,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--ingest-stream-types",
         type=_parse_stream_types,
         default=DEFAULT_INGEST_STREAM_TYPES,
-        help="Streams live a ingerir, separados por coma. Ejemplo: trade,kline o kline.",
+        help="Streams live a ingerir, separados por coma. Ejemplo: kline. `trade` queda bloqueado hasta tener recovery exacto.",
     )
     parser.add_argument(
         "--fast-path",

@@ -111,6 +111,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - El recovery ya no es generico:
     - `trade`: no acepta snapshots de barras como catch-up. Un gap fuerte sin recovery exacto se marca `gap_irreparable`.
     - `kline`: usa snapshots filtrados por `(venue, symbol, stream_type)` y elimina el borde duplicado via dedup del runner.
+  - `supports_live_recovery(...)` hace explicito que el alcance live actual es bars-only (`kline`).
 - `marketdata.support_matrix`
   - Define `FeedSupport` y `FEED_SUPPORT_MATRIX`.
   - La matriz actual declara por `feed_type`:
@@ -289,11 +290,12 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - **Metricas por politica de saturacion**: `buffer_overflows`, `buffer_pauses`, `buffer_drop_oldest`, `buffer_drop_newest`, `buffer_failures` y `backpressure_policy` quedan en logs de cierre y warnings de presion.
 - **Fail-fast por defecto en live**: si la ingesta real falla, `collect_events` propaga el error. El fallback a `dry` solo existe cuando se activa explicitamente `--allow-live-fallback`.
 - **Matriz de soporte live por feed**:
-  - `trade`: live permitido, pero no exact recovery
+  - `trade`: live no soportado hasta tener exact recovery
   - `kline`: live permitido con exact recovery y handoff
   - `book`: live no soportado
+  - cualquier `mode=live` rechaza feeds sin `supports_live`
   - `--production-mode` solo admite feeds que cumplan las tres garantias
-  - por tanto, hoy `trade` queda bloqueado explicitamente en produccion y solo `kline` puede arrancar en `mode=live` con `production_mode`
+  - por tanto, hoy solo `kline` puede arrancar en `mode=live`
 - **Politica explicita de error en live**:
   - `fail_fast`: propaga el error
   - `allow_fallback`: solo errores de `source` degradan a `dry`
@@ -376,7 +378,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - Registrar el builder del tipo nuevo con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")`.
 - Registrar el normalizer correspondiente con `register_normalizer("foo", normalize_foo)`.
 - Construir la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
-- Si no se pasa `stream_types`, el comportamiento por defecto sigue siendo Binance-compatible: `trade` + `kline`.
+- Si no se pasa `stream_types`, el runtime live usa por defecto `kline`.
 
 ## Operacion a altas tasas
 - `--ingest-batch-size`: baja llamadas a `writer.add`; usar `32-128` para un punto medio razonable.

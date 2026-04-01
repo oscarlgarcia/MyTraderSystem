@@ -16,7 +16,7 @@ def test_defaults_flags():
     assert args.ingest_dedup is True
     assert args.allow_live_fallback is False
     assert args.error_policy is None
-    assert args.ingest_stream_types == ("trade", "kline")
+    assert args.ingest_stream_types == ("kline",)
 
 
 def test_features_after_ingest_flag():

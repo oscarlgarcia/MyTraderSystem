@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.ingestion.resilience import ResilientRunner
+from app.marketdata.recovery import supports_live_recovery
 from app.marketdata.models import BarEvent, TradeEvent
 
 
@@ -36,6 +37,11 @@ def _trade(symbol: str, ts: datetime, trade_id: str) -> TradeEvent:
         size=1.0,
         trade_id=trade_id,
     )
+
+
+def test_live_recovery_scope_is_explicitly_bars_only():
+    assert supports_live_recovery("kline") is True
+    assert supports_live_recovery("trade") is False
 
 
 def test_exact_bar_recovery_fills_gap_without_edge_duplicates():

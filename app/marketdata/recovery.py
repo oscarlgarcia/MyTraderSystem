@@ -11,6 +11,8 @@ from app.common.dto import MarketEvent
 from app.marketdata.models import BarEvent, IngestionEvent
 from app.marketdata.temporal_state import TemporalPartitionKey
 
+LIVE_RECOVERY_SCOPE = ("kline",)
+
 
 class RecoveryPolicy(Protocol):
     name: str
@@ -82,3 +84,7 @@ def recovery_policy_for_event(event: IngestionEvent) -> RecoveryPolicy:
     if source == "kline":
         return BarRecoveryPolicy()
     return TradeRecoveryPolicy()
+
+
+def supports_live_recovery(feed_type: str) -> bool:
+    return str(feed_type).strip().lower() in LIVE_RECOVERY_SCOPE

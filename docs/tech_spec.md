@@ -90,6 +90,8 @@
 - `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
   - Para tipos nuevos, requiere `register_stream_builder(...)` y un `register_normalizer(...)` compatible con `parse_message`.
+- `app.config.DEFAULT_INGEST_STREAM_TYPES`
+  - el runtime live usa por defecto `("kline",)` para no ofrecer feeds sin recovery exacto
 - `app.ingestion.backfill.run(argv=None, sink=None) -> int`
   - `--dedup` activa deduplicacion previa a sink con la misma clave `_key`.
 - `app.features.store.compute_features(events, window=5, windows=None, aggregators=None, feature_set=None, cache=None) -> list[FeatureVector]`
@@ -202,8 +204,9 @@
   - no se aceptan secretos en `config.*.yaml`;
   - el logger no expone claves/valores sensibles en logs JSON;
   - produccion rechaza configuraciones con degradacion silenciosa o perdida implicita;
-  - produccion rechaza feeds live sin `supports_live`, `supports_exact_recovery` y `supports_handoff` segun `app.marketdata.support_matrix`;
-  - mientras `TradeRecoveryPolicy.can_recover(...) == False`, el arranque live en produccion rechaza `stream_types` que incluyan `trade`;
+  - cualquier `mode=live` rechaza feeds sin `supports_live` segun `app.marketdata.support_matrix`;
+  - produccion rechaza ademas feeds live sin `supports_exact_recovery` y `supports_handoff`;
+  - mientras no exista recovery exacto para trades, el alcance live queda limitado a `kline`;
   - la ruta de persistencia debe ser valida y escribible.
 
 ## Relaciones
@@ -273,6 +276,9 @@
   - `BarRecoveryPolicy`
     - usa `snapshot_fn` filtrado por `(venue, symbol, stream_type)`
     - el runner reaplica dedup para evitar duplicados de borde durante el resync
+  - `supports_live_recovery(...)`
+    - devuelve `True` solo para `kline`
+    - formaliza la decision arquitectonica actual: bars-only para live
 - Handoff historico -> live:
   - `app.marketdata.handoff.HandoffSource`
   - ejecuta bootstrap historico por ventana antes del stream live

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from app.common.dto import normalize_symbol
-from app.config import AppConfig
+from app.config import AppConfig, DEFAULT_INGEST_STREAM_TYPES
 from app.features.pipeline import run_feature_pipeline
 from app.ingestion.client import _key
 from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
@@ -441,7 +441,7 @@ def collect_events(
     pipeline_version: str = "v2",
     shadow_mode: bool = False,
     shadow_block_on_diff: bool = False,
-    stream_types: tuple[str, ...] = ("trade", "kline"),
+    stream_types: tuple[str, ...] = DEFAULT_INGEST_STREAM_TYPES,
     production_mode: bool = False,
 ) -> List[IngestionEvent]:
     logger = logger or logging.getLogger("ingest")

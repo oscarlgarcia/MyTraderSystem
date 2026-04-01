@@ -18,9 +18,9 @@ class FeedSupport:
 FEED_SUPPORT_MATRIX: dict[str, FeedSupport] = {
     "trade": FeedSupport(
         feed_type="trade",
-        supports_live=True,
+        supports_live=False,
         supports_exact_recovery=False,
-        supports_handoff=True,
+        supports_handoff=False,
     ),
     "kline": FeedSupport(
         feed_type="kline",
@@ -39,7 +39,7 @@ FEED_SUPPORT_MATRIX: dict[str, FeedSupport] = {
 
 def normalize_feed_types(stream_types: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
     if not stream_types:
-        return ("trade", "kline")
+        return ("kline",)
     normalized = tuple(str(stream_type).strip().lower() for stream_type in stream_types if str(stream_type).strip())
     if not normalized:
         raise ValueError("ingest stream types cannot be empty")
