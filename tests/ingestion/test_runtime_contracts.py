@@ -11,7 +11,7 @@ from app.common.dto import MarketEvent
 from app.ingestion import pipeline
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
-from app.ingestion.shadow import ShadowComparison, ShadowPromotionError, ShadowSnapshot
+from app.ingestion.shadow import ShadowComparison, ShadowPartitionSnapshot, ShadowPromotionError, ShadowSnapshot
 from app.ingestion.sources import StaticSource
 from app.ingestion.storage import legacy_partition_path, normalized_partition_path
 from app.observability.logger import get_logger
@@ -252,6 +252,9 @@ def test_shadow_mode_writes_v1_and_v2_and_persists_comparison(tmp_path: Path):
     payload = json.loads(comparison_path.read_text(encoding="utf-8").splitlines()[-1])
     assert payload["primary"]["pipeline_version"] == "v2"
     assert payload["shadow"]["pipeline_version"] == "v1"
+    assert payload["primary"]["row_count"] == 2
+    assert payload["shadow"]["row_count"] == 2
+    assert payload["diffs"]["row_checksum_match"] is True
     assert payload["significant"] is False
 
 
@@ -261,11 +264,52 @@ def test_shadow_block_on_diff_raises_promotion_error(monkeypatch, tmp_path: Path
     def fake_compare(primary, shadow):
         del primary, shadow
         return ShadowComparison(
-            primary=ShadowSnapshot("v2", 2, 0, 0, 0.1, 0.1),
-            shadow=ShadowSnapshot("v1", 1, 0, 0, 0.1, 0.1),
+            primary=ShadowSnapshot(
+                pipeline_version="v2",
+                row_count=2,
+                identity_count=2,
+                identity_checksum="a",
+                row_checksum="a",
+                partitions={
+                    "trades:BINANCE:BTCUSDT:2023-11-14": ShadowPartitionSnapshot(
+                        row_count=2,
+                        identity_count=2,
+                        identity_checksum="a",
+                        row_checksum="a",
+                        min_event_ts="2023-11-14T00:00:00+00:00",
+                        max_event_ts="2023-11-14T00:01:00+00:00",
+                    )
+                },
+                min_event_ts="2023-11-14T00:00:00+00:00",
+                max_event_ts="2023-11-14T00:01:00+00:00",
+                gaps_total=0,
+                processing_latency_seconds=0.1,
+                write_latency_seconds=0.1,
+            ),
+            shadow=ShadowSnapshot(
+                pipeline_version="v1",
+                row_count=1,
+                identity_count=1,
+                identity_checksum="b",
+                row_checksum="b",
+                partitions={},
+                min_event_ts="2023-11-14T00:00:00+00:00",
+                max_event_ts="2023-11-14T00:00:00+00:00",
+                gaps_total=0,
+                processing_latency_seconds=0.1,
+                write_latency_seconds=0.1,
+            ),
             diffs={
-                "events_persisted": 1.0,
-                "duplicates_total": 0.0,
+                "row_count": 1,
+                "identity_count": 1,
+                "identity_checksum_match": False,
+                "row_checksum_match": False,
+                "partition_row_count_diffs": {"trades:BINANCE:BTCUSDT:2023-11-14": 1},
+                "partition_identity_count_diffs": {"trades:BINANCE:BTCUSDT:2023-11-14": 1},
+                "partition_checksum_mismatches": ["trades:BINANCE:BTCUSDT:2023-11-14"],
+                "partition_timestamp_mismatches": [],
+                "min_event_ts_match": True,
+                "max_event_ts_match": False,
                 "gaps_total": 0.0,
                 "processing_latency_seconds": 0.0,
                 "write_latency_seconds": 0.0,

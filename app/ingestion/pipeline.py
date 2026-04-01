@@ -19,9 +19,9 @@ from app.ingestion.dedup import Deduplicator
 from app.ingestion.errors import ErrorPolicy, IngestionError, resolve_error_policy
 from app.ingestion.resilience import BackpressurePolicy, ResilientRunner, TemporalPolicy
 from app.ingestion.shadow import (
-    ShadowSnapshot,
     ShadowPromotionError,
     assert_shadow_promotable,
+    build_shadow_snapshot,
     compare_shadow_snapshots,
     persist_shadow_comparison,
 )
@@ -113,25 +113,6 @@ def _degraded_streams(stream_metrics: list[dict[str, object]]) -> list[str]:
         ):
             degraded.append(f"{metric['venue']}:{metric['symbol']}:{metric['stream_type']}")
     return degraded
-
-
-def _shadow_snapshot(
-    *,
-    pipeline_version: str,
-    events_persisted: int,
-    duplicates_total: int,
-    gaps_total: int,
-    processing_latency_seconds: float,
-    write_latency_seconds: float,
-) -> ShadowSnapshot:
-    return ShadowSnapshot(
-        pipeline_version=pipeline_version,
-        events_persisted=int(events_persisted),
-        duplicates_total=int(duplicates_total),
-        gaps_total=int(gaps_total),
-        processing_latency_seconds=float(processing_latency_seconds),
-        write_latency_seconds=float(write_latency_seconds),
-    )
 
 
 def _synthetic_events(max_events: int) -> List[IngestionEvent]:
@@ -639,23 +620,25 @@ def collect_events(
         events_dedup_skipped = _safe_int(runner.metrics.dedup_skipped + stats["duplicates_dropped"])
         shadow_comparison_payload = None
         if shadow_mode and shadow_sink_impl is not None:
+            primary_snapshot = build_shadow_snapshot(
+                Path(cfg.data_dir),
+                env=cfg.env,
+                pipeline_version=sink_pipeline_version,
+                gaps_total=runner.metrics.gaps_total,
+                processing_latency_seconds=runner.metrics.max_latency_seconds,
+                write_latency_seconds=write_latency_seconds,
+            )
+            shadow_snapshot = build_shadow_snapshot(
+                Path(cfg.data_dir),
+                env=cfg.env,
+                pipeline_version="v1" if sink_pipeline_version == "v2" else "v2",
+                gaps_total=runner.metrics.gaps_total,
+                processing_latency_seconds=runner.metrics.max_latency_seconds,
+                write_latency_seconds=_safe_float(getattr(shadow_sink_impl, "write_latency_seconds", 0.0)),
+            )
             shadow_comparison = compare_shadow_snapshots(
-                _shadow_snapshot(
-                    pipeline_version=sink_pipeline_version,
-                    events_persisted=events_persisted,
-                    duplicates_total=events_dedup_skipped,
-                    gaps_total=runner.metrics.gaps_total,
-                    processing_latency_seconds=runner.metrics.max_latency_seconds,
-                    write_latency_seconds=write_latency_seconds,
-                ),
-                _shadow_snapshot(
-                    pipeline_version="v1" if sink_pipeline_version == "v2" else "v2",
-                    events_persisted=_safe_int(getattr(shadow_sink_impl, "persisted_count", 0)),
-                    duplicates_total=events_dedup_skipped,
-                    gaps_total=runner.metrics.gaps_total,
-                    processing_latency_seconds=runner.metrics.max_latency_seconds,
-                    write_latency_seconds=_safe_float(getattr(shadow_sink_impl, "write_latency_seconds", 0.0)),
-                ),
+                primary_snapshot,
+                shadow_snapshot,
             )
             persist_shadow_comparison(Path(cfg.data_dir), env=cfg.env, comparison=shadow_comparison)
             assert_shadow_promotable(shadow_comparison, block_on_diff=shadow_block_on_diff)

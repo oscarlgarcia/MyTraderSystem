@@ -239,6 +239,15 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - `ingestion health` resume ademas:
   - `streams_observed`
   - `streams_degraded`
+- Shadow mode / promotion safety:
+  - el comparador shadow ya evalua paridad semantica de dataset entre `v1` y `v2`
+  - compara:
+    - `row_count`
+    - `identity set`
+    - `checksum` por particion
+    - `min/max event_ts`
+    - `gaps_total`
+  - diferencias de latencia se persisten, pero no bloquean por si solas
 - Mapping temporal actual para Binance:
   - trade WS -> `exchange_ts = E`
   - kline WS/REST -> `exchange_ts = k.T` si existe, si no `E`

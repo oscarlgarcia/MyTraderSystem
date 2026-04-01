@@ -407,15 +407,23 @@
 - Operativa:
   - el sink principal escribe en la version seleccionada
   - si shadow mode esta activo y se usa el sink Parquet por defecto, se escribe en paralelo en la version opuesta
-  - el comparador genera snapshots old-vs-new con:
-    - `events_persisted`
-    - `duplicates_total`
+  - el comparador genera snapshots old-vs-new con paridad semantica:
+    - `row_count`
+    - `identity set`
+    - `checksum` por particion
+    - `min/max event_ts`
     - `gaps_total`
     - `processing_latency_seconds`
     - `write_latency_seconds`
   - el reporte se persiste en `<data_dir>/shadow/env=<env>/comparisons.jsonl`
 - Criterio de bloqueo:
-  - `ShadowPromotionError` solo se activa si `shadow_block_on_diff=True` y hay diferencias relevantes en `events_persisted`, `duplicates_total` o `gaps_total`
+  - `ShadowPromotionError` se activa si `shadow_block_on_diff=True` y hay diferencias significativas de dataset:
+    - row count
+    - identity checksum
+    - row checksum
+    - timestamp envelope por particion o global
+    - `gaps_total`
+  - diferencias solo de latencia no bloquean
 - Rollback:
   - volver a `--ingest-pipeline-version v1`
   - mantener `shadow_mode` si se quiere seguir comparando contra `v2`

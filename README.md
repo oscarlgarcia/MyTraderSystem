@@ -300,6 +300,12 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
   - `--ingest-shadow-mode` activa doble escritura sobre la version contraria cuando se usa el sink Parquet por defecto.
   - `--ingest-shadow-block-on-diff` aborta si el comparador detecta diferencias relevantes entre primary y shadow.
   - Las diferencias se persisten en `<data_dir>/shadow/env=<env>/comparisons.jsonl`.
+  - El comparador shadow ya no se limita a conteos:
+    - `row_count`
+    - `identity set`
+    - `checksum` por particion
+    - `min/max event_ts`
+    - `gaps_total`
   - Estrategia de migracion recomendada:
     1. ejecutar `v2` con `shadow_mode` hacia `v1`
     2. revisar `comparisons.jsonl`
