@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -57,6 +58,76 @@ def test_replay_preserves_raw_order_from_append_only_file(tmp_path):
     out = list(source.stream())
 
     assert [event.trade_id for event in out] == ["1", "2", "3"]
+
+
+def test_replay_prioritizes_ingestion_seq_over_receive_ts(tmp_path):
+    sink = JsonlRawSink(tmp_path / "raw", env="test")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    _write_raw_trade(
+        sink,
+        symbol="BTCUSDT",
+        event_ts=base,
+        receive_ts=base + timedelta(seconds=5),
+        trade_id=1,
+        price="100",
+    )
+    _write_raw_trade(
+        sink,
+        symbol="BTCUSDT",
+        event_ts=base + timedelta(seconds=1),
+        receive_ts=base + timedelta(seconds=1),
+        trade_id=2,
+        price="101",
+    )
+
+    out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("trade",)).stream())
+
+    assert [event.trade_id for event in out] == ["1", "2"]
+
+
+def test_replay_keeps_legacy_fallback_order_without_ingestion_seq(tmp_path):
+    path = (
+        tmp_path
+        / "raw"
+        / "env=test"
+        / "venue=BINANCE"
+        / "stream_type=trade"
+        / "symbol=BTCUSDT"
+        / "date=2024-01-01"
+        / "events.jsonl"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    rows = [
+        {
+            "payload": _trade_envelope("BTCUSDT", int(base.timestamp() * 1000), 10, "100"),
+            "venue": "BINANCE",
+            "stream_type": "trade",
+            "symbol": "BTCUSDT",
+            "exchange_ts": base.isoformat(),
+            "receive_ts": (base + timedelta(seconds=2)).isoformat(),
+            "trace_id": "legacy-1",
+            "source_id": "10",
+        },
+        {
+            "payload": _trade_envelope("BTCUSDT", int((base + timedelta(seconds=1)).timestamp() * 1000), 11, "101"),
+            "venue": "BINANCE",
+            "stream_type": "trade",
+            "symbol": "BTCUSDT",
+            "exchange_ts": (base + timedelta(seconds=1)).isoformat(),
+            "receive_ts": (base + timedelta(seconds=1)).isoformat(),
+            "trace_id": "legacy-2",
+            "source_id": "11",
+        },
+    ]
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            handle.write(json.dumps(row))
+            handle.write("\n")
+
+    out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("trade",)).stream())
+
+    assert [event.trade_id for event in out] == ["11", "10"]
 
 
 def test_replay_can_filter_by_window_stream_and_symbol(tmp_path):

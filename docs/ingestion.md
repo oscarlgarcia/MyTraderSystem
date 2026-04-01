@@ -73,9 +73,8 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - `marketdata.replay`
   - Define `ReplaySource` compatible con el contrato `Source`.
   - Lee raw landing en orden determinista usando:
-    - `receive_ts`
-    - path de particion
-    - numero de linea
+    - `ingestion_seq` cuando existe
+    - fallback legacy: `receive_ts`, path de particion y numero de linea
   - Re-normaliza payloads usando la version de normalizador solicitada (`normalizer_version`).
   - La politica actual es global: toda normalizacion nueva usa `normalizer_version="v1"` hasta que se introduzca una migracion versionada.
   - Soporta filtros por:

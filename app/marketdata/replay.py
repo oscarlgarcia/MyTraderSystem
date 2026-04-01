@@ -31,6 +31,12 @@ class ReplayEntry:
     line_no: int
 
 
+def _replay_sort_key(entry: ReplayEntry) -> tuple:
+    if entry.record.ingestion_seq is not None:
+        return (0, int(entry.record.ingestion_seq), entry.record.receive_ts, str(entry.path), entry.line_no)
+    return (1, entry.record.receive_ts, str(entry.path), entry.line_no)
+
+
 def _parse_ts(value: str | datetime) -> datetime:
     if isinstance(value, datetime):
         ts = value
@@ -104,7 +110,7 @@ def read_raw_entries(
                 if end_ts is not None and record.exchange_ts > end_ts:
                     continue
                 entries.append(ReplayEntry(record=record, path=path, line_no=line_no))
-    entries.sort(key=lambda entry: (entry.record.receive_ts, str(entry.path), entry.line_no))
+    entries.sort(key=_replay_sort_key)
     return entries
 
 
