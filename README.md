@@ -109,6 +109,13 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `data/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
   - `data/normalized/books/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
   - cada dataset `v2` incluye `normalizer_version` como columna y como metadata de Parquet; la politica actual es global y fija `v1`
+  - `normalized/trades` ya persiste columnas first-class:
+    - `trade_id`
+    - `side`
+    - `exchange_ts`
+    - `receive_ts`
+    - `process_ts`
+    - `source_id`
 - `python -m app --env dev --mode live --fast-path`  
   Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos (sin resumen agregado de ingest), `trace_steps` off y batch size grande.
 - `python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0`  

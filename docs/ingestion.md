@@ -46,6 +46,16 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `receive_ts`
     - `trace_id`
     - `source_id`
+- `ingestion.storage`
+  - `ParquetWriter` mantiene compatibilidad v1/v2, pero para `normalized/trades` ya delega en `TradeParquetWriter`.
+  - `TradeParquetWriter` persiste columnas first-class para trades:
+    - `trade_id`
+    - `side`
+    - `exchange_ts`
+    - `receive_ts`
+    - `process_ts`
+    - `source_id`
+  - Se conserva `metadata` por compatibilidad, pero ya no es el unico lugar donde vive la identidad del trade.
 - `marketdata.replay`
   - Define `ReplaySource` compatible con el contrato `Source`.
   - Lee raw landing en orden determinista usando:

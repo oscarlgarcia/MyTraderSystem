@@ -446,3 +446,12 @@
   - `app.config.get_secret_env(name, required=False)`: punto de entrada explicito para secretos via `APP_SECRET_*`.
   - `app.ingestion.storage.validate_output_path(...)`: valida rutas y permisos de escritura.
   - `app.main._validate_operational_security(...)`: aplica politicas estrictas en `--production-mode`.
+- **Persistencia typed de trades**:
+  - `app.ingestion.storage.TradeParquetWriter` persiste `normalized/trades` con columnas first-class:
+    - `trade_id`
+    - `side`
+    - `exchange_ts`
+    - `receive_ts`
+    - `process_ts`
+    - `source_id`
+  - `metadata` se conserva como superficie de compatibilidad, no como unico contenedor de identidad.

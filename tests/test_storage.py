@@ -8,6 +8,7 @@ import pytest
 from app.common.dto import MarketEvent
 from app.ingestion.sinks import ParquetEventSink
 from app.marketdata import NORMALIZER_VERSION
+from app.marketdata.models import TradeEvent
 from app.ingestion.storage import (
     ParquetWriter,
     legacy_partition_path,
@@ -265,6 +266,117 @@ def test_v2_dataset_includes_normalizer_version_metadata_and_column(tmp_path):
     assert "normalizer_version" in table.column_names
     assert table.column("normalizer_version").to_pylist() == [NORMALIZER_VERSION]
     assert table.schema.metadata[b"normalizer_version"] == NORMALIZER_VERSION.encode("utf-8")
+
+
+def test_trade_dataset_persists_first_class_typed_columns(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
+    exchange_ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    receive_ts = exchange_ts + timedelta(milliseconds=1)
+    process_ts = exchange_ts + timedelta(milliseconds=2)
+
+    writer.add(
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=exchange_ts,
+            receive_ts=receive_ts,
+            process_ts=process_ts,
+            venue="BINANCE",
+            source_id="7001",
+            price=100.0,
+            size=1.0,
+            trade_id="7001",
+            side="buy",
+        )
+    )
+
+    table = read_parquet(_out_path(tmp_path, symbol="BTCUSDT", day="2024-01-01"))
+
+    assert "trade_id" in table.column_names
+    assert "side" in table.column_names
+    assert "exchange_ts" in table.column_names
+    assert "receive_ts" in table.column_names
+    assert "process_ts" in table.column_names
+    assert "source_id" in table.column_names
+    assert table.column("trade_id").to_pylist() == ["7001"]
+    assert table.column("side").to_pylist() == ["buy"]
+    assert table.column("exchange_ts").to_pylist() == [exchange_ts]
+    assert table.column("receive_ts").to_pylist() == [receive_ts]
+    assert table.column("process_ts").to_pylist() == [process_ts]
+
+
+def test_trade_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):
+    path = normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schema = pa.schema(
+        [
+            ("venue", pa.string()),
+            ("feed_type", pa.string()),
+            ("normalizer_version", pa.string()),
+            ("symbol", pa.string()),
+            ("event_ts", pa.timestamp("ms", tz="UTC")),
+            ("price", pa.float64()),
+            ("size", pa.float64()),
+            ("source", pa.string()),
+            ("metadata", pa.map_(pa.string(), pa.string())),
+        ]
+    )
+    old_ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    old_receive_ts = old_ts + timedelta(milliseconds=1)
+    old_process_ts = old_ts + timedelta(milliseconds=2)
+    table = pa.Table.from_pydict(
+        {
+            "venue": ["BINANCE"],
+            "feed_type": ["trades"],
+            "normalizer_version": [NORMALIZER_VERSION],
+            "symbol": ["BTCUSDT"],
+            "event_ts": [old_ts],
+            "price": [100.0],
+            "size": [1.0],
+            "source": ["trade"],
+            "metadata": [
+                {
+                    "trade_id": "8001",
+                    "source_id": "8001",
+                    "side": "sell",
+                    "receive_ts": old_receive_ts.isoformat(),
+                    "process_ts": old_process_ts.isoformat(),
+                    "venue": "BINANCE",
+                }
+            ],
+        },
+        schema=schema,
+    ).replace_schema_metadata(
+        {
+            b"schema_version": b"v2",
+            b"normalizer_version": NORMALIZER_VERSION.encode("utf-8"),
+        }
+    )
+    pq.write_table(table, path, use_dictionary=False)
+
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10, dedup=True)
+    writer.add(
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=old_ts + timedelta(seconds=1),
+            receive_ts=old_ts + timedelta(seconds=1, milliseconds=1),
+            process_ts=old_ts + timedelta(seconds=1, milliseconds=2),
+            venue="BINANCE",
+            source_id="8002",
+            price=101.0,
+            size=1.0,
+            trade_id="8002",
+            side="buy",
+        )
+    )
+    writer.flush()
+
+    loaded = read_parquet(path)
+
+    assert loaded.num_rows == 2
+    assert loaded.column("trade_id").to_pylist() == ["8001", "8002"]
+    assert loaded.column("side").to_pylist() == ["sell", "buy"]
+    assert loaded.column("receive_ts").to_pylist()[0] == old_receive_ts
+    assert loaded.column("process_ts").to_pylist()[0] == old_process_ts
 
 
 def test_read_parquet_backfills_missing_normalizer_version_for_old_v2_files(tmp_path):
