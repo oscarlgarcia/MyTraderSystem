@@ -7,7 +7,7 @@ from app.ingestion.storage import list_normalized_parquet_files, read_parquet, P
 from app.marketdata import NORMALIZER_VERSION
 from app.marketdata.models import BarEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord
-from app.marketdata.replay import ReplaySource
+from app.marketdata.replay import ReplaySource, read_raw_entries
 
 
 def _trade_envelope(symbol: str, event_ms: int, trade_id: int, price: str) -> dict:
@@ -163,6 +163,42 @@ def test_raw_replay_preserves_exact_append_only_order(tmp_path: Path):
     assert all(isinstance(event, TradeEvent) for event in replayed)
 
 
+def test_replay_prefers_ingestion_seq_across_date_partitions_with_same_receive_ts(tmp_path: Path):
+    sink = JsonlRawSink(tmp_path / "raw", env="test")
+    receive_ts = datetime(2024, 1, 2, tzinfo=timezone.utc)
+    _write_raw_trade(
+        sink,
+        symbol="BTCUSDT",
+        event_ts=datetime(2024, 1, 2, 0, 0, tzinfo=timezone.utc),
+        receive_ts=receive_ts,
+        trade_id=301,
+        price="101",
+    )
+    _write_raw_trade(
+        sink,
+        symbol="BTCUSDT",
+        event_ts=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        receive_ts=receive_ts,
+        trade_id=302,
+        price="102",
+    )
+
+    entries = read_raw_entries(tmp_path / "raw", "test", symbol="BTCUSDT", stream_types=("trade",))
+    replayed = list(
+        ReplaySource(
+            base_dir=tmp_path / "raw",
+            env="test",
+            symbol="BTCUSDT",
+            stream_types=("trade",),
+            normalizer_version=NORMALIZER_VERSION,
+        ).stream()
+    )
+
+    assert [entry.record.ingestion_seq for entry in entries] == [1, 2]
+    assert [event.trade_id for event in replayed] == ["301", "302"]
+    assert [entry.path.parent.name for entry in entries] == ["date=2024-01-02", "date=2024-01-01"]
+
+
 def test_raw_and_normalized_parity_holds_for_replayed_trade_dataset(tmp_path: Path):
     sink = JsonlRawSink(tmp_path / "raw", env="test")
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -252,3 +288,6 @@ def test_backfill_raw_replay_and_normalized_parity_hold_for_bar_dataset(tmp_path
 
     assert [_bar_row_signature(row) for row in rows_out] == [_bar_signature(event) for event in replayed[: len(rows_out)]]
     assert all(row["normalizer_version"] == NORMALIZER_VERSION for row in rows_out)
+
+    entries = read_raw_entries(tmp_path / "raw", "test", symbol="BTCUSDT", stream_types=("kline",))
+    assert [entry.record.ingestion_seq for entry in entries] == [1, 2]
