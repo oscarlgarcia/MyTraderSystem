@@ -422,6 +422,8 @@
   - `tests/marketdata/recovery/test_recovery_guarantees.py`
   - `docs/operations/ingestion_runbook.md`
   - `docs/validation/ingestion_readiness.md`
+  - `scripts/ingestion_soak.py`
+  - `scripts/ingestion_canary.py`
 - El objetivo de esta fase no es simular un entorno distribuido, sino dejar evidencia reproducible de:
   - reconnect con checkpoint
   - sobrecarga controlada
@@ -435,6 +437,8 @@
   - deduplicacion por identidad nativa aunque `timestamp/price/size` coincidan
   - handoff historico -> live limpio o inconsistente segun corresponda
   - recovery exacto para barras y marcacion explicita de `gap_irreparable` para trades sin recovery exacto
+  - soak determinista con evidencia persistida
+  - canary baseline vs candidate con comparacion automatica de metricas
 - **Seguridad operativa**:
   - `app.config.get_secret_env(name, required=False)`: punto de entrada explicito para secretos via `APP_SECRET_*`.
   - `app.ingestion.storage.validate_output_path(...)`: valida rutas y permisos de escritura.

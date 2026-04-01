@@ -1,47 +1,64 @@
 # Ingestion Readiness Checklist
 
-## Estado esperado para considerar readiness tecnica
+## Estado esperado para considerar readiness técnica
 
-### Correccion
+### Corrección
 - [ ] `pytest -q` pasa completo
 - [ ] `tests/slow/test_ingestion_readiness.py` pasa completo
-- [ ] no hay duplicados no explicados en tests de reconnect/restart
+- [ ] `python scripts/ingestion_soak.py` devuelve `0`
+- [ ] `python scripts/ingestion_canary.py` devuelve `0`
+- [ ] no hay duplicados no explicados en reconnect/restart/handoff
 - [ ] no hay corrupción de `data.parquet`
 
 ### Resiliencia
 - [ ] reconnect con `checkpoint_store` preserva continuidad observable
-- [ ] resync por snapshot no duplica eventos recientes
+- [ ] recovery exacto de bars no duplica borde reciente
+- [ ] trades sin recovery exacto se marcan `gap_irreparable`
 - [ ] reinicio tras fallo parcial preserva consistencia final
 
-### Presion y limites
-- [ ] 10k eventos mock bajo politica de sobrecarga producen degradacion visible, no silenciosa
-- [ ] la politica configurada queda reflejada en métricas y logs
-- [ ] el benchmark local de 10k eventos termina dentro del umbral documentado (<5s en Docker local/CI)
+### Presión y límites
+- [ ] 10k eventos mock bajo política de sobrecarga producen degradación visible, no silenciosa
+- [ ] la política configurada queda reflejada en métricas y logs
+- [ ] el soak determinista deja `pass_ok=true`
 
 ### Observabilidad
 - [ ] `ingestion summary` presente en runs relevantes
 - [ ] `ingestion health` presente al cierre
-- [ ] fallo compuesto deja `error_category`, `events_invalid`, `events_persisted`, `trace_id`
+- [ ] `stream_metrics` y `streams_degraded` identifican el stream afectado
+- [ ] `operational alert` aparece cuando corresponde
+
+### Migración / canary
+- [ ] `ingestion_canary_report.json` existe
+- [ ] `comparisons.jsonl` existe si hubo `shadow_mode`
+- [ ] `diffs.events_persisted = 0`
+- [ ] `diffs.duplicates = 0`
+- [ ] `diffs.gaps = 0`
 
 ### Seguridad operativa
 - [ ] `--production-mode` rechaza defaults inseguros
 - [ ] logs saneados, sin secretos
 - [ ] `data_dir` validado y escribible
 
-## Suite de readiness
-- `test_end_to_end_live_mock_with_reconnect_checkpoint_and_sink_flush`
-- `test_overload_policy_under_10k_mock_events`
-- `test_restart_after_partial_failure_preserves_consistency`
-- `test_corrupt_input_and_sink_failure_leave_system_diagnosable`
-
-## Evidencias minimas a conservar
+## Evidencias mínimas a conservar
 - salida de `pytest -q`
 - salida de `pytest tests/slow/test_ingestion_readiness.py -m slow -q`
+- `docs/validation/ingestion_soak_evidence.json`
+- `docs/validation/ingestion_canary_report.json`
 - commit validado
-- fecha de ejecucion
+- fecha de ejecución
 - logs JSON del run si hubo fallo
 
-## Decision
-- `GO`: todos los checks marcados
-- `GO CONDICIONAL`: solo si falla algo no crítico y queda mitigacion explícita
-- `NO-GO`: cualquier fallo en readiness, corrupción, pérdida silenciosa o falta de diagnóstico
+## Go / No-Go para live
+- `GO`
+  - todos los checks anteriores marcados
+  - soak y canary verdes
+  - sin diferencias semánticas entre baseline y candidata
+- `GO CONDICIONAL`
+  - solo si la única desviación está en latencia
+  - y existe aceptación explícita del riesgo
+- `NO-GO`
+  - cualquier fallo en readiness
+  - corrupción
+  - pérdida silenciosa
+  - `gap_irreparable` sin mitigación
+  - diferencias semánticas entre baseline y candidata

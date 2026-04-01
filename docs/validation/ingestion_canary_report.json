@@ -1,0 +1,45 @@
+{
+  "baseline": {
+    "mode": "live",
+    "pipeline_version": "v1",
+    "shadow_mode": false,
+    "events_in": 201,
+    "events_persisted": 200,
+    "duplicates": 1,
+    "gaps": 0,
+    "gap_irreparable": 0,
+    "reconnects": 0,
+    "processing_latency_seconds": 70938315.792215,
+    "write_latency_seconds": 0.01394768500176724,
+    "streams_degraded": [
+      "BINANCE:BTCUSDT:trade"
+    ],
+    "result": "ok"
+  },
+  "candidate": {
+    "mode": "live",
+    "pipeline_version": "v2",
+    "shadow_mode": false,
+    "events_in": 201,
+    "events_persisted": 200,
+    "duplicates": 1,
+    "gaps": 0,
+    "gap_irreparable": 0,
+    "reconnects": 0,
+    "processing_latency_seconds": 70938315.84303,
+    "write_latency_seconds": 2.2151912140107015,
+    "streams_degraded": [
+      "BINANCE:BTCUSDT:trade"
+    ],
+    "result": "ok"
+  },
+  "diffs": {
+    "events_persisted": 0.0,
+    "duplicates": 0.0,
+    "gaps": 0.0,
+    "processing_latency_seconds": 0.050815001130104065,
+    "write_latency_seconds": 2.2012435290089343
+  },
+  "pass_ok": true,
+  "comparison_reason": "counts_match"
+}

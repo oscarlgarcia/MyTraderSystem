@@ -305,6 +305,9 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - el comparador persiste diferencias en `<data_dir>/shadow/env=<env>/comparisons.jsonl`
   - diferencias relevantes = cambios en `events_persisted`, `duplicates_total` o `gaps_total`
   - con `shadow_block_on_diff=True`, la promocion falla con `ShadowPromotionError`
+- Validacion operativa reproducible:
+  - `scripts/ingestion_soak.py` ejecuta un soak determinista y escribe `docs/validation/ingestion_soak_evidence.json`
+  - `scripts/ingestion_canary.py` compara baseline/candidate y escribe `docs/validation/ingestion_canary_report.json`
 - Si el proceso cae antes del cierre del handler, el lote en memoria aun no persistido se pierde.
 
 ## Que hace y que no debe hacer
