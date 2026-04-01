@@ -130,6 +130,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - omite bootstrap ya cubierto por `last_event_ts` o cursor conocido
     - deduplica el solape bootstrap/live con la misma identidad fuerte de ingestion
   - Si no puede garantizar continuidad en el borde, incrementa `handoff_inconsistent` y falla rapido en modo estricto.
+  - La validacion de borde ya no mira solo el ultimo watermark/cursor: compara la cola historica emitida y la cabecera live por identidad fuerte y timestamps para detectar solapes inconsistentes o regresiones temporales.
 - `ingestion.sources`
   - Define el contrato `Source` (`stream`, `snapshot`).
   - Implementa `BinanceSource` como adaptador por defecto para WS/REST.

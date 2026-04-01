@@ -50,6 +50,7 @@ class HandoffSource:
     bootstrap_fn: BootstrapEventsFn
     window: HistoricalWindow | None = None
     strict: bool = True
+    validation_rows: int = 3
     stats: SourceStats = field(default_factory=SourceStats)
     checkpoint_state: CheckpointState | None = None
 
@@ -65,6 +66,8 @@ class HandoffSource:
         logger = logging.getLogger("ingest.handoff")
         bootstrap_events = self._bootstrap_events()
         emitted_bootstrap: dict[str, IngestionEvent] = {}
+        bootstrap_tails: dict[str, list[IngestionEvent]] = {}
+        live_heads: dict[str, list[IngestionEvent]] = {}
         seen_bootstrap_keys = set()
         checkpoint_keys = self._checkpoint_seen_keys()
 
@@ -81,6 +84,10 @@ class HandoffSource:
                 continue
             seen_bootstrap_keys.add(event_key)
             emitted_bootstrap[partition] = event
+            tail = bootstrap_tails.setdefault(partition, [])
+            tail.append(event)
+            if len(tail) > max(1, self.validation_rows):
+                del tail[0]
             self.stats.source_events_in += 1
             self.stats.events_valid += 1
             self.stats.snapshot_rows += 1
@@ -98,6 +105,14 @@ class HandoffSource:
         for event in self.live_source.stream(end_time=end_time):
             partition = temporal_partition_key(event).label()
             event_key = _key(event)
+            if partition in bootstrap_tails and partition not in reconciled_partitions:
+                live_head = live_heads.setdefault(partition, [])
+                if len(live_head) < max(1, self.validation_rows):
+                    live_head.append(event)
+                self._assert_handoff_edge_parity(
+                    bootstrap_tail=bootstrap_tails[partition],
+                    live_head=live_head,
+                )
             if event_key in seen_bootstrap_keys or event_key in checkpoint_keys:
                 self.stats.handoff_overlap_dropped += 1
                 self._record_stream_metric(event, "duplicates_total", 1)
@@ -114,6 +129,20 @@ class HandoffSource:
                 self._assert_handoff_consistency(
                     bootstrap_event=emitted_bootstrap[partition],
                     live_event=event,
+                )
+                logger.info(
+                    "handoff edge parity validated",
+                    extra={
+                        "venue": temporal_partition_key(event).venue,
+                        "symbol": event.symbol,
+                        "stream_type": event.source,
+                        "bootstrap_tail_rows": len(bootstrap_tails.get(partition, [])),
+                        "live_head_rows": len(live_heads.get(partition, [])),
+                        "overlap_rows": _overlap_count(
+                            bootstrap_tails.get(partition, []),
+                            live_heads.get(partition, []),
+                        ),
+                    },
                 )
                 reconciled_partitions.add(partition)
             self.stats.source_events_in += 1
@@ -173,6 +202,51 @@ class HandoffSource:
                 f"handoff cursor gap detected for {bootstrap_kind} ({bootstrap_cursor} -> {live_cursor})"
             )
 
+    def _assert_handoff_edge_parity(
+        self,
+        *,
+        bootstrap_tail: list[IngestionEvent],
+        live_head: list[IngestionEvent],
+    ) -> None:
+        if not bootstrap_tail or not live_head:
+            return
+        bootstrap_by_key = {_key(event): event for event in bootstrap_tail}
+        latest_bootstrap = bootstrap_tail[-1]
+        first_unmatched_live: IngestionEvent | None = None
+        for event in live_head:
+            bootstrap_event = bootstrap_by_key.get(_key(event))
+            if bootstrap_event is None:
+                if first_unmatched_live is None:
+                    first_unmatched_live = event
+                continue
+            if event.event_ts != bootstrap_event.event_ts:
+                self._mark_handoff_inconsistent(
+                    "handoff identity overlap has mismatched timestamps "
+                    f"({event.event_ts.isoformat()} != {bootstrap_event.event_ts.isoformat()})"
+                )
+                return
+        if first_unmatched_live is None:
+            return
+        if first_unmatched_live.event_ts < latest_bootstrap.event_ts:
+            self._mark_handoff_inconsistent(
+                "live head regressed behind historical tail "
+                f"({first_unmatched_live.event_ts.isoformat()} < {latest_bootstrap.event_ts.isoformat()})"
+            )
+            return
+        bootstrap_kind, bootstrap_cursor = cursor_from_event(latest_bootstrap)
+        live_kind, live_cursor = cursor_from_event(first_unmatched_live)
+        if (
+            bootstrap_kind is not None
+            and bootstrap_kind == live_kind
+            and bootstrap_cursor is not None
+            and live_cursor is not None
+            and _cursor_gap(bootstrap_cursor, live_cursor) > 0
+        ):
+            self._mark_handoff_inconsistent(
+                "handoff head/tail parity detected cursor gap "
+                f"for {bootstrap_kind} ({bootstrap_cursor} -> {live_cursor})"
+            )
+
     def _mark_handoff_inconsistent(self, message: str) -> None:
         self.stats.handoff_inconsistent += 1
         logging.getLogger("ingest.handoff").error(
@@ -224,3 +298,13 @@ def _cursor_lte(current: str | None, checkpoint: str | None) -> bool:
         return int(current) <= int(checkpoint)
     except (TypeError, ValueError):
         return str(current) <= str(checkpoint)
+
+
+def _overlap_count(
+    bootstrap_tail: list[IngestionEvent],
+    live_head: list[IngestionEvent],
+) -> int:
+    if not bootstrap_tail or not live_head:
+        return 0
+    bootstrap_keys = {_key(event) for event in bootstrap_tail}
+    return sum(1 for event in live_head if _key(event) in bootstrap_keys)

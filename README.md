@@ -261,6 +261,7 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
 - El handoff historico -> live ya tiene contrato explicito:
   - `HandoffSource` emite primero un bootstrap historico por ventana y luego entrega el stream live.
   - Deduplica el solape de borde con la misma identidad fuerte usada por live/storage.
+  - Antes de aceptar el primer tramo live de cada stream, compara las ultimas filas historicas emitidas con la cabecera live por identidad y timestamps para clasificar solape, regresion o gap de borde de forma determinista.
   - Si el primer evento live no garantiza continuidad respecto al ultimo bootstrap, marca `handoff_inconsistent` y deja que la politica operativa (`fail_fast` / `degraded`) decida si aborta o degrada.
 - Liveness de conectores:
   - `BinanceSource` define heartbeat esperado por feed (`trade`, `kline`, `book`) y deriva un watchdog de inactividad para el websocket compartido.

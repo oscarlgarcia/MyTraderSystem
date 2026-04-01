@@ -41,6 +41,20 @@ def _trade(ts: datetime, trade_id: int) -> TradeEvent:
     )
 
 
+def _trade_with_id(ts: datetime, trade_id: str) -> TradeEvent:
+    return TradeEvent(
+        symbol="BTCUSDT",
+        exchange_ts=ts,
+        receive_ts=ts,
+        process_ts=ts,
+        venue="BINANCE",
+        source_id=trade_id,
+        price=100.0,
+        size=1.0,
+        trade_id=trade_id,
+    )
+
+
 class RecordingSink:
     def __init__(self) -> None:
         self.items = []
@@ -108,6 +122,33 @@ def test_handoff_duplicate_edge_is_removed_by_strong_identity(tmp_path: Path):
     assert [event.trade_id for event in out] == ["1", "2", "3"]
     assert source.stats.handoff_overlap_dropped == 1
     assert source.stats.handoff_inconsistent == 0
+
+
+def test_handoff_overlap_requires_timestamp_parity_for_same_identity(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    bootstrap = [_trade_with_id(base, "10"), _trade_with_id(base + timedelta(seconds=1), "11")]
+    live = [_trade_with_id(base + timedelta(seconds=2), "11")]
+    source = HandoffSource(
+        live_source=StaticSource(events=live),
+        bootstrap_fn=lambda: bootstrap,
+        strict=True,
+    )
+
+    with pytest.raises(IngestionError):
+        collect_events(
+            mode="live",
+            cfg=cfg,
+            logger=get_logger(name="test.handoff.guarantees.parity", level="INFO", stream=io.StringIO()),
+            source=source,
+            sink=RecordingSink(),
+            snapshot_enabled=False,
+            summary_logging=True,
+            duration_s=0,
+            error_policy="fail_fast",
+        )
+
+    assert source.stats.handoff_inconsistent == 1
 
 
 def test_handoff_gap_is_visible_and_respects_strict_or_degraded_policy(tmp_path: Path):

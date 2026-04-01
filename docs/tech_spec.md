@@ -286,6 +286,10 @@
   - integra el checkpoint local cargado por `collect_events(...)` para:
     - omitir bootstrap ya cubierto por cursor/watermark
     - deduplicar solape de borde con identidad fuerte
+  - valida el borde con paridad de dataset local:
+    - cola historica (ultimas N filas emitidas por stream)
+    - cabecera live (primeras N filas observadas por stream)
+    - compara identidad fuerte y timestamps para clasificar solape limpio, regresion o gap
   - semantica de inconsistencia:
     - si el primer evento live retrocede respecto al ultimo bootstrap, o hay salto fuerte de cursor, marca `handoff_inconsistent`
     - en modo estricto lanza `IngestionError(category="validation")`
