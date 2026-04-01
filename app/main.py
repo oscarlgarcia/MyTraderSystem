@@ -63,6 +63,9 @@ def _resolve_runtime_options(args) -> Dict[str, object]:
         "ingest_buffer_warn": getattr(args, "ingest_buffer_warn", None),
         "ingest_backpressure_policy": getattr(args, "ingest_backpressure_policy", "pause"),
         "ingest_temporal_policy": getattr(args, "ingest_temporal_policy", "accept"),
+        "ingest_pipeline_version": getattr(args, "ingest_pipeline_version", "v2"),
+        "ingest_shadow_mode": bool(getattr(args, "ingest_shadow_mode", False)),
+        "ingest_shadow_block_on_diff": bool(getattr(args, "ingest_shadow_block_on_diff", False)),
         "allow_live_fallback": bool(getattr(args, "allow_live_fallback", False)),
         "error_policy": getattr(args, "error_policy", None),
         "snapshot_enabled": not fast_path,
@@ -121,6 +124,9 @@ def run_cycle(
     ingest_buffer_warn: int | None = None,
     ingest_backpressure_policy: str = "pause",
     ingest_temporal_policy: str = "accept",
+    ingest_pipeline_version: str = "v2",
+    ingest_shadow_mode: bool = False,
+    ingest_shadow_block_on_diff: bool = False,
     allow_live_fallback: bool = False,
     error_policy: str | None = None,
 ):
@@ -152,6 +158,9 @@ def run_cycle(
         error_policy=error_policy,
         backpressure_policy=ingest_backpressure_policy,
         temporal_policy=ingest_temporal_policy,
+        pipeline_version=ingest_pipeline_version,
+        shadow_mode=ingest_shadow_mode,
+        shadow_block_on_diff=ingest_shadow_block_on_diff,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
@@ -228,6 +237,9 @@ def run() -> int:
         ingest_buffer_warn=runtime["ingest_buffer_warn"],
         ingest_backpressure_policy=runtime["ingest_backpressure_policy"],
         ingest_temporal_policy=runtime["ingest_temporal_policy"],
+        ingest_pipeline_version=runtime["ingest_pipeline_version"],
+        ingest_shadow_mode=runtime["ingest_shadow_mode"],
+        ingest_shadow_block_on_diff=runtime["ingest_shadow_block_on_diff"],
         allow_live_fallback=runtime["allow_live_fallback"],
         error_policy=runtime["error_policy"],
     )

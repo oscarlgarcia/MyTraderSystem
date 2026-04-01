@@ -76,3 +76,48 @@ class ParquetEventSink:
     @property
     def stream_write_metrics(self) -> dict[str, dict[str, object]]:
         return self.writer.stream_write_metrics
+
+
+class MirroredEventSink:
+    def __init__(self, primary: EventSink, shadow: EventSink):
+        self.primary = primary
+        self.shadow = shadow
+
+    def add(self, event: IngestionEvent | Iterable[IngestionEvent]) -> None:
+        self.primary.add(event)
+        self.shadow.add(event)
+
+    def close(self) -> None:
+        try:
+            self.primary.close()
+        except Exception:
+            try:
+                self.shadow.close()
+            except Exception:
+                pass
+            raise
+        self.shadow.close()
+
+    @property
+    def persisted_count(self) -> int:
+        return int(getattr(self.primary, "persisted_count", 0))
+
+    @property
+    def shadow_persisted_count(self) -> int:
+        return int(getattr(self.shadow, "persisted_count", 0))
+
+    @property
+    def write_latency_seconds(self) -> float:
+        return float(getattr(self.primary, "write_latency_seconds", 0.0))
+
+    @property
+    def shadow_write_latency_seconds(self) -> float:
+        return float(getattr(self.shadow, "write_latency_seconds", 0.0))
+
+    @property
+    def stream_write_metrics(self) -> dict[str, dict[str, object]]:
+        return dict(getattr(self.primary, "stream_write_metrics", {}))
+
+    @property
+    def shadow_stream_write_metrics(self) -> dict[str, dict[str, object]]:
+        return dict(getattr(self.shadow, "stream_write_metrics", {}))

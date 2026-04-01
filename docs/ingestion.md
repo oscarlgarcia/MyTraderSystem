@@ -299,6 +299,12 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - la ventana dedup por stream esta acotada por TTL/capacidad del deduplicador
 - `ParquetWriter` sigue dependiendo de merge/dedup en memoria cuando la particion ya existe; la atomicidad protege el archivo final, no el coste de memoria del merge.
 - El writer ya escribe solo en layout normalized v2, pero el lector mantiene compatibilidad con Parquet legacy `v1` para no romper consumidores durante la migracion.
+- Shadow mode de migracion:
+  - `collect_events(..., pipeline_version="v2", shadow_mode=True)` escribe primary en `v2` y shadow en `v1`.
+  - `collect_events(..., pipeline_version="v1", shadow_mode=True)` invierte el sentido y usa `v2` como shadow.
+  - el comparador persiste diferencias en `<data_dir>/shadow/env=<env>/comparisons.jsonl`
+  - diferencias relevantes = cambios en `events_persisted`, `duplicates_total` o `gaps_total`
+  - con `shadow_block_on_diff=True`, la promocion falla con `ShadowPromotionError`
 - Si el proceso cae antes del cierre del handler, el lote en memoria aun no persistido se pierde.
 
 ## Que hace y que no debe hacer

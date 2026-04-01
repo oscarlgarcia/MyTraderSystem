@@ -260,6 +260,16 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
     - `heartbeat_missed` (`warning`, 1 watchdog timeout)
     - `dlq_spike` (`warning`, 3 payloads invalidos del mismo stream)
     - `sink_failure` (`error`, 1 fallo de raw/error/normalized sink)
+- Shadow mode / doble escritura:
+  - `--ingest-pipeline-version {v1,v2}` elige la version principal del sink normalized.
+  - `--ingest-shadow-mode` activa doble escritura sobre la version contraria cuando se usa el sink Parquet por defecto.
+  - `--ingest-shadow-block-on-diff` aborta si el comparador detecta diferencias relevantes entre primary y shadow.
+  - Las diferencias se persisten en `<data_dir>/shadow/env=<env>/comparisons.jsonl`.
+  - Estrategia de migracion recomendada:
+    1. ejecutar `v2` con `shadow_mode` hacia `v1`
+    2. revisar `comparisons.jsonl`
+    3. activar `--ingest-shadow-block-on-diff` antes de promocionar
+    4. rollback: volver a `--ingest-pipeline-version v1` y desactivar shadow
 Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Seguridad operativa minima

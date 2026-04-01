@@ -2,6 +2,7 @@ import io
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -10,7 +11,9 @@ from app.common.dto import MarketEvent
 from app.ingestion import pipeline
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
+from app.ingestion.shadow import ShadowComparison, ShadowPromotionError, ShadowSnapshot
 from app.ingestion.sources import StaticSource
+from app.ingestion.storage import legacy_partition_path, normalized_partition_path
 from app.observability.logger import get_logger
 
 
@@ -138,3 +141,69 @@ def test_summary_metrics_match_processed_events(monkeypatch):
     assert summary["backpressure_policy"] == "pause"
     assert summary["dedup_on"] is True
     assert summary["batch_size"] == 1
+
+
+def test_shadow_mode_writes_v1_and_v2_and_persists_comparison(tmp_path: Path):
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
+    events = [_ev(0, 100), _ev(60, 101)]
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        max_events=10,
+        duration_s=0,
+        logger=get_logger(name="test.ingest.shadow", level="INFO", stream=io.StringIO()),
+        dedup_enabled=True,
+        snapshot_enabled=False,
+        summary_logging=True,
+        source=StaticSource(events=events),
+        shadow_mode=True,
+        pipeline_version="v2",
+    )
+
+    assert out == events
+    assert normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2023-11-14").exists()
+    assert legacy_partition_path(tmp_path, "dev", "BTCUSDT", "2023-11-14").exists()
+    comparison_path = tmp_path / "shadow" / "env=dev" / "comparisons.jsonl"
+    assert comparison_path.exists()
+    payload = json.loads(comparison_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert payload["primary"]["pipeline_version"] == "v2"
+    assert payload["shadow"]["pipeline_version"] == "v1"
+    assert payload["significant"] is False
+
+
+def test_shadow_block_on_diff_raises_promotion_error(monkeypatch, tmp_path: Path):
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
+
+    def fake_compare(primary, shadow):
+        del primary, shadow
+        return ShadowComparison(
+            primary=ShadowSnapshot("v2", 2, 0, 0, 0.1, 0.1),
+            shadow=ShadowSnapshot("v1", 1, 0, 0, 0.1, 0.1),
+            diffs={
+                "events_persisted": 1.0,
+                "duplicates_total": 0.0,
+                "gaps_total": 0.0,
+                "processing_latency_seconds": 0.0,
+                "write_latency_seconds": 0.0,
+            },
+            significant=True,
+        )
+
+    monkeypatch.setattr(pipeline, "compare_shadow_snapshots", fake_compare)
+
+    with pytest.raises(ShadowPromotionError):
+        pipeline.collect_events(
+            mode="live",
+            cfg=cfg,
+            max_events=10,
+            duration_s=0,
+            logger=get_logger(name="test.ingest.shadow.block", level="INFO", stream=io.StringIO()),
+            dedup_enabled=True,
+            snapshot_enabled=False,
+            summary_logging=True,
+            source=StaticSource(events=[_ev(0, 100)]),
+            shadow_mode=True,
+            shadow_block_on_diff=True,
+            pipeline_version="v2",
+        )

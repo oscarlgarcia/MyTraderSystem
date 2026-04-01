@@ -379,6 +379,28 @@
   - al mergear una particion nueva, si solo existe un fichero legacy `v1`, el writer lo lee y lo adapta al schema `v2`
   - la escritura nueva ya no genera particiones legacy
   - toda escritura `v2` persiste `normalizer_version` tanto como columna como en metadata de Parquet
+  - con shadow mode, `ParquetWriter(schema_version="v1")` vuelve a escribir layout legacy para comparacion controlada
+
+## Shadow mode y rollback
+- Flags:
+  - `--ingest-pipeline-version {v1,v2}`
+  - `--ingest-shadow-mode`
+  - `--ingest-shadow-block-on-diff`
+- Operativa:
+  - el sink principal escribe en la version seleccionada
+  - si shadow mode esta activo y se usa el sink Parquet por defecto, se escribe en paralelo en la version opuesta
+  - el comparador genera snapshots old-vs-new con:
+    - `events_persisted`
+    - `duplicates_total`
+    - `gaps_total`
+    - `processing_latency_seconds`
+    - `write_latency_seconds`
+  - el reporte se persiste en `<data_dir>/shadow/env=<env>/comparisons.jsonl`
+- Criterio de bloqueo:
+  - `ShadowPromotionError` solo se activa si `shadow_block_on_diff=True` y hay diferencias relevantes en `events_persisted`, `duplicates_total` o `gaps_total`
+- Rollback:
+  - volver a `--ingest-pipeline-version v1`
+  - mantener `shadow_mode` si se quiere seguir comparando contra `v2`
 
 ## Politica de versionado de normalizacion
 - La version de normalizacion actual se define de forma centralizada en `app.marketdata.normalization.NORMALIZER_VERSION`.

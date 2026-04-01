@@ -221,6 +221,36 @@ def _to_table(events: List[MarketEvent]) -> pa.Table:
     return pa.Table.from_pydict(data, schema=schema)
 
 
+def _to_legacy_table(events: List[MarketEvent]) -> pa.Table:
+    events_sorted = sorted(events, key=lambda ev: ev.event_ts)
+    schema = pa.schema(
+        [
+            ("symbol", pa.string()),
+            ("event_ts", pa.timestamp("ms", tz="UTC")),
+            ("price", pa.float64()),
+            ("size", pa.float64()),
+            ("source", pa.string()),
+            ("metadata", pa.map_(pa.string(), pa.string())),
+        ]
+    )
+    rows = []
+    for ev in events_sorted:
+        metadata = dict(ev.metadata)
+        metadata.setdefault("venue", event_venue(ev))
+        metadata.setdefault("normalizer_version", event_normalizer_version(ev))
+        rows.append(
+            {
+                "symbol": ev.symbol,
+                "event_ts": ev.event_ts,
+                "price": ev.price,
+                "size": ev.size,
+                "source": ev.source,
+                "metadata": metadata,
+            }
+        )
+    return pa.Table.from_pylist(rows, schema=schema)
+
+
 def _write_partition(
     *,
     base_dir: Path,
@@ -232,18 +262,22 @@ def _write_partition(
     max_dedup_rows: int,
 ) -> None:
     feed_type, venue, symbol, day = partition_key
-    out_path = (
-        base_dir
-        / "normalized"
-        / feed_type
-        / f"env={env}"
-        / f"venue={venue}"
-        / f"symbol={symbol}"
-        / f"date={day}"
-        / "data.parquet"
-    )
+    if schema_version == "v1":
+        out_path = legacy_partition_path(base_dir, env, symbol, day)
+        table = _to_legacy_table(events)
+    else:
+        out_path = (
+            base_dir
+            / "normalized"
+            / feed_type
+            / f"env={env}"
+            / f"venue={venue}"
+            / f"symbol={symbol}"
+            / f"date={day}"
+            / "data.parquet"
+        )
+        table = _to_table(events)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    table = _to_table(events)
     table = table.replace_schema_metadata(
         {
             b"schema_version": schema_version.encode("utf-8"),
@@ -251,7 +285,10 @@ def _write_partition(
         }
     )
     fallback_legacy = legacy_partition_path(base_dir, env, symbol, day)
-    existing_path = out_path if out_path.exists() else fallback_legacy if fallback_legacy.exists() else out_path
+    if schema_version == "v1":
+        existing_path = out_path
+    else:
+        existing_path = out_path if out_path.exists() else fallback_legacy if fallback_legacy.exists() else out_path
     merged = _merge_with_existing(existing_path, table, dedup=dedup, max_dedup_rows=max_dedup_rows)
     _write_table_atomic(merged, out_path)
 
@@ -332,43 +369,42 @@ def _read_existing_table_for_merge(out_path: Path, target_schema: pa.Schema) -> 
     table = pq.ParquetFile(out_path).read()
     metadata = table.schema.metadata or {}
     version = metadata.get(b"schema_version", b"v1").decode("utf-8")
+    target_columns = set(target_schema.names)
     if version == "v2":
         rows = []
         for row in table.to_pylist():
             metadata_row = row.get("metadata") or {}
-            rows.append(
-                {
-                    "venue": row.get("venue") or str(metadata_row.get("venue", "BINANCE")).upper(),
-                    "feed_type": row.get("feed_type") or feed_type_for_source(row["source"]),
-                    "normalizer_version": resolve_normalizer_version(
-                        row.get("normalizer_version") or metadata_row.get("normalizer_version")
-                    ),
-                    "symbol": row["symbol"],
-                    "event_ts": row["event_ts"],
-                    "price": row["price"],
-                    "size": row["size"],
-                    "source": row["source"],
-                    "metadata": metadata_row,
-                }
-            )
-        return pa.Table.from_pylist(rows, schema=target_schema)
-
-    rows = []
-    for row in table.to_pylist():
-        metadata = row.get("metadata") or {}
-        rows.append(
-            {
-                "venue": str(metadata.get("venue", "BINANCE")).upper(),
-                "feed_type": feed_type_for_source(row["source"]),
-                "normalizer_version": resolve_normalizer_version(metadata.get("normalizer_version")),
+            adapted = {
+                "venue": row.get("venue") or str(metadata_row.get("venue", "BINANCE")).upper(),
+                "feed_type": row.get("feed_type") or feed_type_for_source(row["source"]),
+                "normalizer_version": resolve_normalizer_version(
+                    row.get("normalizer_version") or metadata_row.get("normalizer_version")
+                ),
                 "symbol": row["symbol"],
                 "event_ts": row["event_ts"],
                 "price": row["price"],
                 "size": row["size"],
                 "source": row["source"],
-                "metadata": metadata,
+                "metadata": metadata_row,
             }
-        )
+            rows.append({key: value for key, value in adapted.items() if key in target_columns})
+        return pa.Table.from_pylist(rows, schema=target_schema)
+
+    rows = []
+    for row in table.to_pylist():
+        metadata = row.get("metadata") or {}
+        adapted = {
+            "venue": str(metadata.get("venue", "BINANCE")).upper(),
+            "feed_type": feed_type_for_source(row["source"]),
+            "normalizer_version": resolve_normalizer_version(metadata.get("normalizer_version")),
+            "symbol": row["symbol"],
+            "event_ts": row["event_ts"],
+            "price": row["price"],
+            "size": row["size"],
+            "source": row["source"],
+            "metadata": metadata,
+        }
+        rows.append({key: value for key, value in adapted.items() if key in target_columns})
     return pa.Table.from_pylist(rows, schema=target_schema)
 
 

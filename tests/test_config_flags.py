@@ -59,3 +59,10 @@ def test_error_policy_flag():
 def test_production_mode_flag():
     args = parse_args(["--production-mode"])
     assert args.production_mode is True
+
+
+def test_shadow_mode_flags():
+    args = parse_args(["--ingest-pipeline-version", "v1", "--ingest-shadow-mode", "--ingest-shadow-block-on-diff"])
+    assert args.ingest_pipeline_version == "v1"
+    assert args.ingest_shadow_mode is True
+    assert args.ingest_shadow_block_on_diff is True

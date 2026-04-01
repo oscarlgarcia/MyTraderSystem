@@ -18,7 +18,14 @@ from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
 from app.ingestion.dedup import Deduplicator
 from app.ingestion.errors import ErrorPolicy, IngestionError, resolve_error_policy
 from app.ingestion.resilience import BackpressurePolicy, ResilientRunner, TemporalPolicy
-from app.ingestion.sinks import EventSink, ParquetEventSink
+from app.ingestion.shadow import (
+    ShadowSnapshot,
+    ShadowPromotionError,
+    assert_shadow_promotable,
+    compare_shadow_snapshots,
+    persist_shadow_comparison,
+)
+from app.ingestion.sinks import EventSink, MirroredEventSink, ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
 from app.marketdata.models import IngestionEvent, ensure_legacy_market_event
@@ -105,6 +112,25 @@ def _degraded_streams(stream_metrics: list[dict[str, object]]) -> list[str]:
         ):
             degraded.append(f"{metric['venue']}:{metric['symbol']}:{metric['stream_type']}")
     return degraded
+
+
+def _shadow_snapshot(
+    *,
+    pipeline_version: str,
+    events_persisted: int,
+    duplicates_total: int,
+    gaps_total: int,
+    processing_latency_seconds: float,
+    write_latency_seconds: float,
+) -> ShadowSnapshot:
+    return ShadowSnapshot(
+        pipeline_version=pipeline_version,
+        events_persisted=int(events_persisted),
+        duplicates_total=int(duplicates_total),
+        gaps_total=int(gaps_total),
+        processing_latency_seconds=float(processing_latency_seconds),
+        write_latency_seconds=float(write_latency_seconds),
+    )
 
 
 def _synthetic_events(max_events: int) -> List[MarketEvent]:
@@ -413,6 +439,9 @@ def collect_events(
     checkpoint_store: CheckpointStore | None = None,
     backpressure_policy: BackpressurePolicy = "pause",
     temporal_policy: TemporalPolicy = "accept",
+    pipeline_version: str = "v2",
+    shadow_mode: bool = False,
+    shadow_block_on_diff: bool = False,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
@@ -516,6 +545,8 @@ def collect_events(
 
     runner: ResilientRunner | None = None
     sink_impl: EventSink | None = None
+    shadow_sink_impl: EventSink | None = None
+    sink_pipeline_version = pipeline_version
     handler: _LiveBatchHandler | None = None
     try:
         end_time = time.time() + duration_s if duration_s else None
@@ -524,9 +555,33 @@ def collect_events(
             yield from source_impl.stream(end_time=end_time)
 
         snapshot_fn = source_snapshot_fn(source_impl) if snapshot_enabled else None
-        sink_impl = sink or ParquetEventSink(
-            ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=max_events, dedup=dedup_enabled)
-        )
+        if sink is None:
+            primary_sink = ParquetEventSink(
+                ParquetWriter(
+                    base_dir=cfg.data_dir,
+                    env=cfg.env,
+                    flush_size=max_events,
+                    dedup=dedup_enabled,
+                    schema_version=pipeline_version,
+                )
+            )
+            if shadow_mode:
+                shadow_version = "v1" if pipeline_version == "v2" else "v2"
+                shadow_sink_impl = ParquetEventSink(
+                    ParquetWriter(
+                        base_dir=cfg.data_dir,
+                        env=cfg.env,
+                        flush_size=max_events,
+                        dedup=dedup_enabled,
+                        schema_version=shadow_version,
+                    )
+                )
+                sink_impl = MirroredEventSink(primary_sink, shadow_sink_impl)
+            else:
+                sink_impl = primary_sink
+        else:
+            sink_impl = sink
+            sink_pipeline_version = "custom"
         stats = {"written": 0, "duplicates_dropped": 0}
         handler = _build_live_handler(
             sink_impl,
@@ -572,13 +627,41 @@ def collect_events(
             lag_warn_threshold=lag_warn_threshold,
             buffer_warn_threshold=buffer_warn_threshold,
         )
+        events_persisted = _safe_int(getattr(sink_impl, "persisted_count", len(handler.events)), len(handler.events))
+        write_latency_seconds = _safe_float(getattr(sink_impl, "write_latency_seconds", 0.0), 0.0)
+        events_dedup_skipped = _safe_int(runner.metrics.dedup_skipped + stats["duplicates_dropped"])
+        shadow_comparison_payload = None
+        if shadow_mode and shadow_sink_impl is not None:
+            shadow_comparison = compare_shadow_snapshots(
+                _shadow_snapshot(
+                    pipeline_version=sink_pipeline_version,
+                    events_persisted=events_persisted,
+                    duplicates_total=events_dedup_skipped,
+                    gaps_total=runner.metrics.gaps_total,
+                    processing_latency_seconds=runner.metrics.max_latency_seconds,
+                    write_latency_seconds=write_latency_seconds,
+                ),
+                _shadow_snapshot(
+                    pipeline_version="v1" if sink_pipeline_version == "v2" else "v2",
+                    events_persisted=_safe_int(getattr(shadow_sink_impl, "persisted_count", 0)),
+                    duplicates_total=events_dedup_skipped,
+                    gaps_total=runner.metrics.gaps_total,
+                    processing_latency_seconds=runner.metrics.max_latency_seconds,
+                    write_latency_seconds=_safe_float(getattr(shadow_sink_impl, "write_latency_seconds", 0.0)),
+                ),
+            )
+            persist_shadow_comparison(Path(cfg.data_dir), env=cfg.env, comparison=shadow_comparison)
+            assert_shadow_promotable(shadow_comparison, block_on_diff=shadow_block_on_diff)
+            shadow_comparison_payload = {
+                "primary_version": shadow_comparison.primary.pipeline_version,
+                "shadow_version": shadow_comparison.shadow.pipeline_version,
+                "significant": shadow_comparison.significant,
+                "diffs": shadow_comparison.diffs,
+            }
         if summary_logging:
-            events_persisted = _safe_int(getattr(sink_impl, "persisted_count", len(handler.events)), len(handler.events))
-            write_latency_seconds = _safe_float(getattr(sink_impl, "write_latency_seconds", 0.0), 0.0)
             source_events_in = _safe_int(getattr(source_stats, "source_events_in", runner.metrics.events_in), runner.metrics.events_in)
             events_valid = _safe_int(getattr(source_stats, "events_valid", runner.metrics.events_in), runner.metrics.events_in)
             events_invalid = _safe_int(getattr(source_stats, "events_invalid", getattr(source_stats, "rejected_payloads", 0)), getattr(source_stats, "rejected_payloads", 0))
-            events_dedup_skipped = _safe_int(runner.metrics.dedup_skipped + stats["duplicates_dropped"])
             snapshot_runs = _safe_int(getattr(source_stats, "snapshot_runs", runner.metrics.snapshot_runs), runner.metrics.snapshot_runs)
             snapshot_rows = _safe_int(runner.metrics.snapshot_rows, runner.metrics.snapshot_rows)
             handoff_bootstrap_rows = _safe_int(getattr(source_stats, "handoff_bootstrap_rows", 0))
@@ -614,6 +697,7 @@ def collect_events(
                     "handoff_inconsistent": handoff_inconsistent,
                     "stream_metrics": stream_metrics,
                     "temporal_policy": temporal_policy,
+                    "shadow_comparison": shadow_comparison_payload,
                 },
             )
             _emit_ingestion_summary(
@@ -687,6 +771,8 @@ def collect_events(
         if compute_features_after:
             run_feature_pipeline(events_out)
         return events_out
+    except ShadowPromotionError:
+        raise
     except Exception as exc:  # pragma: no cover - explicit policy validated by unit tests
         err = exc if isinstance(exc, IngestionError) else IngestionError("source", "permanent", str(exc))
         source_events_in = _safe_int(getattr(source_stats, "source_events_in", getattr(runner, "metrics", None).events_in if runner else 0))

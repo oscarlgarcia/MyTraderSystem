@@ -177,6 +177,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Politica para eventos tardios o fuera de orden: accept, drop o fail.",
     )
     parser.add_argument(
+        "--ingest-pipeline-version",
+        choices=["v1", "v2"],
+        default="v2",
+        help="Version principal del pipeline/sink normalized: v1 legacy o v2 actual.",
+    )
+    parser.add_argument(
+        "--ingest-shadow-mode",
+        action="store_true",
+        help="Activa doble escritura y comparacion old-vs-new para migracion controlada.",
+    )
+    parser.add_argument(
+        "--ingest-shadow-block-on-diff",
+        action="store_true",
+        help="Bloquea la ejecucion si el comparador shadow detecta diferencias relevantes.",
+    )
+    parser.add_argument(
         "--fast-path",
         action="store_true",
         help="Modo experimental de alto throughput: menos garantias, menos logs, mas batching.",
