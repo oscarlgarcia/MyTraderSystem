@@ -72,6 +72,27 @@ def test_backfill_dedup_flag():
     assert args.dedup is True
 
 
+def test_historical_backfill_scope_is_explicitly_bars_only():
+    assert backfill.HISTORICAL_BACKFILL_SCOPE == "bars-only"
+    assert backfill.SUPPORTED_HISTORICAL_BACKFILL_FEEDS == ("kline",)
+    assert backfill.supports_historical_backfill("kline") is True
+    assert backfill.supports_historical_backfill("trade") is False
+
+
+def test_trade_historical_backfill_is_rejected_explicitly():
+    with pytest.raises(ValueError, match="trade historical backfill is not supported"):
+        backfill.assert_historical_backfill_support("trade")
+
+
+def test_backfill_cli_help_declares_bars_only_scope(capsys):
+    with pytest.raises(SystemExit):
+        backfill.parse_args(["--help"])
+
+    out = capsys.readouterr().out
+    assert "bars-only" in out
+    assert "Trade historical backfill no esta soportado" in out
+
+
 def test_429_retries_and_fails(monkeypatch):
     attempts = {"n": 0}
 

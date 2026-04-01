@@ -7,6 +7,7 @@
 - [ ] `tests/slow/test_ingestion_readiness.py` pasa completo
 - [ ] `python scripts/ingestion_soak.py` devuelve `0`
 - [ ] `python scripts/ingestion_canary.py` devuelve `0`
+- [ ] el alcance historico soportado esta declarado explicitamente: bars-only (`kline`); trade historical no se promete
 - [ ] no hay duplicados no explicados en reconnect/restart/handoff
 - [ ] no hay corrupción de `data.parquet`
 

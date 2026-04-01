@@ -194,6 +194,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - `run_ingestion_service(...)`: entrypoint aislado para ingestion. Ejecuta `collect_events(...)` sin invocar feature engineering, strategy, risk ni execution.
 - `ingestion.backfill`
   - Descarga klines historicos, normaliza filas a `BarEvent`, escribe raw append-only reutilizando `JsonlRawSink`, ordena y opcionalmente deduplica con `--dedup` antes del sink normalized.
+  - El alcance historico soportado queda formalmente limitado a bars (`kline`). Trade historical backfill no esta implementado ni debe asumirse.
 - `ingestion.storage`
   - `ParquetWriter`: persiste eventos normalized v2 separados por tipo (`trades`, `bars`) y particionados por `env`, `venue`, `symbol`, `date`; puede deduplicar contra datos ya existentes, escribe con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
   - `book` queda fuera de scope en storage normalized hasta que exista un feed real y un schema typed first-class; el writer falla explicitamente si recibe ese tipo.
@@ -313,6 +314,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 
 ### Backfill
 `REST klines -> RawRecord(JSONL append-only) + normalize_kline_row -> BarEvent -> sort(event_ts) -> deduplicate_events(opcional) -> sink/Parquet -> logs`
+
+- Scope explicito:
+  - soportado: `kline`
+  - no soportado: `trade`
 
 ## Decisiones arquitectonicas
 - **Clave compartida `_key`**: evita divergencia entre la deduplicacion de live, backfill y persistencia.

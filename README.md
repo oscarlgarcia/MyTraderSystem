@@ -31,10 +31,10 @@ python -m app.ingestion.runner --env dev --duration 600     # ingesta puntual WS
 python -m app.ingestion.inspect --env dev --limit 10        # inspeccion rapida de Parquet
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
   --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 \
-  --interval 1m --batch 500 --dry-run                       # backfill en memoria
+  --interval 1m --batch 500 --dry-run                       # backfill bars-only (`kline`) en memoria
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
   --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 \
-  --interval 1m --batch 500 --dedup                         # backfill escribiendo raw + Parquet sin duplicados
+  --interval 1m --batch 500 --dedup                         # backfill bars-only escribiendo raw + Parquet sin duplicados
 python -m app.ingestion.backfill --help                     # recordatorio de flags disponibles
 python -m app.ingestion.demo --env dev --duration 30 --max-events 200  # demo en vivo con resumen de métricas
 ```
@@ -138,7 +138,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - `python -m app.ingestion.inspect --env dev --limit 10`  
   Lista rapidamente filas de Parquet (filtros opcionales por simbolo/fecha).
 - `python -m app.ingestion.backfill ... --dry-run`  
-  Descarga klines, calcula expected/gaps sin escribir disco.
+  Descarga klines, calcula expected/gaps sin escribir disco. El alcance historico soportado hoy es bars-only (`kline`).
 - `python -m app.ingestion.backfill ... --dedup`  
   Deduplica por la misma clave de ingest live, escribe raw append-only en `data/raw/...` y normalized typed en Parquet para el rango indicado.
 - `python -m app.ingestion.backfill ...` (sin `--dry-run` ni `--dedup`)  
@@ -251,6 +251,7 @@ events = collect_events("live", cfg, duration_s=0, source=source, sink=sink)
 - Seco (no escribe): `make backfill-dev START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
 - Escribe raw + Parquet: `make backfill-dev-write START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
 - Campos clave: `INTERVAL` (soportados: 1m,3m,5m,15m,30m,1h), `BATCH` (<=1000).
+- Alcance soportado: solo bars (`kline`). Historical backfill de `trade` no esta implementado ni soportado.
 
 Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.
 

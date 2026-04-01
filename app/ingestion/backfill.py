@@ -1,5 +1,5 @@
 """
-Historical backfill for klines.
+Historical backfill for bars only (`kline`).
 
 Usage:
     python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01 --end 2024-01-02 --interval 1m --batch 1000 --dry-run
@@ -26,6 +26,22 @@ from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
 from app.observability.logger import get_logger, set_trace_id
 
 
+SUPPORTED_HISTORICAL_BACKFILL_FEEDS = ("kline",)
+HISTORICAL_BACKFILL_SCOPE = "bars-only"
+
+
+def supports_historical_backfill(feed_type: str) -> bool:
+    return str(feed_type).lower() in SUPPORTED_HISTORICAL_BACKFILL_FEEDS
+
+
+def assert_historical_backfill_support(feed_type: str) -> None:
+    normalized = str(feed_type).lower()
+    if not supports_historical_backfill(normalized):
+        raise ValueError(
+            f"{normalized} historical backfill is not supported; current scope is {HISTORICAL_BACKFILL_SCOPE} ({', '.join(SUPPORTED_HISTORICAL_BACKFILL_FEEDS)})"
+        )
+
+
 def parse_iso_utc(value: str) -> dt.datetime:
     try:
         ts = dt.datetime.fromisoformat(value)
@@ -41,12 +57,19 @@ def to_ms(ts: dt.datetime) -> int:
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backfill historico (raw + normalized, o solo descarga con --dry-run)")
+    parser = argparse.ArgumentParser(
+        description="Backfill historico bars-only (`kline`): escribe raw + normalized o solo descarga con --dry-run",
+        epilog="Trade historical backfill no esta soportado; el alcance historico actual es bars-only (`kline`).",
+    )
     parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
     parser.add_argument("--symbol", required=True, help="Simbolo (ej: BTCUSDT)")
     parser.add_argument("--start", required=True, type=parse_iso_utc, help="Inicio (ISO UTC, ej: 2024-01-01T00:00:00+00:00)")
     parser.add_argument("--end", required=True, type=parse_iso_utc, help="Fin (ISO UTC)")
-    parser.add_argument("--interval", default="1m", help="Intervalo kline (default 1m)")
+    parser.add_argument(
+        "--interval",
+        default="1m",
+        help="Intervalo kline (default 1m). Trade historical backfill no esta soportado; el alcance historico actual es bars-only.",
+    )
     parser.add_argument("--batch", type=int, default=1000, help="Limite por pagina (<=1000)")
     parser.add_argument("--dedup", action="store_true", help="Deduplica eventos con la clave compartida de ingestion")
     parser.add_argument("--dry-run", action="store_true", help="No persiste, solo descarga y resume")
@@ -193,6 +216,7 @@ def deduplicate_events(events: List[BarEvent]) -> tuple[List[BarEvent], int]:
 
 def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_sink: Optional[RawSink] = None) -> int:
     args = parse_args(argv)
+    assert_historical_backfill_support("kline")
     cfg = load_config(args.env)
     symbol = normalize_symbol(args.symbol)
     ensure_default_instruments([symbol], venue="BINANCE")
@@ -213,6 +237,8 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             "start": args.start.isoformat(),
             "end": args.end.isoformat(),
             "interval": args.interval,
+            "historical_scope": HISTORICAL_BACKFILL_SCOPE,
+            "supported_historical_feeds": list(SUPPORTED_HISTORICAL_BACKFILL_FEEDS),
             "batch": args.batch,
             "dedup": args.dedup,
             "dry_run": args.dry_run,
@@ -290,6 +316,8 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             "start": args.start.isoformat(),
             "end": args.end.isoformat(),
             "interval": args.interval,
+            "historical_scope": HISTORICAL_BACKFILL_SCOPE,
+            "supported_historical_feeds": list(SUPPORTED_HISTORICAL_BACKFILL_FEEDS),
             "dry_run": args.dry_run,
         },
     )

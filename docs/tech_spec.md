@@ -6,6 +6,8 @@
   - `app.ingestion.service.run_ingestion_service(...)` ejecuta solo captura/validacion/dedup/persistencia de market data
   - `app.main.run_trading_cycle(...)` consume eventos ya ingeridos y ejecuta el resto del pipeline cuantitativo
 - **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
+  - alcance historico soportado actual: bars-only (`kline`)
+  - trade historical backfill: no implementado / no soportado
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
 - **Catalogo minimo de instrumentos**:
@@ -175,6 +177,7 @@
 - **Backfill**:
   - `fetch_klines` pagina con manejo simple de `429`, `5xx` y timeout.
   - `normalize_kline_row` valida payload y genera `BarEvent`.
+  - `supports_historical_backfill(...)` y `assert_historical_backfill_support(...)` formalizan el alcance historico soportado; hoy solo `kline`.
   - cada fila historica valida se persiste tambien como raw append-only en `data/raw/...` usando el mismo formato `RawRecord` que live para permitir replay con `ReplaySource`.
   - Con `--dedup`, aplica deduplicacion con `_key` antes del sink y registra `duplicates_dropped`.
   - Sin `--dedup`, conserva duplicados tras normalizar y ordenar.
