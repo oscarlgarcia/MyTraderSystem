@@ -148,7 +148,8 @@
   - Si `buffer_skipped > ingest_buffer_warn` o `max_latency_seconds > ingest_lag_warn`, `collect_events` emite un `WARNING` una vez por ciclo live.
 - **Backfill**:
   - `fetch_klines` pagina con manejo simple de `429`, `5xx` y timeout.
-  - `normalize_kline_row` valida payload y genera `MarketEvent`.
+  - `normalize_kline_row` valida payload y genera `BarEvent`.
+  - cada fila historica valida se persiste tambien como raw append-only en `data/raw/...` usando el mismo formato `RawRecord` que live para permitir replay con `ReplaySource`.
   - Con `--dedup`, aplica deduplicacion con `_key` antes del sink y registra `duplicates_dropped`.
   - Sin `--dedup`, conserva duplicados tras normalizar y ordenar.
 

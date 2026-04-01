@@ -5,8 +5,9 @@ import httpx
 import pytest
 
 from app.ingestion import backfill
+from app.marketdata.models import BarEvent
+from app.marketdata.replay import ReplaySource
 from app.ingestion.storage import normalized_partition_path, read_parquet
-from app.common.dto import MarketEvent
 
 
 class DummyResponse:
@@ -84,17 +85,23 @@ def test_429_retries_and_fails(monkeypatch):
 
 
 def test_normalize_kline_row_utc():
-    row = [0, "", "", "", "100", "5", 60_000]  # close time 60s
+    row = [0, "99", "101", "98", "100", "5", 60_000]  # close time 60s
     ev = backfill.normalize_kline_row("BTCUSDT", row)
+    assert isinstance(ev, BarEvent)
     assert ev.event_ts.tzinfo is not None
     assert ev.event_ts == dt.datetime.fromtimestamp(60, tz=dt.timezone.utc)
+    assert ev.open == 99.0
+    assert ev.high == 101.0
+    assert ev.low == 98.0
+    assert ev.close == 100.0
+    assert ev.volume == 5.0
 
 
 def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
     rows = [
-        [1704067200000, "", "", "", "1", "10", 1704067260000],  # 2024-01-01 00:00:00 / close +60s
-        [1704067260001, "", "", "", "2", "20", 1704067320000],  # +60s
+        [1704067200000, "0.9", "1.1", "0.8", "1", "10", 1704067260000],  # 2024-01-01 00:00:00 / close +60s
+        [1704067260001, "1.9", "2.1", "1.8", "2", "20", 1704067320000],  # +60s
     ]
 
     monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
@@ -107,16 +114,32 @@ def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     assert path.exists()
     table = read_parquet(path)
     assert table.num_rows == 2  # idempotente
+    assert "open" in table.column_names
+    assert "close" in table.column_names
     # ordenado por event_ts
     ts_list = table.column("event_ts").to_pylist()
     assert ts_list == sorted(ts_list)
+
+    raw_files = list((tmp_path / "raw").glob("env=dev/venue=BINANCE/stream_type=kline/symbol=BTCUSDT/date=*/events.jsonl"))
+    assert len(raw_files) == 1
+
+    replayed = list(
+        ReplaySource(
+            base_dir=tmp_path / "raw",
+            env="dev",
+            symbol="BTCUSDT",
+            stream_types=("kline",),
+        ).stream()
+    )
+    assert len(replayed) == 4
+    assert all(isinstance(event, BarEvent) for event in replayed)
 
 
 def test_backfill_dedup_drops_duplicates_and_logs(monkeypatch, tmp_path, capsys):
     cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
     rows = [
-        [1704067200000, "", "", "", "1", "10", 1704067260000],
-        [1704067200000, "", "", "", "1", "10", 1704067260000],
+        [1704067200000, "1", "1", "1", "1", "10", 1704067260000],
+        [1704067200000, "1", "1", "1", "1", "10", 1704067260000],
     ]
 
     monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
@@ -144,8 +167,8 @@ def test_backfill_dedup_drops_duplicates_and_logs(monkeypatch, tmp_path, capsys)
 def test_backfill_without_dedup_keeps_duplicates(monkeypatch, tmp_path):
     cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
     rows = [
-        [1704067200000, "", "", "", "1", "10", 1704067260000],
-        [1704067200000, "", "", "", "1", "10", 1704067260000],
+        [1704067200000, "1", "1", "1", "1", "10", 1704067260000],
+        [1704067200000, "1", "1", "1", "1", "10", 1704067260000],
     ]
 
     monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
@@ -170,8 +193,8 @@ def test_backfill_without_dedup_keeps_duplicates(monkeypatch, tmp_path):
 
 def test_gap_detection(monkeypatch):
     events = [
-        MarketEvent(symbol="BTCUSDT", event_ts=dt.datetime.fromtimestamp(0, tz=dt.timezone.utc), price=1.0, size=1.0, source="kline"),
-        MarketEvent(symbol="BTCUSDT", event_ts=dt.datetime.fromtimestamp(180, tz=dt.timezone.utc), price=1.0, size=1.0, source="kline"),
+        backfill.normalize_kline_row("BTCUSDT", [0, "1", "1", "1", "1", "1", 60_000]),
+        backfill.normalize_kline_row("BTCUSDT", [120_000, "1", "1", "1", "1", "1", 180_000]),
     ]
     assert backfill._count_gaps(events, interval_ms=60_000) == 1
 
@@ -179,7 +202,7 @@ def test_gap_detection(monkeypatch):
 def test_dry_run_creates_no_files(monkeypatch, tmp_path):
     cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
     rows = [
-        [1704067200000, "", "", "", "1", "10", 1704067260000],
+        [1704067200000, "1", "1", "1", "1", "10", 1704067260000],
     ]
     monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
     monkeypatch.setattr(backfill, "fetch_klines", lambda **kwargs: rows)
@@ -247,10 +270,10 @@ def test_timeout_retries_then_fail(monkeypatch):
 def test_gap_zero_when_consecutive():
     events = [
         backfill.normalize_kline_row(
-            "BTCUSDT", [0, "", "", "", "1", "1", 60_000]
+            "BTCUSDT", [0, "1", "1", "1", "1", "1", 60_000]
         ),
         backfill.normalize_kline_row(
-            "BTCUSDT", [60_001, "", "", "", "1", "1", 120_000]
+            "BTCUSDT", [60_001, "1", "1", "1", "1", "1", 120_000]
         ),
     ]
     assert backfill._count_gaps(events, interval_ms=60_000) == 0
@@ -259,10 +282,10 @@ def test_gap_zero_when_consecutive():
 def test_gap_custom_interval():
     events = [
         backfill.normalize_kline_row(
-            "BTCUSDT", [0, "", "", "", "1", "1", 300_000]
+            "BTCUSDT", [0, "1", "1", "1", "1", "1", 300_000]
         ),
         backfill.normalize_kline_row(
-            "BTCUSDT", [900_001, "", "", "", "1", "1", 1_200_000]
+            "BTCUSDT", [900_001, "1", "1", "1", "1", "1", 1_200_000]
         ),
     ]
     assert backfill._count_gaps(events, interval_ms=300_000) == 1

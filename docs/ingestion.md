@@ -166,7 +166,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - `ingestion.pipeline`
   - `collect_events`: orquesta dry/live, ejecuta un `Source`, consume un `EventSink`, aplica una segunda barrera de deduplicacion antes de persistir, soporta batching local de IO, carga/guarda checkpoints live y emite un resumen agregado final de la ejecucion.
 - `ingestion.backfill`
-  - Descarga klines historicos, normaliza filas, ordena y opcionalmente deduplica con `--dedup` antes del sink.
+  - Descarga klines historicos, normaliza filas a `BarEvent`, escribe raw append-only reutilizando `JsonlRawSink`, ordena y opcionalmente deduplica con `--dedup` antes del sink normalized.
 - `ingestion.storage`
   - `ParquetWriter`: persiste eventos normalized v2 separados por tipo (`trades`, `bars`, `books`) y particionados por `env`, `venue`, `symbol`, `date`; puede deduplicar contra datos ya existentes, escribe con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
   - Cada dataset normalized `v2` persiste `normalizer_version` como columna de datos y como metadata de Parquet.
@@ -263,7 +263,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 `Source.stream -> MarketEvent -> ResilientRunner(dedup/lag) -> handler live(dedup defensiva) -> EventSink -> logs/features opcionales`
 
 ### Backfill
-`REST klines -> normalize_kline_row -> MarketEvent -> sort(event_ts) -> deduplicate_events(opcional) -> sink/Parquet -> logs`
+`REST klines -> RawRecord(JSONL append-only) + normalize_kline_row -> BarEvent -> sort(event_ts) -> deduplicate_events(opcional) -> sink/Parquet -> logs`
 
 ## Decisiones arquitectonicas
 - **Clave compartida `_key`**: evita divergencia entre la deduplicacion de live, backfill y persistencia.

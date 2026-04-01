@@ -35,7 +35,7 @@ python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
   --interval 1m --batch 500 --dry-run                       # backfill en memoria
 python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
   --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 \
-  --interval 1m --batch 500 --dedup                         # backfill escribiendo Parquet sin duplicados
+  --interval 1m --batch 500 --dedup                         # backfill escribiendo raw + Parquet sin duplicados
 python -m app.ingestion.backfill --help                     # recordatorio de flags disponibles
 python -m app.ingestion.demo --env dev --duration 30 --max-events 200  # demo en vivo con resumen de métricas
 ```
@@ -142,9 +142,9 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - `python -m app.ingestion.backfill ... --dry-run`  
   Descarga klines, calcula expected/gaps sin escribir disco.
 - `python -m app.ingestion.backfill ... --dedup`  
-  Deduplica por la misma clave de ingest live y escribe Parquet ordenado para el rango indicado.
+  Deduplica por la misma clave de ingest live, escribe raw append-only en `data/raw/...` y normalized typed en Parquet para el rango indicado.
 - `python -m app.ingestion.backfill ...` (sin `--dry-run` ni `--dedup`)  
-  Escribe el lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
+  Escribe raw + normalized del lote tal cual llega tras normalizar/ordenar; util cuando se quiere inspeccionar duplicados.
 - Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 - Contrato de fuentes/sinks: live ahora se ejecuta sobre un `Source` (`BinanceSource` por defecto) y un `EventSink` (`ParquetEventSink` por defecto), lo que permite tests con mocks sin tocar Binance ni Parquet.
 - Contrato canonico tipado: `app.marketdata.models` introduce `TradeEvent`, `BarEvent` y `BookEvent` con adapters temporales hacia `app.common.dto.MarketEvent`. El hot path de `collect_events(...)` ya opera con eventos tipados; los adapters legacy quedan acotados a capas de compatibilidad explicita como storage legacy o consumidores antiguos.
@@ -240,7 +240,7 @@ events = collect_events("live", cfg, duration_s=0, source=source, sink=sink)
 
 ### Backfill historico
 - Seco (no escribe): `make backfill-dev START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
-- Escribe Parquet: `make backfill-dev-write START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
+- Escribe raw + Parquet: `make backfill-dev-write START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
 - Campos clave: `INTERVAL` (soportados: 1m,3m,5m,15m,30m,1h), `BATCH` (<=1000).
 
 Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.

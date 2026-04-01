@@ -14,12 +14,14 @@ from typing import List, Optional
 
 import httpx
 
-from app.common import validator
-from app.common.dto import MarketEvent, normalize_symbol
+from app.common.dto import normalize_symbol
+from app.ingestion.client import normalize_kline_typed
 from app.config import load_config
 from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_market_events
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
+from app.marketdata.models import BarEvent
+from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
 from app.observability.logger import get_logger, set_trace_id
 
 
@@ -38,7 +40,7 @@ def to_ms(ts: dt.datetime) -> int:
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backfill historico (solo descarga, sin escritura)")
+    parser = argparse.ArgumentParser(description="Backfill historico (raw + normalized, o solo descarga con --dry-run)")
     parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
     parser.add_argument("--symbol", required=True, help="Simbolo (ej: BTCUSDT)")
     parser.add_argument("--start", required=True, type=parse_iso_utc, help="Inicio (ISO UTC, ej: 2024-01-01T00:00:00+00:00)")
@@ -122,22 +124,73 @@ def fetch_klines(
     return out
 
 
-def normalize_kline_row(symbol: str, row: list) -> MarketEvent:
-    close_time = dt.datetime.fromtimestamp(row[6] / 1000, tz=dt.timezone.utc)
-    price_close = float(row[4])
-    volume = float(row[5])
-    validator.validate_market_payload(symbol, close_time, price_close, volume)
-    return MarketEvent(symbol=symbol, event_ts=close_time, price=price_close, size=volume, source="kline")
+def _kline_payload_from_row(symbol: str, row: list, *, interval: str) -> dict:
+    close = str(row[4])
+    return {
+        "s": symbol,
+        "E": int(row[6]),
+        "k": {
+            "t": int(row[0]),
+            "T": int(row[6]),
+            "o": str(row[1]) if len(row) > 1 and row[1] not in ("", None) else close,
+            "h": str(row[2]) if len(row) > 2 and row[2] not in ("", None) else close,
+            "l": str(row[3]) if len(row) > 3 and row[3] not in ("", None) else close,
+            "c": close,
+            "q": str(row[5]),
+            "i": interval,
+        },
+    }
 
 
-def deduplicate_events(events: List[MarketEvent]) -> tuple[List[MarketEvent], int]:
+def normalize_kline_row(
+    symbol: str,
+    row: list,
+    *,
+    interval: str = "1m",
+    receive_ts: dt.datetime | None = None,
+    process_ts: dt.datetime | None = None,
+    venue: str = "BINANCE",
+) -> BarEvent:
+    payload = _kline_payload_from_row(symbol, row, interval=interval)
+    return normalize_kline_typed(
+        payload,
+        venue=venue,
+        receive_ts=receive_ts,
+        process_ts=process_ts,
+        interval=interval,
+    )
+
+
+def raw_record_from_kline_row(
+    symbol: str,
+    row: list,
+    *,
+    interval: str,
+    receive_ts: dt.datetime,
+    trace_id: str | None,
+    venue: str = "BINANCE",
+) -> RawRecord:
+    payload = _kline_payload_from_row(symbol, row, interval=interval)
+    return RawRecord(
+        payload=payload,
+        venue=venue,
+        stream_type="kline",
+        symbol=symbol,
+        exchange_ts=dt.datetime.fromtimestamp(int(row[6]) / 1000, tz=dt.timezone.utc),
+        receive_ts=receive_ts,
+        trace_id=trace_id,
+        source_id=str(row[0]),
+    )
+
+
+def deduplicate_events(events: List[BarEvent]) -> tuple[List[BarEvent], int]:
     return deduplicate_market_events(
         events,
         deduplicator=Deduplicator(ttl_seconds=None, max_entries=max(len(events), 4096)),
     )
 
 
-def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> int:
+def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_sink: Optional[RawSink] = None) -> int:
     args = parse_args(argv)
     cfg = load_config(args.env)
     symbol = normalize_symbol(args.symbol)
@@ -174,8 +227,29 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> i
             interval=args.interval,
             limit=args.batch,
         )
-    events = [normalize_kline_row(symbol, row) for row in klines]
+    receive_ts = dt.datetime.now(dt.timezone.utc)
+    raw_records = [
+        raw_record_from_kline_row(
+            symbol,
+            row,
+            interval=args.interval,
+            receive_ts=receive_ts,
+            trace_id=trace_id,
+        )
+        for row in klines
+    ]
+    events = [
+        normalize_kline_row(
+            symbol,
+            row,
+            interval=args.interval,
+            receive_ts=receive_ts,
+            process_ts=receive_ts,
+        )
+        for row in klines
+    ]
     events.sort(key=lambda event: event.event_ts)
+    raw_records.sort(key=lambda record: record.exchange_ts)
 
     duplicates_dropped = 0
     if args.dedup:
@@ -190,9 +264,12 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None) -> i
     gaps = _count_gaps(events, interval_ms)
 
     if not args.dry_run:
+        raw_sink_impl = raw_sink or JsonlRawSink(base_dir=cfg.data_dir / "raw", env=cfg.env)
         sink_impl = sink or ParquetEventSink(
             ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=args.dedup)
         )
+        for record in raw_records:
+            raw_sink_impl.write(record)
         for event in events:
             sink_impl.add(event)
         sink_impl.close()
@@ -231,7 +308,7 @@ def _interval_to_ms(interval: str) -> int:
     return mapping[interval]
 
 
-def _count_gaps(events: List[MarketEvent], interval_ms: int) -> int:
+def _count_gaps(events: List[BarEvent], interval_ms: int) -> int:
     if len(events) < 2:
         return 0
     events_sorted = sorted(events, key=lambda event: event.event_ts)
