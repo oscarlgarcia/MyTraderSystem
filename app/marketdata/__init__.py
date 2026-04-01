@@ -18,6 +18,13 @@ from .normalization import NORMALIZER_VERSION, SUPPORTED_NORMALIZER_VERSIONS, re
 from .raw_sink import JsonlRawSink, NullRawSink, RawRecord, RawSink
 from .gaps import GapObservation, detect_gap
 from .recovery import BarRecoveryPolicy, RecoveryPolicy, TradeRecoveryPolicy, recovery_policy_for_event
+from .support_matrix import (
+    FEED_SUPPORT_MATRIX,
+    FeedSupport,
+    feed_support,
+    normalize_feed_types,
+    validate_live_feed_support,
+)
 from .temporal_state import (
     CursorState,
     TemporalPartitionKey,
@@ -61,6 +68,11 @@ __all__ = [
     "JsonlRawSink",
     "GapObservation",
     "detect_gap",
+    "FeedSupport",
+    "FEED_SUPPORT_MATRIX",
+    "feed_support",
+    "normalize_feed_types",
+    "validate_live_feed_support",
     "RecoveryPolicy",
     "TradeRecoveryPolicy",
     "BarRecoveryPolicy",

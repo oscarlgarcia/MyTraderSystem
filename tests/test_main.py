@@ -107,6 +107,7 @@ def test_fast_path_derives_runtime_flags():
         ingest_pipeline_version="v1",
         ingest_shadow_mode=True,
         ingest_shadow_block_on_diff=True,
+        ingest_stream_types=("kline",),
         allow_live_fallback=True,
         error_policy="degraded",
     )
@@ -127,6 +128,7 @@ def test_fast_path_derives_runtime_flags():
     assert runtime["ingest_pipeline_version"] == "v1"
     assert runtime["ingest_shadow_mode"] is True
     assert runtime["ingest_shadow_block_on_diff"] is True
+    assert runtime["ingest_stream_types"] == ("kline",)
     assert runtime["allow_live_fallback"] is True
     assert runtime["error_policy"] == "degraded"
 
@@ -149,9 +151,84 @@ def test_production_mode_rejects_unsafe_fallback(tmp_path):
         "ingest_dedup": True,
         "summary_logging": True,
         "ingest_backpressure_policy": "pause",
+        "ingest_stream_types": ("kline",),
     }
 
     with pytest.raises(ValueError, match="allow-live-fallback"):
+        main._validate_operational_security(cfg, mode="live", runtime=runtime)
+
+
+def test_production_mode_rejects_live_trade_without_exact_recovery(tmp_path):
+    cfg = load_config("dev")
+    cfg = type(cfg)(
+        env=cfg.env,
+        data_dir=tmp_path.resolve(),
+        log_level=cfg.log_level,
+        ws_base=cfg.ws_base,
+        rest_base=cfg.rest_base,
+        symbols=cfg.symbols,
+    )
+    runtime = {
+        "production_mode": True,
+        "fast_path": False,
+        "allow_live_fallback": False,
+        "error_policy": "fail_fast",
+        "ingest_dedup": True,
+        "summary_logging": True,
+        "ingest_backpressure_policy": "pause",
+        "ingest_stream_types": ("trade",),
+    }
+
+    with pytest.raises(ValueError, match="trade does not support exact recovery"):
+        main._validate_operational_security(cfg, mode="live", runtime=runtime)
+
+
+def test_production_mode_allows_live_kline_with_supported_handoff(tmp_path):
+    cfg = load_config("dev")
+    cfg = type(cfg)(
+        env=cfg.env,
+        data_dir=tmp_path.resolve(),
+        log_level=cfg.log_level,
+        ws_base=cfg.ws_base,
+        rest_base=cfg.rest_base,
+        symbols=cfg.symbols,
+    )
+    runtime = {
+        "production_mode": True,
+        "fast_path": False,
+        "allow_live_fallback": False,
+        "error_policy": "fail_fast",
+        "ingest_dedup": True,
+        "summary_logging": True,
+        "ingest_backpressure_policy": "pause",
+        "ingest_stream_types": ("kline",),
+    }
+
+    main._validate_operational_security(cfg, mode="live", runtime=runtime)
+
+
+def test_live_mode_rejects_feed_without_live_support(tmp_path):
+    cfg = load_config("dev")
+    cfg = type(cfg)(
+        env=cfg.env,
+        data_dir=tmp_path.resolve(),
+        log_level=cfg.log_level,
+        ws_base=cfg.ws_base,
+        rest_base=cfg.rest_base,
+        symbols=cfg.symbols,
+    )
+    runtime = {
+        "production_mode": False,
+        "fast_path": False,
+        "allow_live_fallback": False,
+        "error_policy": None,
+        "ingest_dedup": True,
+        "summary_logging": True,
+        "ingest_backpressure_policy": "pause",
+        "ingest_stream_types": ("book",),
+    }
+
+    with pytest.raises(ValueError, match="book does not support live ingestion"):
         main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 

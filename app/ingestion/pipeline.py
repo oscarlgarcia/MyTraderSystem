@@ -442,6 +442,7 @@ def collect_events(
     pipeline_version: str = "v2",
     shadow_mode: bool = False,
     shadow_block_on_diff: bool = False,
+    stream_types: tuple[str, ...] = ("trade", "kline"),
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
@@ -521,7 +522,7 @@ def collect_events(
             run_feature_pipeline(events_out)
         return events_out
 
-    source_impl = source or BinanceSource(cfg)
+    source_impl = source or BinanceSource(cfg, stream_types=stream_types)
     if source is None and isinstance(getattr(source_impl, "raw_sink", None), NullRawSink):
         source_impl.raw_sink = JsonlRawSink(Path(cfg.data_dir) / "raw", env=cfg.env)
     source_stats = getattr(source_impl, "stats", None)

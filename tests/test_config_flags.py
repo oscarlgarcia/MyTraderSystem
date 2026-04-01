@@ -16,6 +16,7 @@ def test_defaults_flags():
     assert args.ingest_dedup is True
     assert args.allow_live_fallback is False
     assert args.error_policy is None
+    assert args.ingest_stream_types == ("trade", "kline")
 
 
 def test_features_after_ingest_flag():
@@ -66,3 +67,8 @@ def test_shadow_mode_flags():
     assert args.ingest_pipeline_version == "v1"
     assert args.ingest_shadow_mode is True
     assert args.ingest_shadow_block_on_diff is True
+
+
+def test_ingest_stream_types_flag():
+    args = parse_args(["--ingest-stream-types", "kline"])
+    assert args.ingest_stream_types == ("kline",)

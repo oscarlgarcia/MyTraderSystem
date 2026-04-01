@@ -22,6 +22,7 @@ python -m app --env dev --mode live --features-after-ingest        # ejecuta fea
 python -m app --env dev --mode live --ingest-max-buffer 20000      # ajusta buffer del runner (escalabilidad)
 python -m app --env dev --mode live --ingest-batch-size 50         # agrupa escrituras al writer en lotes locales
 python -m app --env dev --mode live --ingest-backpressure-policy drop_newest  # politica de saturacion: pause/drop_oldest/drop_newest/fail
+python -m app --env dev --mode live --ingest-stream-types kline               # limita el live a feeds concretos soportados
 python -m app --env dev --mode live --no-ingest-dedup              # desactiva dedup para throughput (riesgo duplicados)
 python -m app --env dev --mode live --allow-live-fallback          # permite fallback explicito a dry si live falla
 python -m app --env dev --mode live --error-policy degraded        # politica explicita de error: fail_fast, allow_fallback, degraded
@@ -80,6 +81,12 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `fail`: aborta con error de `sink`
 - `python -m app --env dev --mode live --allow-live-fallback`  
   Permite fallback explicito a `dry` si la ingesta real falla. Sin este flag, live ahora falla fuerte por defecto.
+- `python -m app --env dev --mode live --ingest-stream-types kline`  
+  Selecciona los feeds live a ingerir. La matriz actual de soporte es:
+  - `trade`: soporta live, pero no recovery exacto
+  - `kline`: soporta live, recovery exacto y handoff
+  - `book`: no soporta live
+  En `--production-mode`, el arranque rechaza cualquier feed sin `supports_live`, `supports_exact_recovery` y `supports_handoff`.
 - Checkpoint live minimo: las ejecuciones reales de live persisten en `<data_dir>/<env>/state/ingestion-checkpoint.json`:
   - `last_event_ts` global maximo por compatibilidad
   - cursores/watermarks por stream `(venue, symbol, stream_type)`

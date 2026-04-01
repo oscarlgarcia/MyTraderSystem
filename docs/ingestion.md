@@ -88,6 +88,15 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - El recovery ya no es generico:
     - `trade`: no acepta snapshots de barras como catch-up. Un gap fuerte sin recovery exacto se marca `gap_irreparable`.
     - `kline`: usa snapshots filtrados por `(venue, symbol, stream_type)` y elimina el borde duplicado via dedup del runner.
+- `marketdata.support_matrix`
+  - Define `FeedSupport` y `FEED_SUPPORT_MATRIX`.
+  - La matriz actual declara por `feed_type`:
+    - `supports_live`
+    - `supports_exact_recovery`
+    - `supports_handoff`
+  - Gating actual:
+    - cualquier `mode=live` rechaza feeds sin `supports_live`
+    - `production_mode` rechaza ademas feeds sin recovery exacto o sin handoff soportado
 - `marketdata.handoff`
   - Define `HistoricalWindow`, `windowed_bootstrap_events(...)` y `HandoffSource`.
   - `HandoffSource` compone:
@@ -255,6 +264,11 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
 - **Observabilidad operativa seria**: en modo normal se emiten `ingestion summary` e `ingestion health`. El summary separa `source_events_in`, `events_valid`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`, `processing_latency_seconds`, `write_latency_seconds`, `event_gap_seconds`, `late_events`, `late_event_max_delay_seconds`, `temporal_policy` y `reconnects`; `ingestion health` resume el estado final con el mismo `trace_id`. En live se conserva `ingestion live complete` por compatibilidad.
 - **Metricas por politica de saturacion**: `buffer_overflows`, `buffer_pauses`, `buffer_drop_oldest`, `buffer_drop_newest`, `buffer_failures` y `backpressure_policy` quedan en logs de cierre y warnings de presion.
 - **Fail-fast por defecto en live**: si la ingesta real falla, `collect_events` propaga el error. El fallback a `dry` solo existe cuando se activa explicitamente `--allow-live-fallback`.
+- **Matriz de soporte live por feed**:
+  - `trade`: live permitido, pero no exact recovery
+  - `kline`: live permitido con exact recovery y handoff
+  - `book`: live no soportado
+  - `--production-mode` solo admite feeds que cumplan las tres garantias
 - **Politica explicita de error en live**:
   - `fail_fast`: propaga el error
   - `allow_fallback`: solo errores de `source` degradan a `dry`

@@ -14,6 +14,7 @@ from uuid import uuid4
 from app import common, execution, features, ingestion, observability, ops, portfolio, risk, strategy  # noqa: F401
 from app.common.dto import MarketEvent, TraceContext
 from app.config import AppConfig, load_config, parse_args
+from app.marketdata.support_matrix import validate_live_feed_support
 from app.observability.logger import get_logger, set_trace_id
 from app.ingestion.pipeline import collect_events
 from app.ingestion.storage import validate_output_path
@@ -66,6 +67,7 @@ def _resolve_runtime_options(args) -> Dict[str, object]:
         "ingest_pipeline_version": getattr(args, "ingest_pipeline_version", "v2"),
         "ingest_shadow_mode": bool(getattr(args, "ingest_shadow_mode", False)),
         "ingest_shadow_block_on_diff": bool(getattr(args, "ingest_shadow_block_on_diff", False)),
+        "ingest_stream_types": tuple(getattr(args, "ingest_stream_types", ("trade", "kline"))),
         "allow_live_fallback": bool(getattr(args, "allow_live_fallback", False)),
         "error_policy": getattr(args, "error_policy", None),
         "snapshot_enabled": not fast_path,
@@ -81,6 +83,15 @@ def _validate_operational_security(
 ) -> None:
     production_mode = bool(runtime.get("production_mode", False))
     validate_output_path(cfg.data_dir, require_absolute=production_mode)
+    if mode == "live":
+        try:
+            validate_live_feed_support(
+                runtime.get("ingest_stream_types", ("trade", "kline")),
+                require_exact_recovery=production_mode,
+                require_handoff=production_mode,
+            )
+        except ValueError as exc:
+            raise ValueError(f"Unsafe production configuration: {exc}" if production_mode else f"Unsupported live feed configuration: {exc}") from exc
     if not production_mode:
         return
 
@@ -127,6 +138,7 @@ def run_cycle(
     ingest_pipeline_version: str = "v2",
     ingest_shadow_mode: bool = False,
     ingest_shadow_block_on_diff: bool = False,
+    ingest_stream_types: tuple[str, ...] = ("trade", "kline"),
     allow_live_fallback: bool = False,
     error_policy: str | None = None,
 ):
@@ -161,6 +173,7 @@ def run_cycle(
         pipeline_version=ingest_pipeline_version,
         shadow_mode=ingest_shadow_mode,
         shadow_block_on_diff=ingest_shadow_block_on_diff,
+        stream_types=ingest_stream_types,
     )
     _trace(logger, trace_steps, "ingestion", "done", {"count": len(events)})
     _mark(recorder, "ingestion")
@@ -240,6 +253,7 @@ def run() -> int:
         ingest_pipeline_version=runtime["ingest_pipeline_version"],
         ingest_shadow_mode=runtime["ingest_shadow_mode"],
         ingest_shadow_block_on_diff=runtime["ingest_shadow_block_on_diff"],
+        ingest_stream_types=runtime["ingest_stream_types"],
         allow_live_fallback=runtime["allow_live_fallback"],
         error_policy=runtime["error_policy"],
     )
@@ -251,6 +265,7 @@ def run() -> int:
             "data_dir": str(config.data_dir),
             "trace_id": trace_id,
             "mode": args.mode,
+            "ingest_stream_types": list(runtime["ingest_stream_types"]),
             "fast_path": runtime["fast_path"],
             "error_policy": runtime["error_policy"] or ("allow_fallback" if runtime["allow_live_fallback"] else "fail_fast"),
             "metrics": metrics,

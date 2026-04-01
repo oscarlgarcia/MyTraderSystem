@@ -63,6 +63,42 @@ def test_live_collect_events_returns_processed_events_after_flush(monkeypatch):
     assert out == events
 
 
+def test_live_collect_events_passes_stream_types_to_default_source(monkeypatch):
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    captured: dict[str, object] = {}
+    event = _ev(0, 100)
+
+    class FakeSource:
+        def __init__(self, cfg_arg, stream_types):
+            assert cfg_arg is cfg
+            captured["stream_types"] = stream_types
+            self.stats = None
+            self.raw_sink = mock.Mock()
+
+        def stream(self, end_time=None):
+            del end_time
+            yield event
+
+        def snapshot(self):
+            return None
+
+    monkeypatch.setattr(pipeline, "BinanceSource", FakeSource)
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        max_events=10,
+        duration_s=0,
+        logger=mock.Mock(),
+        snapshot_enabled=False,
+        sink=DummySink(),
+        stream_types=("kline",),
+    )
+
+    assert captured["stream_types"] == ("kline",)
+    assert out == [event]
+
+
 def test_live_failure_fail_fast_by_default(monkeypatch):
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     synthetic = mock.Mock(return_value=[_ev(0, 100)])

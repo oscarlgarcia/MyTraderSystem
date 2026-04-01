@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 
+from app.marketdata.support_matrix import normalize_feed_types
+
 DEFAULT_ENV = "dev"
 REQUIRED_KEYS = {"env", "data_dir", "log_level", "ws_base", "rest_base", "symbols"}
 ALLOWED_LOG_LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
@@ -105,6 +107,9 @@ def load_config(env: str | None = None) -> AppConfig:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    def _parse_stream_types(value: str) -> tuple[str, ...]:
+        return normalize_feed_types([part.strip() for part in str(value).split(",")])
+
     parser = argparse.ArgumentParser(description="MyTraderSystem")
     parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
     parser.add_argument(
@@ -191,6 +196,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--ingest-shadow-block-on-diff",
         action="store_true",
         help="Bloquea la ejecucion si el comparador shadow detecta diferencias relevantes.",
+    )
+    parser.add_argument(
+        "--ingest-stream-types",
+        type=_parse_stream_types,
+        default=("trade", "kline"),
+        help="Streams live a ingerir, separados por coma. Ejemplo: trade,kline o kline.",
     )
     parser.add_argument(
         "--fast-path",

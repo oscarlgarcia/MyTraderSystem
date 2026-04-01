@@ -79,11 +79,12 @@
     - `reconnects_total`
     - `heartbeat_missed_total`
     - `raw_write_latency`
-  - `app.main._resolve_runtime_options(args) -> dict[str, object]`
+- `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
   - Propaga `ingest_backpressure_policy` con default `pause`.
   - Propaga `ingest_temporal_policy` con default `accept`.
+  - Propaga `ingest_stream_types` como tupla normalizada de feeds live seleccionados.
   - Propaga `production_mode`; cuando esta activo, el arranque valida `data_dir`, logging y politicas inseguras antes de ejecutar ingestion.
   - Propaga `allow_live_fallback` para debugging controlado; no se activa por defecto.
 - `app.ingestion.client.build_ws_url(ws_base, symbols, stream_types=None) -> str`
@@ -200,6 +201,7 @@
   - no se aceptan secretos en `config.*.yaml`;
   - el logger no expone claves/valores sensibles en logs JSON;
   - produccion rechaza configuraciones con degradacion silenciosa o perdida implicita;
+  - produccion rechaza feeds live sin `supports_live`, `supports_exact_recovery` y `supports_handoff` segun `app.marketdata.support_matrix`;
   - la ruta de persistencia debe ser valida y escribible.
 
 ## Relaciones
