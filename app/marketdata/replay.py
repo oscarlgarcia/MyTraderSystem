@@ -54,6 +54,7 @@ def _record_from_dict(payload: dict) -> RawRecord:
         symbol=payload["symbol"],
         exchange_ts=_parse_ts(payload["exchange_ts"]),
         receive_ts=_parse_ts(payload["receive_ts"]),
+        run_id=payload.get("run_id"),
         ingestion_seq=int(payload["ingestion_seq"]) if payload.get("ingestion_seq") is not None else None,
         trace_id=payload.get("trace_id"),
         source_id=payload.get("source_id"),

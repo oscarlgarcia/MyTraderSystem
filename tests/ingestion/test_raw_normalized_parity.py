@@ -134,4 +134,5 @@ def test_live_raw_ingestion_seq_is_monotonic_across_symbol_partitions(tmp_path: 
 
     assert [event.trade_id for event in out] == ["2001", "1001", "2002"]
     assert [entry.record.ingestion_seq for entry in entries] == [1, 2, 3]
+    assert len({entry.record.run_id for entry in entries}) == 1
     assert [entry.record.symbol for entry in entries] == ["ETHUSDT", "BTCUSDT", "ETHUSDT"]

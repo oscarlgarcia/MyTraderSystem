@@ -195,6 +195,7 @@ def test_replay_prefers_ingestion_seq_across_date_partitions_with_same_receive_t
     )
 
     assert [entry.record.ingestion_seq for entry in entries] == [1, 2]
+    assert len({entry.record.run_id for entry in entries}) == 1
     assert [event.trade_id for event in replayed] == ["301", "302"]
     assert [entry.path.parent.name for entry in entries] == ["date=2024-01-02", "date=2024-01-01"]
 
@@ -291,3 +292,4 @@ def test_backfill_raw_replay_and_normalized_parity_hold_for_bar_dataset(tmp_path
 
     entries = read_raw_entries(tmp_path / "raw", "test", symbol="BTCUSDT", stream_types=("kline",))
     assert [entry.record.ingestion_seq for entry in entries] == [1, 2]
+    assert len({entry.record.run_id for entry in entries}) == 1

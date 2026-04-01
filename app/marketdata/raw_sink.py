@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 from app.common.dto import normalize_symbol
 from app.common.validator import ensure_aware_utc
@@ -22,6 +23,7 @@ class RawRecord:
     symbol: str
     exchange_ts: datetime
     receive_ts: datetime
+    run_id: str | None = None
     ingestion_seq: int | None = None
     trace_id: str | None = None
     source_id: str | None = None
@@ -36,6 +38,10 @@ class RawRecord:
             raise ValueError("venue must be non-empty")
         if not self.stream_type:
             raise ValueError("stream_type must be non-empty")
+        if self.run_id is not None:
+            self.run_id = str(self.run_id)
+            if not self.run_id:
+                raise ValueError("run_id must be non-empty")
         if self.ingestion_seq is not None:
             self.ingestion_seq = int(self.ingestion_seq)
             if self.ingestion_seq < 1:
@@ -61,6 +67,7 @@ class RawRecord:
             "symbol": self.symbol,
             "exchange_ts": self.exchange_ts.isoformat(),
             "receive_ts": self.receive_ts.isoformat(),
+            "run_id": self.run_id,
             "ingestion_seq": self.ingestion_seq,
             "trace_id": self.trace_id,
             "source_id": self.source_id,
@@ -82,6 +89,7 @@ class JsonlRawSink:
     base_dir: Path
     env: str
     filename: str = "events.jsonl"
+    run_id: str = field(default_factory=lambda: uuid4().hex[:12])
     _next_ingestion_seq: int = field(default=1, init=False, repr=False)
 
     def path_for(self, record: RawRecord) -> Path:
@@ -96,6 +104,8 @@ class JsonlRawSink:
         )
 
     def write(self, record: RawRecord) -> Path:
+        if record.run_id is None:
+            record.run_id = self.run_id
         if record.ingestion_seq is None:
             record.ingestion_seq = self._next_ingestion_seq
             self._next_ingestion_seq += 1

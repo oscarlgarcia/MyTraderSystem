@@ -190,6 +190,7 @@ def test_raw_plus_normalizer_version_produces_deterministic_normalized_output(tm
     second = ensure_legacy_market_event(normalize_replay_record(entry.record, normalizer_version=NORMALIZER_VERSION))
 
     assert path.exists()
+    assert entry.record.run_id == sink.run_id
     assert entry.record.ingestion_seq == 1
     assert first == second
     assert first.metadata["normalizer_version"] == NORMALIZER_VERSION

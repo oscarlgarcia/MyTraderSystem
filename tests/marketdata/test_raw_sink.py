@@ -43,6 +43,7 @@ def test_jsonl_raw_sink_writes_append_only_layout(tmp_path):
     rows = _read_jsonl(path)
     assert rows[0]["payload"] == {"foo": "bar"}
     assert rows[0]["trace_id"] == "trace-1"
+    assert rows[0]["run_id"] == sink.run_id
     assert rows[0]["ingestion_seq"] == 1
 
 
@@ -76,6 +77,42 @@ def test_jsonl_raw_sink_assigns_monotonic_ingestion_seq_per_run(tmp_path):
 
     assert first_rows[0]["ingestion_seq"] == 1
     assert second_rows[0]["ingestion_seq"] == 2
+    assert first_rows[0]["run_id"] == sink.run_id
+    assert second_rows[0]["run_id"] == sink.run_id
+
+
+def test_jsonl_raw_sink_generates_distinct_run_id_per_sink_instance(tmp_path):
+    first_sink = JsonlRawSink(tmp_path / "raw", env="test")
+    second_sink = JsonlRawSink(tmp_path / "raw", env="test")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    first_path = first_sink.write(
+        RawRecord(
+            payload={"foo": 1},
+            venue="BINANCE",
+            stream_type="trade",
+            symbol="BTCUSDT",
+            exchange_ts=base,
+            receive_ts=base,
+        )
+    )
+    second_path = second_sink.write(
+        RawRecord(
+            payload={"foo": 2},
+            venue="BINANCE",
+            stream_type="trade",
+            symbol="ETHUSDT",
+            exchange_ts=base,
+            receive_ts=base,
+        )
+    )
+
+    first_rows = _read_jsonl(first_path)
+    second_rows = _read_jsonl(second_path)
+
+    assert first_rows[0]["run_id"] == first_sink.run_id
+    assert second_rows[0]["run_id"] == second_sink.run_id
+    assert first_rows[0]["run_id"] != second_rows[0]["run_id"]
 
 
 def test_valid_stream_message_is_persisted_to_raw_landing(tmp_path):
@@ -118,6 +155,7 @@ def test_valid_stream_message_is_persisted_to_raw_landing(tmp_path):
     assert rows[0]["symbol"] == "BTCUSDT"
     assert rows[0]["stream_type"] == "trade"
     assert rows[0]["trace_id"] == "trace-raw-1"
+    assert rows[0]["run_id"] == raw_sink.run_id
     assert rows[0]["ingestion_seq"] == 1
     assert rows[0]["payload"]["data"]["t"] == 7
 
@@ -170,4 +208,5 @@ def test_sink_failure_preserves_raw_record(tmp_path):
     )
     rows = _read_jsonl(path)
     assert len(rows) == 1
+    assert rows[0]["run_id"] == raw_sink.run_id
     assert rows[0]["payload"]["data"]["t"] == 8

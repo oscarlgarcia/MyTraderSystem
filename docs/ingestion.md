@@ -58,6 +58,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `symbol`
     - `exchange_ts`
     - `receive_ts`
+    - `run_id`
     - `ingestion_seq`
     - `trace_id`
     - `source_id`

@@ -126,6 +126,9 @@ def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     with raw_files[0].open("r", encoding="utf-8") as handle:
         raw_rows = [json.loads(line) for line in handle if line.strip()]
     assert [row["ingestion_seq"] for row in raw_rows] == [1, 2, 1, 2]
+    assert len({row["run_id"] for row in raw_rows[:2]}) == 1
+    assert len({row["run_id"] for row in raw_rows[2:]}) == 1
+    assert raw_rows[0]["run_id"] != raw_rows[2]["run_id"]
 
     replayed = list(
         ReplaySource(

@@ -360,6 +360,7 @@
   - `symbol`
   - `exchange_ts`
   - `receive_ts`
+  - `run_id`
   - `ingestion_seq`
   - `trace_id`
   - `source_id`
