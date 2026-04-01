@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -122,6 +123,9 @@ def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
 
     raw_files = list((tmp_path / "raw").glob("env=dev/venue=BINANCE/stream_type=kline/symbol=BTCUSDT/date=*/events.jsonl"))
     assert len(raw_files) == 1
+    with raw_files[0].open("r", encoding="utf-8") as handle:
+        raw_rows = [json.loads(line) for line in handle if line.strip()]
+    assert [row["ingestion_seq"] for row in raw_rows] == [1, 2, 1, 2]
 
     replayed = list(
         ReplaySource(

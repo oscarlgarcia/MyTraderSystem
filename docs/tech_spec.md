@@ -320,6 +320,7 @@
   - `symbol`
   - `exchange_ts`
   - `receive_ts`
+  - `ingestion_seq`
   - `trace_id`
   - `source_id`
 - Regla operativa:
@@ -334,6 +335,7 @@
   - primario: `receive_ts`
   - secundario: path de particion
   - terciario: numero de linea dentro de `events.jsonl`
+- El raw landing ya incluye `ingestion_seq` monotono por run; el siguiente endurecimiento del replay debe priorizar esa secuencia explicita sobre el orden derivado por `receive_ts`.
 - Filtros soportados:
   - `venue`
   - `stream_types`

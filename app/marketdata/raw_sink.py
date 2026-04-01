@@ -5,7 +5,7 @@ Append-only raw landing for valid market data messages.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -22,6 +22,7 @@ class RawRecord:
     symbol: str
     exchange_ts: datetime
     receive_ts: datetime
+    ingestion_seq: int | None = None
     trace_id: str | None = None
     source_id: str | None = None
 
@@ -35,6 +36,10 @@ class RawRecord:
             raise ValueError("venue must be non-empty")
         if not self.stream_type:
             raise ValueError("stream_type must be non-empty")
+        if self.ingestion_seq is not None:
+            self.ingestion_seq = int(self.ingestion_seq)
+            if self.ingestion_seq < 1:
+                raise ValueError("ingestion_seq must be positive")
         if self.source_id is not None:
             self.source_id = str(self.source_id)
 
@@ -56,6 +61,7 @@ class RawRecord:
             "symbol": self.symbol,
             "exchange_ts": self.exchange_ts.isoformat(),
             "receive_ts": self.receive_ts.isoformat(),
+            "ingestion_seq": self.ingestion_seq,
             "trace_id": self.trace_id,
             "source_id": self.source_id,
         }
@@ -76,6 +82,7 @@ class JsonlRawSink:
     base_dir: Path
     env: str
     filename: str = "events.jsonl"
+    _next_ingestion_seq: int = field(default=1, init=False, repr=False)
 
     def path_for(self, record: RawRecord) -> Path:
         return (
@@ -89,6 +96,11 @@ class JsonlRawSink:
         )
 
     def write(self, record: RawRecord) -> Path:
+        if record.ingestion_seq is None:
+            record.ingestion_seq = self._next_ingestion_seq
+            self._next_ingestion_seq += 1
+        else:
+            self._next_ingestion_seq = max(self._next_ingestion_seq, int(record.ingestion_seq) + 1)
         path = self.path_for(record)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8", newline="\n") as handle:
