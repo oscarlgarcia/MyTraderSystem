@@ -373,10 +373,12 @@
 ## ReplaySource determinista
 - `app.marketdata.replay.ReplaySource` implementa el contrato `Source` leyendo desde raw landing.
 - Orden de replay:
-  - primario: `ingestion_seq` cuando existe
+  - primario: `run_id`
+  - secundario: `ingestion_seq` dentro del `run_id`
   - fallback legacy: `receive_ts`
   - secundario legacy: path de particion
   - terciario legacy: numero de linea dentro de `events.jsonl`
+- `detect_replay_order_ambiguities(...)` permite detectar raws legacy con metadata parcial de orden, por ejemplo `ingestion_seq` presente sin `run_id`.
 - Filtros soportados:
   - `venue`
   - `stream_types`

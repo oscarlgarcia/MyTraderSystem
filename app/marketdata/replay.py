@@ -31,10 +31,40 @@ class ReplayEntry:
     line_no: int
 
 
+@dataclass(frozen=True, slots=True)
+class ReplayOrderAmbiguity:
+    reason: str
+    path: Path
+    line_no: int
+
+
 def _replay_sort_key(entry: ReplayEntry) -> tuple:
-    if entry.record.ingestion_seq is not None:
-        return (0, int(entry.record.ingestion_seq), entry.record.receive_ts, str(entry.path), entry.line_no)
+    if entry.record.run_id is not None and entry.record.ingestion_seq is not None:
+        return (
+            0,
+            str(entry.record.run_id),
+            int(entry.record.ingestion_seq),
+            entry.record.receive_ts,
+            str(entry.path),
+            entry.line_no,
+        )
     return (1, entry.record.receive_ts, str(entry.path), entry.line_no)
+
+
+def detect_replay_order_ambiguities(entries: Iterable[ReplayEntry]) -> list[ReplayOrderAmbiguity]:
+    ambiguities: list[ReplayOrderAmbiguity] = []
+    for entry in entries:
+        has_run_id = entry.record.run_id is not None
+        has_ingestion_seq = entry.record.ingestion_seq is not None
+        if has_run_id != has_ingestion_seq:
+            ambiguities.append(
+                ReplayOrderAmbiguity(
+                    reason="partial_order_metadata",
+                    path=entry.path,
+                    line_no=entry.line_no,
+                )
+            )
+    return ambiguities
 
 
 def _parse_ts(value: str | datetime) -> datetime:

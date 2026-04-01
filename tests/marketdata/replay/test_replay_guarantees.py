@@ -164,7 +164,7 @@ def test_raw_replay_preserves_exact_append_only_order(tmp_path: Path):
 
 
 def test_replay_prefers_ingestion_seq_across_date_partitions_with_same_receive_ts(tmp_path: Path):
-    sink = JsonlRawSink(tmp_path / "raw", env="test")
+    sink = JsonlRawSink(tmp_path / "raw", env="test", run_id="20240102T000000000001Z-run01")
     receive_ts = datetime(2024, 1, 2, tzinfo=timezone.utc)
     _write_raw_trade(
         sink,
@@ -196,6 +196,10 @@ def test_replay_prefers_ingestion_seq_across_date_partitions_with_same_receive_t
 
     assert [entry.record.ingestion_seq for entry in entries] == [1, 2]
     assert len({entry.record.run_id for entry in entries}) == 1
+    assert [entry.record.run_id for entry in entries] == [
+        "20240102T000000000001Z-run01",
+        "20240102T000000000001Z-run01",
+    ]
     assert [event.trade_id for event in replayed] == ["301", "302"]
     assert [entry.path.parent.name for entry in entries] == ["date=2024-01-02", "date=2024-01-01"]
 

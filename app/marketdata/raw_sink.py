@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -84,12 +84,17 @@ class NullRawSink:
         return None
 
 
+def _generate_run_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{timestamp}-{uuid4().hex[:6]}"
+
+
 @dataclass(slots=True)
 class JsonlRawSink:
     base_dir: Path
     env: str
     filename: str = "events.jsonl"
-    run_id: str = field(default_factory=lambda: uuid4().hex[:12])
+    run_id: str = field(default_factory=_generate_run_id)
     _next_ingestion_seq: int = field(default=1, init=False, repr=False)
 
     def path_for(self, record: RawRecord) -> Path:

@@ -8,7 +8,12 @@ import pytest
 from app.marketdata import NORMALIZER_VERSION
 from app.marketdata.models import TradeEvent, ensure_legacy_market_event
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord
-from app.marketdata.replay import ReplaySource, normalize_replay_record, read_raw_entries
+from app.marketdata.replay import (
+    ReplaySource,
+    detect_replay_order_ambiguities,
+    normalize_replay_record,
+    read_raw_entries,
+)
 
 
 def _trade_envelope(symbol: str, event_ms: int, trade_id: int, price: str) -> dict:
@@ -85,6 +90,56 @@ def test_replay_prioritizes_ingestion_seq_over_receive_ts(tmp_path):
     assert [event.trade_id for event in out] == ["1", "2"]
 
 
+def test_replay_orders_append_only_runs_by_run_id_then_ingestion_seq(tmp_path):
+    first_sink = JsonlRawSink(tmp_path / "raw", env="test", run_id="20240101T000000000001Z-run01")
+    second_sink = JsonlRawSink(tmp_path / "raw", env="test", run_id="20240101T000000000002Z-run02")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    _write_raw_trade(
+        first_sink,
+        symbol="BTCUSDT",
+        event_ts=base,
+        receive_ts=base + timedelta(seconds=10),
+        trade_id=11,
+        price="100",
+    )
+    _write_raw_trade(
+        first_sink,
+        symbol="BTCUSDT",
+        event_ts=base + timedelta(seconds=1),
+        receive_ts=base + timedelta(seconds=10),
+        trade_id=12,
+        price="101",
+    )
+    _write_raw_trade(
+        second_sink,
+        symbol="BTCUSDT",
+        event_ts=base + timedelta(seconds=2),
+        receive_ts=base + timedelta(seconds=10),
+        trade_id=21,
+        price="102",
+    )
+    _write_raw_trade(
+        second_sink,
+        symbol="BTCUSDT",
+        event_ts=base + timedelta(seconds=3),
+        receive_ts=base + timedelta(seconds=10),
+        trade_id=22,
+        price="103",
+    )
+
+    entries = read_raw_entries(tmp_path / "raw", "test", symbol="BTCUSDT", stream_types=("trade",))
+    out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("trade",)).stream())
+
+    assert [(entry.record.run_id, entry.record.ingestion_seq) for entry in entries] == [
+        ("20240101T000000000001Z-run01", 1),
+        ("20240101T000000000001Z-run01", 2),
+        ("20240101T000000000002Z-run02", 1),
+        ("20240101T000000000002Z-run02", 2),
+    ]
+    assert [event.trade_id for event in out] == ["11", "12", "21", "22"]
+
+
 def test_replay_keeps_legacy_fallback_order_without_ingestion_seq(tmp_path):
     path = (
         tmp_path
@@ -128,6 +183,46 @@ def test_replay_keeps_legacy_fallback_order_without_ingestion_seq(tmp_path):
     out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("trade",)).stream())
 
     assert [event.trade_id for event in out] == ["11", "10"]
+
+
+def test_replay_detects_partial_order_metadata_for_legacy_rows(tmp_path):
+    path = (
+        tmp_path
+        / "raw"
+        / "env=test"
+        / "venue=BINANCE"
+        / "stream_type=trade"
+        / "symbol=BTCUSDT"
+        / "date=2024-01-01"
+        / "events.jsonl"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    rows = [
+        {
+            "payload": _trade_envelope("BTCUSDT", int(base.timestamp() * 1000), 20, "100"),
+            "venue": "BINANCE",
+            "stream_type": "trade",
+            "symbol": "BTCUSDT",
+            "exchange_ts": base.isoformat(),
+            "receive_ts": (base + timedelta(seconds=2)).isoformat(),
+            "ingestion_seq": 1,
+            "trace_id": "legacy-partial",
+            "source_id": "20",
+        }
+    ]
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            handle.write(json.dumps(row))
+            handle.write("\n")
+
+    entries = read_raw_entries(tmp_path / "raw", "test", symbol="BTCUSDT", stream_types=("trade",))
+    ambiguities = detect_replay_order_ambiguities(entries)
+
+    assert len(ambiguities) == 1
+    assert ambiguities[0].reason == "partial_order_metadata"
+    assert ambiguities[0].path == path
+    assert ambiguities[0].line_no == 1
 
 
 def test_replay_can_filter_by_window_stream_and_symbol(tmp_path):
