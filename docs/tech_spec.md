@@ -396,6 +396,8 @@
   - `tests/marketdata/replay/test_replay_guarantees.py`
   - `tests/marketdata/temporal/test_temporal_guarantees.py`
   - `tests/marketdata/dedup/test_dedup_guarantees.py`
+  - `tests/marketdata/handoff/test_handoff_guarantees.py`
+  - `tests/marketdata/recovery/test_recovery_guarantees.py`
   - `docs/operations/ingestion_runbook.md`
   - `docs/validation/ingestion_readiness.md`
 - El objetivo de esta fase no es simular un entorno distribuido, sino dejar evidencia reproducible de:
@@ -409,6 +411,8 @@
   - temporalidad multi-simbolo sin falsos incidentes cruzados
   - deteccion fuerte de secuencia rota
   - deduplicacion por identidad nativa aunque `timestamp/price/size` coincidan
+  - handoff historico -> live limpio o inconsistente segun corresponda
+  - recovery exacto para barras y marcacion explicita de `gap_irreparable` para trades sin recovery exacto
 - **Seguridad operativa**:
   - `app.config.get_secret_env(name, required=False)`: punto de entrada explicito para secretos via `APP_SECRET_*`.
   - `app.ingestion.storage.validate_output_path(...)`: valida rutas y permisos de escritura.

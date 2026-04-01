@@ -214,6 +214,8 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - `tests/marketdata/replay/test_replay_guarantees.py`: orden exacto raw -> replay y paridad raw/normalized
   - `tests/marketdata/temporal/test_temporal_guarantees.py`: multi-simbolo intercalado y secuencia rota
   - `tests/marketdata/dedup/test_dedup_guarantees.py`: identidad nativa frente a colisiones heuristicas
+  - `tests/marketdata/handoff/test_handoff_guarantees.py`: bootstrap historico -> live, dedup de borde y handoff inconsistente
+  - `tests/marketdata/recovery/test_recovery_guarantees.py`: recovery exacto de barras y `gap_irreparable` en trades sin recovery exacto
 - `ResilientRunner` usa `client._key` para filtrar duplicados del stream.
 - `ResilientRunner`, el handler live, `backfill.run` y `ParquetWriter` usan ahora la misma semantica de identidad via `ingestion.dedup`.
 - `ResilientRunner` exporta el estado minimo necesario para checkpoint (`last_event_ts` + claves dedup recientes).
