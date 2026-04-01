@@ -30,6 +30,7 @@ from app.ingestion.sources import BinanceSource, Source, source_snapshot_fn
 from app.ingestion.storage import ParquetWriter
 from app.marketdata.models import IngestionEvent, ensure_legacy_market_event
 from app.marketdata.raw_sink import JsonlRawSink, NullRawSink
+from app.marketdata.support_matrix import validate_live_feed_support
 from app.observability.alerts import emit_operational_alert
 
 
@@ -443,9 +444,16 @@ def collect_events(
     shadow_mode: bool = False,
     shadow_block_on_diff: bool = False,
     stream_types: tuple[str, ...] = ("trade", "kline"),
+    production_mode: bool = False,
 ) -> List[MarketEvent]:
     logger = logger or logging.getLogger("ingest")
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
+    if mode == "live":
+        validate_live_feed_support(
+            stream_types,
+            require_exact_recovery=production_mode,
+            require_handoff=production_mode,
+        )
     if mode == "dry":
         events_out = _synthetic_events(max_events)
         source_rejected = getattr(source, "stats", None)

@@ -269,6 +269,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `MarketEvent`, ap
   - `kline`: live permitido con exact recovery y handoff
   - `book`: live no soportado
   - `--production-mode` solo admite feeds que cumplan las tres garantias
+  - por tanto, hoy `trade` queda bloqueado explicitamente en produccion y solo `kline` puede arrancar en `mode=live` con `production_mode`
 - **Politica explicita de error en live**:
   - `fail_fast`: propaga el error
   - `allow_fallback`: solo errores de `source` degradan a `dry`

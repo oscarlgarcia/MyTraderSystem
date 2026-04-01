@@ -63,6 +63,43 @@ def test_live_collect_events_returns_processed_events_after_flush(monkeypatch):
     assert out == events
 
 
+def test_collect_events_rejects_production_live_trade_without_exact_recovery():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+
+    with pytest.raises(ValueError, match="trade does not support exact recovery"):
+        pipeline.collect_events(
+            mode="live",
+            cfg=cfg,
+            max_events=10,
+            duration_s=0,
+            logger=mock.Mock(),
+            snapshot_enabled=False,
+            sink=DummySink(),
+            stream_types=("trade",),
+            production_mode=True,
+        )
+
+
+def test_collect_events_allows_production_live_kline_when_supported():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    events = [_ev(0, 100)]
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        max_events=10,
+        duration_s=0,
+        logger=mock.Mock(),
+        snapshot_enabled=False,
+        source=StaticSource(events=events),
+        sink=DummySink(),
+        stream_types=("kline",),
+        production_mode=True,
+    )
+
+    assert out == events
+
+
 def test_live_collect_events_passes_stream_types_to_default_source(monkeypatch):
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     captured: dict[str, object] = {}

@@ -202,6 +202,7 @@
   - el logger no expone claves/valores sensibles en logs JSON;
   - produccion rechaza configuraciones con degradacion silenciosa o perdida implicita;
   - produccion rechaza feeds live sin `supports_live`, `supports_exact_recovery` y `supports_handoff` segun `app.marketdata.support_matrix`;
+  - mientras `TradeRecoveryPolicy.can_recover(...) == False`, el arranque live en produccion rechaza `stream_types` que incluyan `trade`;
   - la ruta de persistencia debe ser valida y escribible.
 
 ## Relaciones

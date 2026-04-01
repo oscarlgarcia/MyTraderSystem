@@ -87,6 +87,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `kline`: soporta live, recovery exacto y handoff
   - `book`: no soporta live
   En `--production-mode`, el arranque rechaza cualquier feed sin `supports_live`, `supports_exact_recovery` y `supports_handoff`.
+  Con la matriz actual, `--production-mode --mode live` obliga a usar `--ingest-stream-types kline`; `trade` queda bloqueado hasta que exista recovery exacto.
 - Checkpoint live minimo: las ejecuciones reales de live persisten en `<data_dir>/<env>/state/ingestion-checkpoint.json`:
   - `last_event_ts` global maximo por compatibilidad
   - cursores/watermarks por stream `(venue, symbol, stream_type)`
