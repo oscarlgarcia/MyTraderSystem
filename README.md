@@ -255,12 +255,21 @@ El nivel se controla via `log_level` en la config (dev=INFO, test=WARNING).
 En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `ingestion summary` e `ingestion health`. El summary consolida `source_events_in`, `events_valid`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `snapshot_rows`, `snapshot_duplicates_skipped`, `processing_latency_seconds`, `write_latency_seconds`, `event_gap_seconds`, `gaps_total`, `gap_irreparable_total`, `late_events`, `late_event_max_delay_seconds`, `temporal_policy` y `reconnects`, junto con los contadores legacy (`events_in`, `events_out`, `buffer_*`, `duplicates_dropped`, `result`, `error_policy`). `ingestion health` resume el estado operativo final de la ejecucion con el mismo `trace_id`. En live se mantiene tambien `ingestion live complete` por compatibilidad; `--fast-path` omite estos resumenes para reducir overhead. Live ya no degrada silenciosamente a `dry`: el comportamiento depende de la politica explicita (`fail_fast`, `allow_fallback`, `degraded`). La semantica temporal se controla con `--ingest-temporal-policy {accept,drop,fail}`: por defecto se aceptan eventos tardios/fuera de orden, se contabilizan por separado y no se mezclan con la latencia de proceso. El gap detection ahora distingue entre:
 - `sequence_gap_detection`: fuerte, cuando existe cursor numerico (`trade_id` o `sequence_id`) y se rompe la secuencia esperada.
 - `weak_gap_detection`: heuristico, cuando solo se observa un hueco temporal mayor que el umbral.
-- El recovery ya es especifico por feed:
-  - `trade` no intenta rellenarse con snapshots de `kline`; si aparece un gap fuerte sin recovery exacto, se marca `gap_irreparable`.
-  - `kline` puede usar snapshot REST de barras del mismo `venue/symbol/stream_type`, filtrando el borde para no duplicar eventos recientes.
-- El handoff historico -> live ya tiene contrato explicito:
-  - `HandoffSource` emite primero un bootstrap historico por ventana y luego entrega el stream live.
-  - Deduplica el solape de borde con la misma identidad fuerte usada por live/storage.
+  - El recovery ya es especifico por feed:
+    - `trade` no intenta rellenarse con snapshots de `kline`; si aparece un gap fuerte sin recovery exacto, se marca `gap_irreparable`.
+    - `kline` puede usar snapshot REST de barras del mismo `venue/symbol/stream_type`, filtrando el borde para no duplicar eventos recientes.
+  - El handoff historico -> live ya tiene contrato explicito:
+    - `HandoffSource` emite primero un bootstrap historico por ventana y luego entrega el stream live.
+    - Deduplica el solape de borde con la misma identidad fuerte usada por live/storage.
+  - Metricas temporales y de promotion safety adicionales:
+    - `invalid_timestamp_total`
+    - `exchange_receive_skew_seconds`
+    - `receive_process_skew_seconds`
+    - `shadow_row_diff_total`
+    - `shadow_checksum_diff_total`
+  - Alertas operativas adicionales:
+    - `invalid_timestamp_detected`
+    - `shadow_semantic_diff`
   - Antes de aceptar el primer tramo live de cada stream, compara las ultimas filas historicas emitidas con la cabecera live por identidad y timestamps para clasificar solape, regresion o gap de borde de forma determinista.
   - Si el primer evento live no garantiza continuidad respecto al ultimo bootstrap, marca `handoff_inconsistent` y deja que la politica operativa (`fail_fast` / `degraded`) decida si aborta o degrada.
 - Liveness de conectores:
@@ -277,6 +286,7 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
   - `ingestion summary` ahora incluye `stream_metrics`, una lista agregada por stream con:
     - `messages_in_total`
     - `messages_invalid_total`
+    - `invalid_timestamp_total`
     - `duplicates_total`
     - `gaps_total`
     - `gap_irreparable_total`
@@ -285,7 +295,15 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
     - `buffer_dropped_total`
     - `raw_write_latency`
     - `normalized_write_latency`
+    - `exchange_receive_skew_seconds`
+    - `receive_process_skew_seconds`
   - `ingestion health` añade `streams_observed` y `streams_degraded` para localizar rapidamente el stream afectado.
+  - A nivel de ejecucion tambien se exponen:
+    - `exchange_receive_skew_seconds`
+    - `receive_process_skew_seconds`
+    - `invalid_timestamp_total`
+    - `shadow_row_diff_total`
+    - `shadow_checksum_diff_total`
   - Las alertas operativas minimas salen como logs `operational alert` con `alert_type`, `alert_severity`, `observed`, `threshold` y `recommended_action`.
   - Tipos soportados y umbrales por defecto:
     - `reconnect_storm` (`warning`, 3 reconnects del mismo stream)
@@ -293,6 +311,8 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
     - `gap_irreparable` (`error`, 1 gap irreparable)
     - `heartbeat_missed` (`warning`, 1 watchdog timeout)
     - `snapshot_retry_exhausted` (`error`, 1 agotamiento de retries REST o breaker abierto)
+    - `invalid_timestamp_detected` (`warning`, 1 rechazo temporal invalido)
+    - `shadow_semantic_diff` (`error`, 1 divergencia semantica entre primary y shadow)
     - `dlq_spike` (`warning`, 3 payloads invalidos del mismo stream)
     - `sink_failure` (`error`, 1 fallo de raw/error/normalized sink)
 - Shadow mode / doble escritura:

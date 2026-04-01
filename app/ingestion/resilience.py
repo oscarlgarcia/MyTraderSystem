@@ -76,6 +76,8 @@ class ResilienceMetrics:
     gap_irreparable_total: int = 0
     last_latency_seconds: float = 0.0
     max_latency_seconds: float = 0.0
+    exchange_receive_skew_seconds: float = 0.0
+    receive_process_skew_seconds: float = 0.0
     temporal_streams: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
@@ -305,6 +307,25 @@ class ResilientRunner:
         k = _key(ev)
         partition_key, stream_state = self.temporal_state.state_for_event(ev)
         stream_state.messages_in_total += 1
+        if isinstance(ev, BaseMarketEvent):
+            exchange_receive_skew = max(0.0, (ev.receive_ts - ev.exchange_ts).total_seconds()) if ev.receive_ts is not None else 0.0
+            receive_process_skew = max(0.0, (ev.process_ts - ev.receive_ts).total_seconds()) if ev.receive_ts is not None and ev.process_ts is not None else 0.0
+            stream_state.exchange_receive_skew_seconds = max(
+                stream_state.exchange_receive_skew_seconds,
+                exchange_receive_skew,
+            )
+            stream_state.receive_process_skew_seconds = max(
+                stream_state.receive_process_skew_seconds,
+                receive_process_skew,
+            )
+            self.metrics.exchange_receive_skew_seconds = max(
+                self.metrics.exchange_receive_skew_seconds,
+                exchange_receive_skew,
+            )
+            self.metrics.receive_process_skew_seconds = max(
+                self.metrics.receive_process_skew_seconds,
+                receive_process_skew,
+            )
         self._update_temporal_metrics(partition_key, stream_state)
         recovery_policy = self.recovery_policy_resolver(ev)
         # dedup
@@ -506,12 +527,15 @@ class ResilientRunner:
             "symbol": partition_key.symbol,
             "stream_type": partition_key.stream_type,
             "messages_in_total": stream_state.messages_in_total,
+            "invalid_timestamp_total": stream_state.invalid_timestamp_total,
             "duplicates_total": stream_state.duplicates_total,
             "reconnects_total": stream_state.reconnects_total,
             "heartbeat_missed_total": stream_state.heartbeat_missed_total,
             "buffer_dropped_total": stream_state.buffer_dropped_total,
             "raw_write_latency": stream_state.raw_write_latency,
             "normalized_write_latency": stream_state.normalized_write_latency,
+            "exchange_receive_skew_seconds": stream_state.exchange_receive_skew_seconds,
+            "receive_process_skew_seconds": stream_state.receive_process_skew_seconds,
             "last_event_ts": stream_state.last_event_ts.isoformat() if stream_state.last_event_ts else None,
             "cursor_kind": stream_state.cursor_kind,
             "cursor_value": stream_state.cursor_value,

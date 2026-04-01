@@ -28,12 +28,15 @@ class TemporalStreamState:
     cursor_kind: str | None = None
     cursor_value: str | None = None
     messages_in_total: int = 0
+    invalid_timestamp_total: int = 0
     duplicates_total: int = 0
     reconnects_total: int = 0
     heartbeat_missed_total: int = 0
     buffer_dropped_total: int = 0
     raw_write_latency: float = 0.0
     normalized_write_latency: float = 0.0
+    exchange_receive_skew_seconds: float = 0.0
+    receive_process_skew_seconds: float = 0.0
     gap_detected: bool = False
     gap_irreparable: bool = False
     gaps_total: int = 0
@@ -80,6 +83,16 @@ class TemporalStateStore:
                 "venue": key.venue,
                 "symbol": key.symbol,
                 "stream_type": key.stream_type,
+                "messages_in_total": state.messages_in_total,
+                "invalid_timestamp_total": state.invalid_timestamp_total,
+                "duplicates_total": state.duplicates_total,
+                "reconnects_total": state.reconnects_total,
+                "heartbeat_missed_total": state.heartbeat_missed_total,
+                "buffer_dropped_total": state.buffer_dropped_total,
+                "raw_write_latency": state.raw_write_latency,
+                "normalized_write_latency": state.normalized_write_latency,
+                "exchange_receive_skew_seconds": state.exchange_receive_skew_seconds,
+                "receive_process_skew_seconds": state.receive_process_skew_seconds,
                 "last_event_ts": state.last_event_ts.isoformat() if state.last_event_ts else None,
                 "cursor_kind": state.cursor_kind,
                 "cursor_value": state.cursor_value,

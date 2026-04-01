@@ -104,6 +104,9 @@ def test_binance_source_captures_receive_and_process_timestamps_on_raw_stream():
     assert out[0].receive_ts is not None
     assert out[0].process_ts is not None
     assert out[0].exchange_ts <= out[0].receive_ts <= out[0].process_ts
+    metric = source.stats.stream_metrics["BINANCE:BTCUSDT:trade"]
+    assert metric["exchange_receive_skew_seconds"] >= 0.0
+    assert metric["receive_process_skew_seconds"] >= 0.0
 
 
 def test_binance_source_records_per_stream_raw_latency(tmp_path: Path):
@@ -270,6 +273,27 @@ def test_dlq_spike_alert_is_emitted_after_repeated_invalid_payloads():
     assert spike["symbol"] == "BTCUSDT"
     assert spike["stream_type"] == "trade"
     assert spike["observed"] == 3
+
+
+def test_invalid_timestamp_alert_is_emitted_for_future_payload():
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    get_logger(name="ingest.source", level="INFO", stream=buffer)
+
+    def fake_ws_stream(url: str, end_time=None):
+        del url, end_time
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":4102444800000,"p":"100","q":"1","t":1}}'
+
+    source = BinanceSource(cfg, ws_stream=fake_ws_stream)
+    assert list(source.stream()) == []
+
+    metric = source.stats.stream_metrics["BINANCE:BTCUSDT:trade"]
+    assert metric["invalid_timestamp_total"] == 1
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    invalid_alert = next(record for record in alerts if record["alert_type"] == "invalid_timestamp_detected")
+    assert invalid_alert["venue"] == "BINANCE"
+    assert invalid_alert["symbol"] == "BTCUSDT"
+    assert invalid_alert["stream_type"] == "trade"
 
 
 def test_snapshot_optional_on_source():

@@ -202,16 +202,19 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - `symbol`
   - `stream_type`
 - Contadores por stream expuestos en `ingestion summary.stream_metrics`:
-  - `messages_in_total`
-  - `messages_invalid_total`
-  - `duplicates_total`
-  - `gaps_total`
-  - `gap_irreparable_total`
-  - `reconnects_total`
-  - `heartbeat_missed_total`
-  - `buffer_dropped_total`
-  - `raw_write_latency`
-  - `normalized_write_latency`
+    - `messages_in_total`
+    - `messages_invalid_total`
+    - `invalid_timestamp_total`
+    - `duplicates_total`
+    - `gaps_total`
+    - `gap_irreparable_total`
+    - `reconnects_total`
+    - `heartbeat_missed_total`
+    - `buffer_dropped_total`
+    - `raw_write_latency`
+    - `normalized_write_latency`
+    - `exchange_receive_skew_seconds`
+    - `receive_process_skew_seconds`
 - Logs estructurados operativos:
   - `gap detected`
   - `gap irreparable`
@@ -223,13 +226,15 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - `handoff overlap dropped`
   - `handoff inconsistent`
 - Alertas operativas canonicas (`message = operational alert`):
-  - `reconnect_storm` -> `warning`, umbral 3 reconnects del mismo stream
-  - `gap_detected` -> `warning`, umbral 1
-  - `gap_irreparable` -> `error`, umbral 1
-  - `heartbeat_missed` -> `warning`, umbral 1 watchdog timeout
-  - `snapshot_retry_exhausted` -> `error`, umbral 1 agotamiento de retries REST o breaker abierto
-  - `dlq_spike` -> `warning`, umbral 3 payloads invalidos del mismo stream
-  - `sink_failure` -> `error`, umbral 1 fallo de `raw_sink`, `error_sink` o `normalized` sink
+    - `reconnect_storm` -> `warning`, umbral 3 reconnects del mismo stream
+    - `gap_detected` -> `warning`, umbral 1
+    - `gap_irreparable` -> `error`, umbral 1
+    - `heartbeat_missed` -> `warning`, umbral 1 watchdog timeout
+    - `snapshot_retry_exhausted` -> `error`, umbral 1 agotamiento de retries REST o breaker abierto
+    - `invalid_timestamp_detected` -> `warning`, umbral 1 timestamp invalido o skew fuera de contrato
+    - `shadow_semantic_diff` -> `error`, umbral 1 divergencia semantica entre primary/shadow
+    - `dlq_spike` -> `warning`, umbral 3 payloads invalidos del mismo stream
+    - `sink_failure` -> `error`, umbral 1 fallo de `raw_sink`, `error_sink` o `normalized` sink
 - Campos estandar de alerta:
   - `alert_type`
   - `alert_severity`
@@ -239,6 +244,11 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - `ingestion health` resume ademas:
   - `streams_observed`
   - `streams_degraded`
+  - `invalid_timestamp_total`
+  - `exchange_receive_skew_seconds`
+  - `receive_process_skew_seconds`
+  - `shadow_row_diff_total`
+  - `shadow_checksum_diff_total`
 - Shadow mode / promotion safety:
   - el comparador shadow ya evalua paridad semantica de dataset entre `v1` y `v2`
   - compara:

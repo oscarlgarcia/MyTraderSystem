@@ -277,6 +277,11 @@ def test_live_keeps_original_log_and_adds_aggregated_summary(monkeypatch):
     assert isinstance(summary["max_latency_seconds"], float)
     assert isinstance(summary["processing_latency_seconds"], float)
     assert isinstance(summary["write_latency_seconds"], float)
+    assert "exchange_receive_skew_seconds" in summary
+    assert "receive_process_skew_seconds" in summary
+    assert "invalid_timestamp_total" in summary
+    assert "shadow_row_diff_total" in summary
+    assert "shadow_checksum_diff_total" in summary
     assert summary["dedup_on"] is True
     assert summary["batch_size"] == 4
     health = next(record for record in logs if record["message"] == "ingestion health")
@@ -424,4 +429,44 @@ def test_stream_metrics_make_incident_attributable_to_specific_stream():
     assert stream_metric["messages_in_total"] == 2
     assert stream_metric["gaps_total"] == 1
     assert stream_metric["gap_irreparable_total"] == 1
+    assert "exchange_receive_skew_seconds" in stream_metric
+    assert "receive_process_skew_seconds" in stream_metric
+    assert "invalid_timestamp_total" in stream_metric
     assert "BINANCE:BTCUSDT:trade" in health["streams_degraded"]
+
+
+def test_summary_reports_skew_metrics_for_typed_event():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.summary.skew", level="INFO", stream=buffer)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    event = TradeEvent(
+        symbol="BTCUSDT",
+        exchange_ts=base,
+        receive_ts=base + timedelta(seconds=2),
+        process_ts=base + timedelta(seconds=3),
+        venue="BINANCE",
+        price=100.0,
+        size=1.0,
+        trade_id="1",
+        source_id="1",
+    )
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        logger=logger,
+        max_events=10,
+        duration_s=0,
+        dedup_enabled=True,
+        snapshot_enabled=False,
+        summary_logging=True,
+        source=StaticSource(events=[event]),
+        sink=DummySink(),
+        error_policy="fail_fast",
+    )
+
+    assert len(out) == 1
+    summary = next(record for record in _json_lines(buffer) if record["message"] == "ingestion summary")
+    assert summary["exchange_receive_skew_seconds"] == 2.0
+    assert summary["receive_process_skew_seconds"] == 1.0

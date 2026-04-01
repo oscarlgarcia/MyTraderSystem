@@ -258,6 +258,83 @@ def test_shadow_mode_writes_v1_and_v2_and_persists_comparison(tmp_path: Path):
     assert payload["significant"] is False
 
 
+def test_shadow_semantic_diff_alert_is_emitted_when_shadow_diverges(monkeypatch, tmp_path: Path):
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
+    buffer = io.StringIO()
+    logger = get_logger(name="test.ingest.shadow.alert", level="INFO", stream=buffer)
+
+    def fake_compare(primary, shadow):
+        del primary, shadow
+        return ShadowComparison(
+            primary=ShadowSnapshot(
+                pipeline_version="v2",
+                row_count=2,
+                identity_count=2,
+                identity_checksum="a",
+                row_checksum="a",
+                partitions={},
+                min_event_ts="2023-11-14T00:00:00+00:00",
+                max_event_ts="2023-11-14T00:01:00+00:00",
+                gaps_total=0,
+                processing_latency_seconds=0.1,
+                write_latency_seconds=0.1,
+            ),
+            shadow=ShadowSnapshot(
+                pipeline_version="v1",
+                row_count=1,
+                identity_count=1,
+                identity_checksum="b",
+                row_checksum="b",
+                partitions={},
+                min_event_ts="2023-11-14T00:00:00+00:00",
+                max_event_ts="2023-11-14T00:00:00+00:00",
+                gaps_total=0,
+                processing_latency_seconds=0.1,
+                write_latency_seconds=0.1,
+            ),
+            diffs={
+                "row_count": 1,
+                "identity_count": 1,
+                "identity_checksum_match": False,
+                "row_checksum_match": False,
+                "partition_row_count_diffs": {},
+                "partition_identity_count_diffs": {},
+                "partition_checksum_mismatches": ["p1"],
+                "partition_timestamp_mismatches": [],
+                "min_event_ts_match": True,
+                "max_event_ts_match": False,
+                "gaps_total": 0.0,
+                "processing_latency_seconds": 0.0,
+                "write_latency_seconds": 0.0,
+            },
+            significant=True,
+        )
+
+    monkeypatch.setattr(pipeline, "compare_shadow_snapshots", fake_compare)
+
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        max_events=10,
+        duration_s=0,
+        logger=logger,
+        dedup_enabled=True,
+        snapshot_enabled=False,
+        summary_logging=True,
+        source=StaticSource(events=[_ev(0, 100)]),
+        shadow_mode=True,
+        shadow_block_on_diff=False,
+        pipeline_version="v2",
+        stream_types=("kline",),
+    )
+
+    assert len(out) == 1
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    shadow_alert = next(record for record in alerts if record["alert_type"] == "shadow_semantic_diff")
+    assert shadow_alert["shadow_row_diff_total"] == 1
+    assert shadow_alert["shadow_checksum_diff_total"] == 3
+
+
 def test_shadow_block_on_diff_raises_promotion_error(monkeypatch, tmp_path: Path):
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
 

@@ -75,11 +75,14 @@
     - `inactivity_timeout_seconds = max(expected_idle_seconds_by_stream)`
   - si `pong.wait(...)` falla o se supera `inactivity_timeout_seconds`, el conector se considera no saludable y se fuerza reconnect
   - `SourceStats.stream_metrics` agrega contadores por `(venue, symbol, stream_type)` con:
-    - `messages_in_total`
-    - `messages_invalid_total`
-    - `reconnects_total`
-    - `heartbeat_missed_total`
-    - `raw_write_latency`
+      - `messages_in_total`
+      - `messages_invalid_total`
+      - `invalid_timestamp_total`
+      - `reconnects_total`
+      - `heartbeat_missed_total`
+      - `raw_write_latency`
+      - `exchange_receive_skew_seconds`
+      - `receive_process_skew_seconds`
 - `app.main._resolve_runtime_options(args) -> dict[str, object]`
   - Deriva el runtime efectivo. Con `--fast-path`, fuerza `trace_steps=False`, `ingest_dedup=False`, `snapshot_enabled=False`, `summary_logging=False` y `ingest_batch_size >= 256`.
   - Propaga `ingest_lag_warn` y `ingest_buffer_warn` como umbrales opt-in para alertas de operacion.
@@ -103,9 +106,9 @@
   - el reconnect duerme usando `jitter_fn(delay)`; por defecto aplica jitter multiplicativo suave y en tests puede inyectarse una funcion determinista
   - `collect_events` ya no depende directamente de Binance ni de `ParquetWriter`; consume un `Source` y un `EventSink`.
   - `collect_events` fusiona tres superficies observables en `stream_metrics`:
-    1. source (`messages_in_total`, `messages_invalid_total`, `reconnects_total`, `heartbeat_missed_total`, `raw_write_latency`)
-    2. runner (`duplicates_total`, `gaps_total`, `gap_irreparable_total`, `buffer_dropped_total`)
-    3. sink (`normalized_write_latency`)
+      1. source (`messages_in_total`, `messages_invalid_total`, `invalid_timestamp_total`, `reconnects_total`, `heartbeat_missed_total`, `raw_write_latency`, `exchange_receive_skew_seconds`, `receive_process_skew_seconds`)
+      2. runner (`duplicates_total`, `gaps_total`, `gap_irreparable_total`, `buffer_dropped_total`)
+      3. sink (`normalized_write_latency`)
   - Los errores se clasifican como `source`, `parse`, `validation` o `sink`, y como `transient` o `permanent`.
   - Solo `source/transient` se reintentan en `ResilientRunner`.
   - Los rechazos de payload no fatales incrementan `rejected_payloads` y se reflejan en `ingestion summary`.
@@ -146,6 +149,12 @@
     - `duplicates_dropped`: suma de duplicados filtrados por runner y por la barrera defensiva previa al writer
     - `reconnects`, `buffer_skipped`, `buffer_overflows`, `buffer_pauses`, `buffer_drop_oldest`, `buffer_drop_newest`, `buffer_failures`, `backpressure_policy`, `max_latency_seconds`, `dedup_on`, `batch_size`
   - `ingestion health` resume el estado final de la ejecucion para dashboards o chequeos operativos: `result`, `source_events_in`, `events_invalid`, `events_dedup_skipped`, `events_buffer_dropped`, `events_persisted`, `snapshot_runs`, `reconnects`, `processing_latency_seconds`, `write_latency_seconds`, `event_gap_seconds`, `late_events`, `temporal_policy`.
+  - `ingestion summary` e `ingestion health` exponen ademas:
+      - `invalid_timestamp_total`
+      - `exchange_receive_skew_seconds`
+      - `receive_process_skew_seconds`
+      - `shadow_row_diff_total`
+      - `shadow_checksum_diff_total`
   - Si live falla, el comportamiento depende de `error_policy`. Errores `sink` nunca se convierten en fallback/degraded.
   - En `fast-path`, se omite el resumen de cierre de ingest live para reducir overhead de logging, pero se mantiene el log final de `pipeline ok`.
   - Si `buffer_skipped > ingest_buffer_warn` o `max_latency_seconds > ingest_lag_warn`, `collect_events` emite un `WARNING` una vez por ciclo live.
@@ -307,14 +316,16 @@
   - `ingestion health` contiene `streams_observed` y `streams_degraded` para diagnóstico rápido
 
 - Alertas operativas canonicas:
-  - formato comun: `message = operational alert`
-  - campos comunes: `alert_type`, `alert_severity`, `observed`, `threshold`, `recommended_action`
-  - tipos soportados:
-    - `reconnect_storm`: `warning`, umbral 3 reconnects del mismo stream
-    - `gap_detected`: `warning`, umbral 1
-    - `gap_irreparable`: `error`, umbral 1
-    - `heartbeat_missed`: `warning`, umbral 1 watchdog timeout
-    - `snapshot_retry_exhausted`: `error`, umbral 1 agotamiento de retries REST o breaker abierto
+    - formato comun: `message = operational alert`
+    - campos comunes: `alert_type`, `alert_severity`, `observed`, `threshold`, `recommended_action`
+    - tipos soportados:
+      - `reconnect_storm`: `warning`, umbral 3 reconnects del mismo stream
+      - `gap_detected`: `warning`, umbral 1
+      - `gap_irreparable`: `error`, umbral 1
+      - `heartbeat_missed`: `warning`, umbral 1 watchdog timeout
+      - `snapshot_retry_exhausted`: `error`, umbral 1 agotamiento de retries REST o breaker abierto
+      - `invalid_timestamp_detected`: `warning`, umbral 1 timestamp invalido o skew fuera de contrato
+      - `shadow_semantic_diff`: `error`, umbral 1 divergencia semantica entre primary/shadow
     - `dlq_spike`: `warning`, umbral 3 payloads invalidos del mismo stream
     - `sink_failure`: `error`, umbral 1 fallo de persistencia o de DLQ
 

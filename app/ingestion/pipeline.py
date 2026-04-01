@@ -36,6 +36,7 @@ from app.observability.alerts import emit_operational_alert
 
 STREAM_COUNTER_FIELDS = {
     "messages_invalid_total",
+    "invalid_timestamp_total",
     "duplicates_total",
     "gaps_total",
     "gap_irreparable_total",
@@ -43,7 +44,12 @@ STREAM_COUNTER_FIELDS = {
     "heartbeat_missed_total",
     "buffer_dropped_total",
 }
-STREAM_LATENCY_FIELDS = {"raw_write_latency", "normalized_write_latency"}
+STREAM_LATENCY_FIELDS = {
+    "raw_write_latency",
+    "normalized_write_latency",
+    "exchange_receive_skew_seconds",
+    "receive_process_skew_seconds",
+}
 STREAM_MAX_FIELDS = {"messages_in_total"}
 
 
@@ -104,6 +110,7 @@ def _degraded_streams(stream_metrics: list[dict[str, object]]) -> list[str]:
     for metric in stream_metrics:
         if (
             _safe_int(metric.get("messages_invalid_total")) > 0
+            or _safe_int(metric.get("invalid_timestamp_total")) > 0
             or _safe_int(metric.get("duplicates_total")) > 0
             or _safe_int(metric.get("gaps_total")) > 0
             or _safe_int(metric.get("gap_irreparable_total")) > 0
@@ -113,6 +120,14 @@ def _degraded_streams(stream_metrics: list[dict[str, object]]) -> list[str]:
         ):
             degraded.append(f"{metric['venue']}:{metric['symbol']}:{metric['stream_type']}")
     return degraded
+
+
+def _max_stream_metric(stream_metrics: list[dict[str, object]], key: str) -> float:
+    return max((_safe_float(metric.get(key, 0.0), 0.0) for metric in stream_metrics), default=0.0)
+
+
+def _sum_stream_metric(stream_metrics: list[dict[str, object]], key: str) -> int:
+    return sum(_safe_int(metric.get(key, 0), 0) for metric in stream_metrics)
 
 
 def _synthetic_events(max_events: int) -> List[IngestionEvent]:
@@ -217,6 +232,11 @@ def _emit_ingestion_summary(
     handoff_bootstrap_rows: int = 0,
     handoff_overlap_dropped: int = 0,
     handoff_inconsistent: int = 0,
+    exchange_receive_skew_seconds: float = 0.0,
+    receive_process_skew_seconds: float = 0.0,
+    invalid_timestamp_total: int = 0,
+    shadow_row_diff_total: int = 0,
+    shadow_checksum_diff_total: int = 0,
     stream_metrics: list[dict[str, object]] | None = None,
 ) -> None:
     events_invalid = rejected_payloads if events_invalid is None else events_invalid
@@ -244,6 +264,11 @@ def _emit_ingestion_summary(
         "handoff_bootstrap_rows": int(handoff_bootstrap_rows),
         "handoff_overlap_dropped": int(handoff_overlap_dropped),
         "handoff_inconsistent": int(handoff_inconsistent),
+        "exchange_receive_skew_seconds": float(exchange_receive_skew_seconds),
+        "receive_process_skew_seconds": float(receive_process_skew_seconds),
+        "invalid_timestamp_total": int(invalid_timestamp_total),
+        "shadow_row_diff_total": int(shadow_row_diff_total),
+        "shadow_checksum_diff_total": int(shadow_checksum_diff_total),
         "stream_metrics": stream_metrics or [],
         "reconnects": int(reconnects),
         "buffer_skipped": int(buffer_skipped),
@@ -303,6 +328,11 @@ def _emit_health_summary(
     gap_irreparable_total: int,
     late_events: int,
     handoff_inconsistent: int,
+    exchange_receive_skew_seconds: float = 0.0,
+    receive_process_skew_seconds: float = 0.0,
+    invalid_timestamp_total: int = 0,
+    shadow_row_diff_total: int = 0,
+    shadow_checksum_diff_total: int = 0,
     stream_metrics: list[dict[str, object]] | None = None,
 ) -> None:
     stream_metrics = stream_metrics or []
@@ -327,6 +357,11 @@ def _emit_health_summary(
             "gap_irreparable_total": int(gap_irreparable_total),
             "late_events": int(late_events),
             "handoff_inconsistent": int(handoff_inconsistent),
+            "exchange_receive_skew_seconds": float(exchange_receive_skew_seconds),
+            "receive_process_skew_seconds": float(receive_process_skew_seconds),
+            "invalid_timestamp_total": int(invalid_timestamp_total),
+            "shadow_row_diff_total": int(shadow_row_diff_total),
+            "shadow_checksum_diff_total": int(shadow_checksum_diff_total),
             "streams_observed": len(stream_metrics),
             "streams_degraded": _degraded_streams(stream_metrics),
         },
@@ -437,6 +472,9 @@ def collect_events(
         events_out = _synthetic_events(max_events)
         source_rejected = getattr(source, "stats", None)
         stream_metrics = _merge_stream_metrics(getattr(source_rejected, "stream_metrics", {}))
+        exchange_receive_skew_seconds = _max_stream_metric(stream_metrics, "exchange_receive_skew_seconds")
+        receive_process_skew_seconds = _max_stream_metric(stream_metrics, "receive_process_skew_seconds")
+        invalid_timestamp_total = _sum_stream_metric(stream_metrics, "invalid_timestamp_total")
         if summary_logging:
             _emit_ingestion_summary(
                 logger,
@@ -481,6 +519,9 @@ def collect_events(
                 handoff_bootstrap_rows=getattr(source_rejected, "handoff_bootstrap_rows", 0),
                 handoff_overlap_dropped=getattr(source_rejected, "handoff_overlap_dropped", 0),
                 handoff_inconsistent=getattr(source_rejected, "handoff_inconsistent", 0),
+                exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                receive_process_skew_seconds=receive_process_skew_seconds,
+                invalid_timestamp_total=invalid_timestamp_total,
                 stream_metrics=stream_metrics,
             )
             _emit_health_summary(
@@ -503,6 +544,9 @@ def collect_events(
                 gap_irreparable_total=0,
                 late_events=0,
                 handoff_inconsistent=getattr(source_rejected, "handoff_inconsistent", 0),
+                exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                receive_process_skew_seconds=receive_process_skew_seconds,
+                invalid_timestamp_total=invalid_timestamp_total,
                 stream_metrics=stream_metrics,
             )
         if compute_features_after:
@@ -619,6 +663,8 @@ def collect_events(
         write_latency_seconds = _safe_float(getattr(sink_impl, "write_latency_seconds", 0.0), 0.0)
         events_dedup_skipped = _safe_int(runner.metrics.dedup_skipped + stats["duplicates_dropped"])
         shadow_comparison_payload = None
+        shadow_row_diff_total = 0
+        shadow_checksum_diff_total = 0
         if shadow_mode and shadow_sink_impl is not None:
             primary_snapshot = build_shadow_snapshot(
                 Path(cfg.data_dir),
@@ -640,7 +686,25 @@ def collect_events(
                 primary_snapshot,
                 shadow_snapshot,
             )
+            shadow_row_diff_total = abs(_safe_int(shadow_comparison.diffs.get("row_count"), 0))
+            shadow_checksum_diff_total = (
+                len(shadow_comparison.diffs.get("partition_checksum_mismatches", []))
+                + (0 if shadow_comparison.diffs.get("identity_checksum_match", True) else 1)
+                + (0 if shadow_comparison.diffs.get("row_checksum_match", True) else 1)
+            )
             persist_shadow_comparison(Path(cfg.data_dir), env=cfg.env, comparison=shadow_comparison)
+            if shadow_comparison.significant:
+                emit_operational_alert(
+                    logger,
+                    alert_type="shadow_semantic_diff",
+                    observed=max(1, shadow_row_diff_total + shadow_checksum_diff_total),
+                    extra={
+                        "primary_version": shadow_comparison.primary.pipeline_version,
+                        "shadow_version": shadow_comparison.shadow.pipeline_version,
+                        "shadow_row_diff_total": shadow_row_diff_total,
+                        "shadow_checksum_diff_total": shadow_checksum_diff_total,
+                    },
+                )
             assert_shadow_promotable(shadow_comparison, block_on_diff=shadow_block_on_diff)
             shadow_comparison_payload = {
                 "primary_version": shadow_comparison.primary.pipeline_version,
@@ -662,6 +726,9 @@ def collect_events(
                 runner.metrics.temporal_streams,
                 getattr(sink_impl, "stream_write_metrics", {}),
             )
+            exchange_receive_skew_seconds = _max_stream_metric(stream_metrics, "exchange_receive_skew_seconds")
+            receive_process_skew_seconds = _max_stream_metric(stream_metrics, "receive_process_skew_seconds")
+            invalid_timestamp_total = _sum_stream_metric(stream_metrics, "invalid_timestamp_total")
             logger.info(
                 "ingestion live complete",
                 extra={
@@ -685,6 +752,11 @@ def collect_events(
                     "gap_irreparable_total": runner.metrics.gap_irreparable_total,
                     "late_events": runner.metrics.late_events,
                     "handoff_inconsistent": handoff_inconsistent,
+                    "exchange_receive_skew_seconds": exchange_receive_skew_seconds,
+                    "receive_process_skew_seconds": receive_process_skew_seconds,
+                    "invalid_timestamp_total": invalid_timestamp_total,
+                    "shadow_row_diff_total": shadow_row_diff_total,
+                    "shadow_checksum_diff_total": shadow_checksum_diff_total,
                     "stream_metrics": stream_metrics,
                     "temporal_policy": temporal_policy,
                     "shadow_comparison": shadow_comparison_payload,
@@ -733,6 +805,11 @@ def collect_events(
                 handoff_bootstrap_rows=handoff_bootstrap_rows,
                 handoff_overlap_dropped=handoff_overlap_dropped,
                 handoff_inconsistent=handoff_inconsistent,
+                exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                receive_process_skew_seconds=receive_process_skew_seconds,
+                invalid_timestamp_total=invalid_timestamp_total,
+                shadow_row_diff_total=shadow_row_diff_total,
+                shadow_checksum_diff_total=shadow_checksum_diff_total,
                 stream_metrics=stream_metrics,
             )
             _emit_health_summary(
@@ -755,6 +832,11 @@ def collect_events(
                 gap_irreparable_total=runner.metrics.gap_irreparable_total,
                 late_events=runner.metrics.late_events,
                 handoff_inconsistent=handoff_inconsistent,
+                exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                receive_process_skew_seconds=receive_process_skew_seconds,
+                invalid_timestamp_total=invalid_timestamp_total,
+                shadow_row_diff_total=shadow_row_diff_total,
+                shadow_checksum_diff_total=shadow_checksum_diff_total,
                 stream_metrics=stream_metrics,
             )
         events_out = list(handler.events)
@@ -792,6 +874,9 @@ def collect_events(
             getattr(runner, "metrics", None).temporal_streams if runner else {},
             getattr(sink_impl, "stream_write_metrics", {}) if sink_impl is not None else {},
         )
+        exchange_receive_skew_seconds = _max_stream_metric(stream_metrics, "exchange_receive_skew_seconds")
+        receive_process_skew_seconds = _max_stream_metric(stream_metrics, "receive_process_skew_seconds")
+        invalid_timestamp_total = _sum_stream_metric(stream_metrics, "invalid_timestamp_total")
         if err.category == "sink":
             emit_operational_alert(
                 logger,
@@ -861,6 +946,9 @@ def collect_events(
                     handoff_bootstrap_rows=handoff_bootstrap_rows,
                     handoff_overlap_dropped=handoff_overlap_dropped,
                     handoff_inconsistent=handoff_inconsistent,
+                    exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                    receive_process_skew_seconds=receive_process_skew_seconds,
+                    invalid_timestamp_total=invalid_timestamp_total,
                     stream_metrics=stream_metrics,
                 )
                 _emit_health_summary(
@@ -883,6 +971,9 @@ def collect_events(
                     gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
                     handoff_inconsistent=handoff_inconsistent,
+                    exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                    receive_process_skew_seconds=receive_process_skew_seconds,
+                    invalid_timestamp_total=invalid_timestamp_total,
                     stream_metrics=stream_metrics,
                 )
             raise err
@@ -943,6 +1034,9 @@ def collect_events(
                     handoff_bootstrap_rows=handoff_bootstrap_rows,
                     handoff_overlap_dropped=handoff_overlap_dropped,
                     handoff_inconsistent=handoff_inconsistent,
+                    exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                    receive_process_skew_seconds=receive_process_skew_seconds,
+                    invalid_timestamp_total=invalid_timestamp_total,
                     stream_metrics=stream_metrics,
                 )
                 _emit_health_summary(
@@ -965,6 +1059,9 @@ def collect_events(
                     gap_irreparable_total=gap_irreparable_total,
                     late_events=late_events,
                     handoff_inconsistent=handoff_inconsistent,
+                    exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                    receive_process_skew_seconds=receive_process_skew_seconds,
+                    invalid_timestamp_total=invalid_timestamp_total,
                     stream_metrics=stream_metrics,
                 )
             return []
@@ -1025,6 +1122,9 @@ def collect_events(
                 handoff_bootstrap_rows=handoff_bootstrap_rows,
                 handoff_overlap_dropped=handoff_overlap_dropped,
                 handoff_inconsistent=handoff_inconsistent,
+                exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                receive_process_skew_seconds=receive_process_skew_seconds,
+                invalid_timestamp_total=invalid_timestamp_total,
                 stream_metrics=stream_metrics,
             )
             _emit_health_summary(
@@ -1047,6 +1147,9 @@ def collect_events(
                 gap_irreparable_total=gap_irreparable_total,
                 late_events=late_events,
                 handoff_inconsistent=handoff_inconsistent,
+                exchange_receive_skew_seconds=exchange_receive_skew_seconds,
+                receive_process_skew_seconds=receive_process_skew_seconds,
+                invalid_timestamp_total=invalid_timestamp_total,
                 stream_metrics=stream_metrics,
             )
         if compute_features_after:

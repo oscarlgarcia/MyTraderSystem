@@ -89,6 +89,7 @@ def _ensure_stream_metric(
             "stream_type": stream_type,
             "messages_in_total": 0,
             "messages_invalid_total": 0,
+            "invalid_timestamp_total": 0,
             "duplicates_total": 0,
             "gaps_total": 0,
             "gap_irreparable_total": 0,
@@ -97,6 +98,8 @@ def _ensure_stream_metric(
             "buffer_dropped_total": 0,
             "raw_write_latency": 0.0,
             "normalized_write_latency": 0.0,
+            "exchange_receive_skew_seconds": 0.0,
+            "receive_process_skew_seconds": 0.0,
         },
     )
     return metric
@@ -119,6 +122,19 @@ def _raw_message_context(raw_message: object) -> tuple[str, str, str]:
     except Exception:
         return venue, symbol, stream_type
     return venue, symbol, stream_type
+
+
+def _is_timestamp_validation_error(message: str) -> bool:
+    lowered = str(message).lower()
+    return (
+        "timestamp" in lowered
+        or lowered.startswith("e is too far in the future")
+        or "k.t" in lowered
+        or "receive_ts" in lowered
+        or "process_ts" in lowered
+        or "close_ts" in lowered
+        or "open_ts" in lowered
+    )
 
 
 def heartbeat_policy_for_streams(stream_types: Iterable[str]) -> HeartbeatPolicy:
@@ -282,12 +298,46 @@ class BinanceSource:
             )
             raise IngestionError("sink", "transient", f"raw sink write failed: {exc}") from exc
 
+    def _record_temporal_quality(self, event: IngestionEvent) -> None:
+        venue, symbol, stream_type = _event_stream_context(event)
+        metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
+        exchange_receive_skew = 0.0
+        receive_process_skew = 0.0
+        exchange_ts = getattr(event, "exchange_ts", getattr(event, "event_ts", None))
+        receive_ts = getattr(event, "receive_ts", None)
+        process_ts = getattr(event, "process_ts", None)
+        if exchange_ts is not None and receive_ts is not None:
+            exchange_receive_skew = max(0.0, (receive_ts - exchange_ts).total_seconds())
+        if receive_ts is not None and process_ts is not None:
+            receive_process_skew = max(0.0, (process_ts - receive_ts).total_seconds())
+        metric["exchange_receive_skew_seconds"] = max(
+            float(metric.get("exchange_receive_skew_seconds", 0.0)),
+            exchange_receive_skew,
+        )
+        metric["receive_process_skew_seconds"] = max(
+            float(metric.get("receive_process_skew_seconds", 0.0)),
+            receive_process_skew,
+        )
+
     def _record_rejected(self, raw_message: object, error: IngestionError, *, context: dict[str, object]) -> None:
         self.stats.events_invalid += 1
         self.stats.rejected_payloads += 1
         venue, symbol, stream_type = _raw_message_context(raw_message)
         metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
         metric["messages_invalid_total"] = int(metric["messages_invalid_total"]) + 1
+        if error.category == "validation" and _is_timestamp_validation_error(error.message):
+            metric["invalid_timestamp_total"] = int(metric["invalid_timestamp_total"]) + 1
+            emit_operational_alert(
+                logging.getLogger("ingest.source"),
+                alert_type="invalid_timestamp_detected",
+                observed=int(metric["invalid_timestamp_total"]),
+                extra={
+                    "venue": venue,
+                    "symbol": symbol,
+                    "stream_type": stream_type,
+                    "error_message": error.message,
+                },
+            )
         invalid_total = int(metric["messages_invalid_total"])
         if should_emit_threshold_alert("dlq_spike", invalid_total):
             emit_operational_alert(
@@ -434,6 +484,7 @@ class BinanceSource:
                     venue, symbol, stream_type = _event_stream_context(item)
                     metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
                     metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
+                    self._record_temporal_quality(item)
                     self.stats.events_valid += 1
                     yield item
                     continue
@@ -454,6 +505,7 @@ class BinanceSource:
                         stream_type=event_type,
                     )
                     metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
+                    self._record_temporal_quality(event)
                     self._write_raw_record(
                         payload=payload,
                         event=event,
@@ -562,6 +614,7 @@ class BinanceSource:
                             stream_type="kline",
                         )
                         metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
+                        self._record_temporal_quality(event)
                         self._write_raw_record(
                             payload=payload,
                             event=event,
