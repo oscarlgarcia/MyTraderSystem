@@ -47,7 +47,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `trace_id`
     - `source_id`
 - `ingestion.storage`
-  - `ParquetWriter` mantiene compatibilidad v1/v2, pero para `normalized/trades` ya delega en `TradeParquetWriter`.
+  - `ParquetWriter` mantiene compatibilidad v1/v2, pero para `normalized/trades` y `normalized/bars` ya delega en writers tipados.
   - `TradeParquetWriter` persiste columnas first-class para trades:
     - `trade_id`
     - `side`
@@ -55,7 +55,20 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `receive_ts`
     - `process_ts`
     - `source_id`
-  - Se conserva `metadata` por compatibilidad, pero ya no es el unico lugar donde vive la identidad del trade.
+  - `BarParquetWriter` persiste columnas first-class para bars:
+    - `open`
+    - `high`
+    - `low`
+    - `close`
+    - `volume`
+    - `interval`
+    - `open_ts`
+    - `close_ts`
+    - `exchange_ts`
+    - `receive_ts`
+    - `process_ts`
+    - `source_id`
+  - Se conserva `metadata` por compatibilidad, pero ya no es el almacen principal de identidad o OHLCV.
 - `marketdata.replay`
   - Define `ReplaySource` compatible con el contrato `Source`.
   - Lee raw landing en orden determinista usando:

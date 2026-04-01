@@ -116,6 +116,19 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
     - `receive_ts`
     - `process_ts`
     - `source_id`
+  - `normalized/bars` ya persiste columnas first-class:
+    - `open`
+    - `high`
+    - `low`
+    - `close`
+    - `volume`
+    - `interval`
+    - `open_ts`
+    - `close_ts`
+    - `exchange_ts`
+    - `receive_ts`
+    - `process_ts`
+    - `source_id`
 - `python -m app --env dev --mode live --fast-path`  
   Modo experimental de alto throughput: fuerza `dedup` off, `snapshot` off, logs live minimos (sin resumen agregado de ingest), `trace_steps` off y batch size grande.
 - `python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0`  

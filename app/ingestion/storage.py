@@ -21,7 +21,7 @@ import pyarrow.parquet as pq
 
 from app.common.dto import MarketEvent
 from app.ingestion.dedup import identity_from_fields
-from app.marketdata.models import BaseMarketEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
+from app.marketdata.models import BarEvent, BaseMarketEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
 from app.marketdata.normalization import NORMALIZER_VERSION, resolve_normalizer_version
 
 FEED_TYPE_BY_SOURCE = {
@@ -128,6 +128,58 @@ def event_trade_side(event: IngestionEvent) -> str | None:
     return event_metadata(event).get("side")
 
 
+def event_bar_open(event: IngestionEvent) -> float:
+    if isinstance(event, BarEvent):
+        return event.open
+    metadata = event_metadata(event)
+    return float(metadata.get("open", event.price))
+
+
+def event_bar_high(event: IngestionEvent) -> float:
+    if isinstance(event, BarEvent):
+        return event.high
+    metadata = event_metadata(event)
+    return float(metadata.get("high", event.price))
+
+
+def event_bar_low(event: IngestionEvent) -> float:
+    if isinstance(event, BarEvent):
+        return event.low
+    metadata = event_metadata(event)
+    return float(metadata.get("low", event.price))
+
+
+def event_bar_close(event: IngestionEvent) -> float:
+    if isinstance(event, BarEvent):
+        return event.close
+    return event.price
+
+
+def event_bar_volume(event: IngestionEvent) -> float:
+    if isinstance(event, BarEvent):
+        return event.volume
+    return event.size
+
+
+def event_bar_interval(event: IngestionEvent) -> str:
+    if isinstance(event, BarEvent):
+        return event.interval
+    return event_metadata(event).get("interval", "1m")
+
+
+def event_bar_open_ts(event: IngestionEvent) -> datetime | None:
+    if isinstance(event, BarEvent):
+        return event.open_ts
+    return _optional_ts(event_metadata(event).get("open_ts"))
+
+
+def event_bar_close_ts(event: IngestionEvent) -> datetime | None:
+    if isinstance(event, BarEvent):
+        return event.close_ts
+    metadata = event_metadata(event)
+    return _optional_ts(metadata.get("close_ts")) or event.event_ts
+
+
 @dataclass(frozen=True, slots=True)
 class TradeParquetWriter:
     @staticmethod
@@ -186,6 +238,82 @@ class TradeParquetWriter:
                     "source_id": event_source_id(event),
                     "trade_id": event_trade_id(event),
                     "side": event_trade_side(event),
+                    "metadata": metadata,
+                }
+            )
+        return pa.Table.from_pylist(rows, schema=cls.schema())
+
+
+@dataclass(frozen=True, slots=True)
+class BarParquetWriter:
+    @staticmethod
+    def schema() -> pa.Schema:
+        return pa.schema(
+            [
+                ("venue", pa.string()),
+                ("feed_type", pa.string()),
+                ("normalizer_version", pa.string()),
+                ("symbol", pa.string()),
+                ("exchange_ts", pa.timestamp("ms", tz="UTC")),
+                ("receive_ts", pa.timestamp("ms", tz="UTC")),
+                ("process_ts", pa.timestamp("ms", tz="UTC")),
+                ("event_ts", pa.timestamp("ms", tz="UTC")),
+                ("open", pa.float64()),
+                ("high", pa.float64()),
+                ("low", pa.float64()),
+                ("close", pa.float64()),
+                ("volume", pa.float64()),
+                ("interval", pa.string()),
+                ("open_ts", pa.timestamp("ms", tz="UTC")),
+                ("close_ts", pa.timestamp("ms", tz="UTC")),
+                ("source", pa.string()),
+                ("source_id", pa.string()),
+                ("metadata", pa.map_(pa.string(), pa.string())),
+            ]
+        )
+
+    @classmethod
+    def to_table(cls, events: list[IngestionEvent]) -> pa.Table:
+        events_sorted = sorted(events, key=lambda ev: event_exchange_ts(ev))
+        rows = []
+        for event in events_sorted:
+            metadata = event_metadata(event)
+            metadata.setdefault("venue", event_venue(event))
+            metadata.setdefault("normalizer_version", event_normalizer_version(event))
+            metadata.setdefault("interval", event_bar_interval(event))
+            metadata.setdefault("open", str(event_bar_open(event)))
+            metadata.setdefault("high", str(event_bar_high(event)))
+            metadata.setdefault("low", str(event_bar_low(event)))
+            if event_receive_ts(event) is not None:
+                metadata.setdefault("receive_ts", event_receive_ts(event).isoformat())
+            if event_process_ts(event) is not None:
+                metadata.setdefault("process_ts", event_process_ts(event).isoformat())
+            if event_bar_open_ts(event) is not None:
+                metadata.setdefault("open_ts", event_bar_open_ts(event).isoformat())
+            if event_bar_close_ts(event) is not None:
+                metadata.setdefault("close_ts", event_bar_close_ts(event).isoformat())
+            if event_source_id(event) is not None:
+                metadata.setdefault("source_id", str(event_source_id(event)))
+            rows.append(
+                {
+                    "venue": event_venue(event),
+                    "feed_type": feed_type_for_source(event.source),
+                    "normalizer_version": event_normalizer_version(event),
+                    "symbol": event.symbol,
+                    "exchange_ts": event_exchange_ts(event),
+                    "receive_ts": event_receive_ts(event),
+                    "process_ts": event_process_ts(event),
+                    "event_ts": event.event_ts,
+                    "open": event_bar_open(event),
+                    "high": event_bar_high(event),
+                    "low": event_bar_low(event),
+                    "close": event_bar_close(event),
+                    "volume": event_bar_volume(event),
+                    "interval": event_bar_interval(event),
+                    "open_ts": event_bar_open_ts(event),
+                    "close_ts": event_bar_close_ts(event),
+                    "source": event.source,
+                    "source_id": event_source_id(event),
                     "metadata": metadata,
                 }
             )
@@ -407,7 +535,12 @@ def _write_partition(
             / f"date={day}"
             / "data.parquet"
         )
-        table = TradeParquetWriter.to_table(events) if feed_type == "trades" else _to_table(events)
+        if feed_type == "trades":
+            table = TradeParquetWriter.to_table(events)
+        elif feed_type == "bars":
+            table = BarParquetWriter.to_table(events)
+        else:
+            table = _to_table(events)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     table = table.replace_schema_metadata(
         {
@@ -501,6 +634,24 @@ def _is_trade_schema(schema: pa.Schema) -> bool:
     return {"trade_id", "exchange_ts", "receive_ts", "process_ts", "source_id", "side"}.issubset(names)
 
 
+def _is_bar_schema(schema: pa.Schema) -> bool:
+    names = set(schema.names)
+    return {
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "interval",
+        "open_ts",
+        "close_ts",
+        "exchange_ts",
+        "receive_ts",
+        "process_ts",
+        "source_id",
+    }.issubset(names)
+
+
 def _identity_metadata_from_row(row: dict[str, object]) -> dict[str, object]:
     metadata = dict(_metadata_mapping(row.get("metadata")))
     for key in ("trade_id", "sequence_id", "source_id"):
@@ -538,12 +689,43 @@ def _trade_row_from_existing(row: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _bar_row_from_existing(row: dict[str, object]) -> dict[str, object]:
+    metadata = _identity_metadata_from_row(row)
+    source = str(row.get("source", "kline"))
+    exchange_ts = row.get("exchange_ts") or row.get("event_ts")
+    return {
+        "venue": str(row.get("venue") or metadata.get("venue", "BINANCE")).upper(),
+        "feed_type": row.get("feed_type") or feed_type_for_source(source),
+        "normalizer_version": resolve_normalizer_version(
+            row.get("normalizer_version") or metadata.get("normalizer_version")
+        ),
+        "symbol": row["symbol"],
+        "exchange_ts": exchange_ts,
+        "receive_ts": row.get("receive_ts") or _optional_ts(metadata.get("receive_ts")),
+        "process_ts": row.get("process_ts") or _optional_ts(metadata.get("process_ts")),
+        "event_ts": row.get("event_ts") or exchange_ts,
+        "open": row.get("open") if row.get("open") is not None else float(metadata.get("open", row["price"])),
+        "high": row.get("high") if row.get("high") is not None else float(metadata.get("high", row["price"])),
+        "low": row.get("low") if row.get("low") is not None else float(metadata.get("low", row["price"])),
+        "close": row.get("close") if row.get("close") is not None else row["price"],
+        "volume": row.get("volume") if row.get("volume") is not None else row["size"],
+        "interval": row.get("interval") or metadata.get("interval", "1m"),
+        "open_ts": row.get("open_ts") or _optional_ts(metadata.get("open_ts")),
+        "close_ts": row.get("close_ts") or _optional_ts(metadata.get("close_ts")) or row.get("event_ts") or exchange_ts,
+        "source": source,
+        "source_id": row.get("source_id") or metadata.get("source_id"),
+        "metadata": _metadata_mapping(metadata),
+    }
+
+
 def _row_identity(row: dict[str, object]) -> tuple:
+    price = row.get("price", row.get("close"))
+    size = row.get("size", row.get("volume"))
     return identity_from_fields(
         symbol=row["symbol"],
         event_ts=row.get("event_ts") or row.get("exchange_ts"),
-        price=row["price"],
-        size=row["size"],
+        price=price,
+        size=size,
         source=row["source"],
         venue=row.get("venue"),
         metadata=_identity_metadata_from_row(row),
@@ -558,6 +740,12 @@ def _read_existing_table_for_merge(out_path: Path, target_schema: pa.Schema) -> 
     target_columns = set(target_schema.names)
     if _is_trade_schema(target_schema):
         rows = [_trade_row_from_existing(row) for row in table.to_pylist()]
+        return pa.Table.from_pylist(
+            [{key: value for key, value in row.items() if key in target_columns} for row in rows],
+            schema=target_schema,
+        )
+    if _is_bar_schema(target_schema):
+        rows = [_bar_row_from_existing(row) for row in table.to_pylist()]
         return pa.Table.from_pylist(
             [{key: value for key, value in row.items() if key in target_columns} for row in rows],
             schema=target_schema,
@@ -621,9 +809,14 @@ def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
 
 def _key_set_from_table(tbl: pa.Table) -> set[tuple]:
     keys = set()
-    required_cols = ["symbol", "price", "size", "source"]
+    price_cols = ["price", "close"]
+    size_cols = ["size", "volume"]
+    required_cols = ["symbol", "source"]
+    cols = [name for name in required_cols if name in tbl.column_names]
+    cols.extend(name for name in price_cols if name in tbl.column_names and name not in cols)
+    cols.extend(name for name in size_cols if name in tbl.column_names and name not in cols)
     optional_cols = ["event_ts", "exchange_ts", "venue", "metadata", "source_id", "trade_id", "sequence_id"]
-    cols = [name for name in required_cols + optional_cols if name in tbl.column_names]
+    cols.extend(name for name in optional_cols if name in tbl.column_names and name not in cols)
     for row in tbl.select(cols).to_pylist():
         keys.add(_row_identity(row))
     return keys

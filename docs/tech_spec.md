@@ -454,4 +454,18 @@
     - `receive_ts`
     - `process_ts`
     - `source_id`
+- **Persistencia typed de bars**:
+  - `app.ingestion.storage.BarParquetWriter` persiste `normalized/bars` con columnas first-class:
+    - `open`
+    - `high`
+    - `low`
+    - `close`
+    - `volume`
+    - `interval`
+    - `open_ts`
+    - `close_ts`
+    - `exchange_ts`
+    - `receive_ts`
+    - `process_ts`
+    - `source_id`
   - `metadata` se conserva como superficie de compatibilidad, no como unico contenedor de identidad.

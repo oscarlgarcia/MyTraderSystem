@@ -8,7 +8,7 @@ import pytest
 from app.common.dto import MarketEvent
 from app.ingestion.sinks import ParquetEventSink
 from app.marketdata import NORMALIZER_VERSION
-from app.marketdata.models import TradeEvent
+from app.marketdata.models import BarEvent, TradeEvent
 from app.ingestion.storage import (
     ParquetWriter,
     legacy_partition_path,
@@ -222,7 +222,10 @@ def test_v2_storage_never_mixes_trades_and_bars_in_same_partition(tmp_path):
     assert trades_path.exists()
     assert bars_path.exists()
     assert read_parquet(trades_path).column("source").to_pylist() == ["trade"]
-    assert read_parquet(bars_path).column("source").to_pylist() == ["kline"]
+    bars_table = read_parquet(bars_path)
+    assert bars_table.column("source").to_pylist() == ["kline"]
+    assert "open" in bars_table.column_names
+    assert "close" in bars_table.column_names
 
 
 def test_read_parquet_keeps_legacy_v1_compatibility(tmp_path):
@@ -377,6 +380,157 @@ def test_trade_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):
     assert loaded.column("side").to_pylist() == ["sell", "buy"]
     assert loaded.column("receive_ts").to_pylist()[0] == old_receive_ts
     assert loaded.column("process_ts").to_pylist()[0] == old_process_ts
+
+
+def test_bar_dataset_persists_first_class_typed_columns(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
+    exchange_ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    open_ts = exchange_ts - timedelta(minutes=1)
+    close_ts = exchange_ts
+    receive_ts = exchange_ts + timedelta(milliseconds=1)
+    process_ts = exchange_ts + timedelta(milliseconds=2)
+
+    writer.add(
+        BarEvent(
+            symbol="BTCUSDT",
+            exchange_ts=exchange_ts,
+            receive_ts=receive_ts,
+            process_ts=process_ts,
+            venue="BINANCE",
+            source_id="bar-1",
+            open=100.0,
+            high=102.0,
+            low=99.0,
+            close=101.0,
+            volume=5.0,
+            interval="1m",
+            open_ts=open_ts,
+            close_ts=close_ts,
+        )
+    )
+
+    table = read_parquet(_out_path(tmp_path, symbol="BTCUSDT", day="2024-01-01", source="kline"))
+
+    for column in (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "interval",
+        "open_ts",
+        "close_ts",
+        "exchange_ts",
+        "receive_ts",
+        "process_ts",
+        "source_id",
+    ):
+        assert column in table.column_names
+
+    assert table.column("open").to_pylist() == [100.0]
+    assert table.column("high").to_pylist() == [102.0]
+    assert table.column("low").to_pylist() == [99.0]
+    assert table.column("close").to_pylist() == [101.0]
+    assert table.column("volume").to_pylist() == [5.0]
+    assert table.column("interval").to_pylist() == ["1m"]
+    assert table.column("open_ts").to_pylist() == [open_ts]
+    assert table.column("close_ts").to_pylist() == [close_ts]
+    assert table.column("exchange_ts").to_pylist() == [exchange_ts]
+    assert table.column("receive_ts").to_pylist() == [receive_ts]
+    assert table.column("process_ts").to_pylist() == [process_ts]
+    assert table.column("source_id").to_pylist() == ["bar-1"]
+
+
+def test_bar_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):
+    path = normalized_partition_path(tmp_path, "dev", source="kline", symbol="BTCUSDT", day="2024-01-01")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schema = pa.schema(
+        [
+            ("venue", pa.string()),
+            ("feed_type", pa.string()),
+            ("normalizer_version", pa.string()),
+            ("symbol", pa.string()),
+            ("event_ts", pa.timestamp("ms", tz="UTC")),
+            ("price", pa.float64()),
+            ("size", pa.float64()),
+            ("source", pa.string()),
+            ("metadata", pa.map_(pa.string(), pa.string())),
+        ]
+    )
+    old_ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    old_open_ts = old_ts - timedelta(minutes=1)
+    old_close_ts = old_ts
+    old_receive_ts = old_ts + timedelta(milliseconds=1)
+    old_process_ts = old_ts + timedelta(milliseconds=2)
+    table = pa.Table.from_pydict(
+        {
+            "venue": ["BINANCE"],
+            "feed_type": ["bars"],
+            "normalizer_version": [NORMALIZER_VERSION],
+            "symbol": ["BTCUSDT"],
+            "event_ts": [old_ts],
+            "price": [101.0],
+            "size": [5.0],
+            "source": ["kline"],
+            "metadata": [
+                {
+                    "open": "100.0",
+                    "high": "102.0",
+                    "low": "99.0",
+                    "interval": "1m",
+                    "open_ts": old_open_ts.isoformat(),
+                    "close_ts": old_close_ts.isoformat(),
+                    "receive_ts": old_receive_ts.isoformat(),
+                    "process_ts": old_process_ts.isoformat(),
+                    "source_id": "bar-legacy",
+                    "venue": "BINANCE",
+                }
+            ],
+        },
+        schema=schema,
+    ).replace_schema_metadata(
+        {
+            b"schema_version": b"v2",
+            b"normalizer_version": NORMALIZER_VERSION.encode("utf-8"),
+        }
+    )
+    pq.write_table(table, path, use_dictionary=False)
+
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10, dedup=True)
+    writer.add(
+        BarEvent(
+            symbol="BTCUSDT",
+            exchange_ts=old_ts + timedelta(minutes=1),
+            receive_ts=old_ts + timedelta(minutes=1, milliseconds=1),
+            process_ts=old_ts + timedelta(minutes=1, milliseconds=2),
+            venue="BINANCE",
+            source_id="bar-new",
+            open=101.0,
+            high=103.0,
+            low=100.0,
+            close=102.0,
+            volume=6.0,
+            interval="1m",
+            open_ts=old_ts,
+            close_ts=old_ts + timedelta(minutes=1),
+        )
+    )
+    writer.flush()
+
+    loaded = read_parquet(path)
+
+    assert loaded.num_rows == 2
+    assert loaded.column("open").to_pylist() == [100.0, 101.0]
+    assert loaded.column("high").to_pylist() == [102.0, 103.0]
+    assert loaded.column("low").to_pylist() == [99.0, 100.0]
+    assert loaded.column("close").to_pylist() == [101.0, 102.0]
+    assert loaded.column("volume").to_pylist() == [5.0, 6.0]
+    assert loaded.column("interval").to_pylist() == ["1m", "1m"]
+    assert loaded.column("open_ts").to_pylist()[0] == old_open_ts
+    assert loaded.column("close_ts").to_pylist()[0] == old_close_ts
+    assert loaded.column("receive_ts").to_pylist()[0] == old_receive_ts
+    assert loaded.column("process_ts").to_pylist()[0] == old_process_ts
+    assert loaded.column("source_id").to_pylist() == ["bar-legacy", "bar-new"]
 
 
 def test_read_parquet_backfills_missing_normalizer_version_for_old_v2_files(tmp_path):
