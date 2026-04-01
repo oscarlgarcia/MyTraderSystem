@@ -10,6 +10,9 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - Valida payloads por tipo antes de normalizar (`trade`, `kline`).
   - Expone `_key(event)` como identidad canonica del evento.
   - Permite registrar `stream_builder` por tipo para nuevas fuentes o canales sin tocar el core.
+  - Los handlers Binance por feed ya no viven inline en este modulo; delega en:
+    - `marketdata.connectors.binance.BinanceTradeNormalizer`
+    - `marketdata.connectors.binance.BinanceBarNormalizer`
 - `marketdata.models`
   - Define el contrato canonico tipado:
     - `TradeEvent`
@@ -145,6 +148,9 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - `ingestion.sources`
   - Define el contrato `Source` (`stream`, `snapshot`).
   - Implementa `BinanceSource` como adaptador por defecto para WS/REST.
+  - Expone wrappers por feed:
+    - `marketdata.connectors.binance_sources.BinanceTradeSource`
+    - `marketdata.connectors.binance_sources.BinanceBarSource`
   - Implementa `StaticSource` para tests y ejecucion controlada sin red.
   - Expone `SourceStats` con `source_events_in`, `events_valid`, `events_invalid`, `snapshot_runs`, `snapshot_rows`, `rejected_payloads`, `error_sink_failures`, `handoff_bootstrap_rows`, `handoff_overlap_dropped` y `handoff_inconsistent`.
   - Define `HeartbeatPolicy` y `heartbeat_policy_for_streams(...)`.
@@ -154,6 +160,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `inactivity_timeout_seconds`: si no hay frames ni `pong`, se considera feed no saludable y fuerza reconnect
   - El snapshot REST usa retry por endpoint con backoff exponencial + jitter inyectable.
   - Un `CircuitBreaker` simple (`closed`, `open`, `half-open`) protege el path de snapshot/recovery frente a tormentas de retries cuando el endpoint sigue degradado.
+  - `BinanceSource` ya no mezcla normalizacion trade/kline en el mismo bloque; delega en el registry de `marketdata.connectors.binance`.
   - `SourceStats.stream_metrics` agrega contadores por `(venue, symbol, stream_type)` y mide latencia raw por stream.
 - `ingestion.resilience`
   - `ResilientRunner`: loop de consumo con backoff, snapshot opcional, dedup de stream y metricas de entrada/salida/duplicados/gap temporal/eventos tardios/latencia/buffer.

@@ -153,6 +153,12 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `app.main.run_trading_cycle(...)` ejecuta features, strategy, risk, execution y portfolio a partir de eventos ya ingeridos
   - `app.main.run_cycle(...)` queda como wrapper de composicion para compatibilidad
 - Catalogo minimo de instrumentos: `app.marketdata.instruments` resuelve `(venue, symbol)` y anade metadata first-class de instrumento (`base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`) durante la normalizacion. Si un simbolo no esta soportado por el catalogo, la normalizacion falla rapido.
+- Adapters por feed/venue:
+  - `app.marketdata.connectors.binance.BinanceTradeNormalizer`
+  - `app.marketdata.connectors.binance.BinanceBarNormalizer`
+  - `app.marketdata.connectors.binance_sources.BinanceTradeSource`
+  - `app.marketdata.connectors.binance_sources.BinanceBarSource`
+  `sources.py` mantiene la infraestructura generica de source/heartbeat/retry, pero la logica feed-specific de Binance deja de estar mezclada en el mismo bloque.
 - Validacion explicita por tipo: `app.marketdata.validators` aplica checks por feed (`trade`, `kline`, `book`) para `NaN`, `inf`, signos, OHLC inconsistente y timestamps absurdos. En `BinanceSource`, los payloads raw invalidados van al DLQ; los eventos tipados invalidados inyectados desde fuentes custom fallan rapido.
 - Semantica temporal explicita: el contrato tipado usa `exchange_ts`, `receive_ts` y `process_ts`. En Binance:
   - `trade.exchange_ts` <- payload `E`

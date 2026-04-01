@@ -13,6 +13,12 @@
   - `app.marketdata.instruments.InstrumentCatalog`
   - resolucion por `(venue, symbol)` para `base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`
   - los normalizadores typed consultan este catalogo y fallan si el simbolo no esta soportado
+- **Adapters Binance por feed**:
+  - `app.marketdata.connectors.binance.BinanceTradeNormalizer`
+  - `app.marketdata.connectors.binance.BinanceBarNormalizer`
+  - `app.marketdata.connectors.binance_sources.BinanceTradeSource`
+  - `app.marketdata.connectors.binance_sources.BinanceBarSource`
+  - `app.ingestion.sources.BinanceSource` mantiene la infraestructura generica, pero delega la logica feed-specific al registry de conectores
 - **Validacion de payloads**:
   - `app.ingestion.client.validate_trade_payload`
   - `app.ingestion.client.validate_kline_payload`

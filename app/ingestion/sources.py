@@ -23,16 +23,15 @@ from app.ingestion.circuit_breaker import CircuitBreaker
 from app.ingestion.client import (
     DEFAULT_STREAM_TYPES,
     build_ws_url,
-    normalize_kline_typed,
     parse_message_parts,
-    parse_typed_message,
 )
 from app.ingestion.errors import IngestionError, classify_connector_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
+from app.marketdata.connectors.binance import BINANCE_FEED_NORMALIZERS, normalize_binance_event, snapshot_payload_from_row
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
 from app.marketdata.instruments import ensure_default_instruments
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
-from app.marketdata.validators import validate_ingestion_event, validate_kline_payload
+from app.marketdata.validators import validate_ingestion_event
 from app.observability.alerts import emit_operational_alert, should_emit_threshold_alert
 from app.observability.logger import get_trace_id
 
@@ -468,6 +467,9 @@ class BinanceSource:
 
     def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]:
         url = build_ws_url(self.cfg.ws_base, self.cfg.symbols, self.stream_types)
+        allowed_event_types = tuple(
+            stream_type for stream_type in self.stream_types if stream_type in BINANCE_FEED_NORMALIZERS
+        )
         try:
             if self.ws_stream is _ws_stream:
                 stream_iter = self.ws_stream(
@@ -493,11 +495,13 @@ class BinanceSource:
                 try:
                     receive_ts = datetime.now(timezone.utc)
                     payload, data, _stream, event_type = parse_message_parts(str(item))
-                    event = parse_typed_message(
-                        str(item),
+                    if event_type not in allowed_event_types:
+                        raise KeyError(f"Unknown event type: {event_type}")
+                    event = normalize_binance_event(
+                        event_type,
+                        data,
                         receive_ts=receive_ts,
                         process_ts=receive_ts,
-                        allowed_event_types=("trade", "kline"),
                     )
                     validate_ingestion_event(event)
                     metric = _ensure_stream_metric(
@@ -583,56 +587,48 @@ class BinanceSource:
         try:
             self.stats.snapshot_runs += 1
             for symbol in self.cfg.symbols:
-                url = f"{self.cfg.rest_base.rstrip('/')}/api/v3/klines"
-                resp = self._snapshot_get(symbol=symbol, url=url)
-                receive_ts = datetime.now(timezone.utc)
-                for row in resp.json():
-                    self.stats.source_events_in += 1
-                    payload = {
-                        "s": symbol,
-                        "E": int(row[6]),
-                        "k": {
-                            "t": int(row[0]),
-                            "T": int(row[6]),
-                            "o": row[1],
-                            "h": row[2],
-                            "l": row[3],
-                            "c": row[4],
-                            "q": row[5],
-                        },
-                    }
-                    try:
-                        validate_kline_payload(payload)
-                        event = normalize_kline_typed(
-                            payload,
-                            receive_ts=receive_ts,
-                            process_ts=receive_ts,
-                        )
-                        validate_ingestion_event(event)
-                        metric = _ensure_stream_metric(
-                            self.stats,
-                            venue=getattr(event, "venue", "BINANCE"),
-                            symbol=event.symbol,
-                            stream_type="kline",
-                        )
-                        metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
-                        self._record_temporal_quality(event)
-                        self._write_raw_record(
-                            payload=payload,
-                            event=event,
-                            stream_type="kline",
-                            receive_ts=receive_ts,
-                        )
-                        events.append(event)
-                        self.stats.events_valid += 1
-                        self.stats.snapshot_rows += 1
-                    except ValueError as exc:
-                        self._record_rejected(
-                            payload,
-                            IngestionError("validation", "permanent", str(exc)),
-                            context={"stage": "snapshot", "symbol": symbol},
-                        )
+                for stream_type in self.stream_types:
+                    normalizer = BINANCE_FEED_NORMALIZERS.get(stream_type)
+                    if normalizer is None or not getattr(normalizer, "supports_snapshot", False):
                         continue
+                    url = f"{self.cfg.rest_base.rstrip('/')}/api/v3/klines"
+                    resp = self._snapshot_get(symbol=symbol, url=url)
+                    receive_ts = datetime.now(timezone.utc)
+                    for row in resp.json():
+                        self.stats.source_events_in += 1
+                        payload = snapshot_payload_from_row(stream_type, symbol, row, interval="1m")
+                        try:
+                            event = normalize_binance_event(
+                                stream_type,
+                                payload,
+                                receive_ts=receive_ts,
+                                process_ts=receive_ts,
+                            )
+                            validate_ingestion_event(event)
+                            metric = _ensure_stream_metric(
+                                self.stats,
+                                venue=getattr(event, "venue", "BINANCE"),
+                                symbol=event.symbol,
+                                stream_type=stream_type,
+                            )
+                            metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
+                            self._record_temporal_quality(event)
+                            self._write_raw_record(
+                                payload=payload,
+                                event=event,
+                                stream_type=stream_type,
+                                receive_ts=receive_ts,
+                            )
+                            events.append(event)
+                            self.stats.events_valid += 1
+                            self.stats.snapshot_rows += 1
+                        except ValueError as exc:
+                            self._record_rejected(
+                                payload,
+                                IngestionError("validation", "permanent", str(exc)),
+                                context={"stage": "snapshot", "symbol": symbol, "stream_type": stream_type},
+                            )
+                            continue
         except IngestionError:
             raise
         except Exception as exc:
