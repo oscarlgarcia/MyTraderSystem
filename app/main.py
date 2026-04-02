@@ -19,6 +19,7 @@ from app.marketdata.support_matrix import validate_live_feed_support
 from app.marketdata.models import IngestionEvent
 from app.observability.logger import get_logger, set_trace_id
 from app.ingestion.storage import validate_output_path
+from app.ingestion.storage_health import assert_storage_health_for_runtime
 from app.features.pipeline import run_feature_pipeline
 from app.features.engine import FeatureEngine
 from app.strategy.basic import generate_signals
@@ -176,6 +177,7 @@ def _validate_operational_security(
             )
         except ValueError as exc:
             raise ValueError("Unsafe production configuration: " + str(exc)) from exc
+        assert_storage_health_for_runtime(cfg.data_dir, cfg.env)
 
 
 def run_cycle(

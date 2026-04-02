@@ -9,6 +9,7 @@ from app.ingestion.storage import (
     normalized_partition_data_path,
     normalized_partition_path,
     partition_segments_dir,
+    record_compaction_failure,
     read_parquet,
 )
 
@@ -34,7 +35,6 @@ def compact_partition(
     if not partition_path.exists():
         raise FileNotFoundError(partition_path)
 
-    table = read_parquet(partition_path)
     out_path = normalized_partition_data_path(
         base_dir,
         env,
@@ -43,7 +43,12 @@ def compact_partition(
         day=day,
         venue=venue,
     )
-    _write_table_atomic(table, out_path)
+    try:
+        table = read_parquet(partition_path)
+        _write_table_atomic(table, out_path)
+    except Exception as exc:
+        record_compaction_failure(partition_path, exc)
+        raise
 
     if remove_segments:
         segments_dir = partition_segments_dir(partition_path)

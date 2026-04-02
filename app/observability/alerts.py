@@ -16,6 +16,8 @@ AlertType = Literal[
     "invalid_timestamp_detected",
     "schema_drift_detected",
     "provider_metadata_drift",
+    "compaction_backlog_high",
+    "compaction_failure_detected",
     "shadow_semantic_diff",
     "dlq_spike",
     "sink_failure",
@@ -74,6 +76,16 @@ ALERT_SPECS: dict[AlertType, AlertSpec] = {
         severity="warning",
         threshold=1,
         recommended_action="Inspect authoritative instrument metadata drift and decide whether the affected run must be quarantined or replayed.",
+    ),
+    "compaction_backlog_high": AlertSpec(
+        severity="warning",
+        threshold=1,
+        recommended_action="Compact the affected normalized partitions before trusting long-running live or paper sessions.",
+    ),
+    "compaction_failure_detected": AlertSpec(
+        severity="error",
+        threshold=1,
+        recommended_action="Treat normalized storage as degraded until compaction failures are inspected and cleared.",
     ),
     "shadow_semantic_diff": AlertSpec(
         severity="error",

@@ -12,9 +12,10 @@ Legacy v1 reader compatibility is kept for files under:
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List
 from uuid import uuid4
@@ -42,6 +43,7 @@ FEED_TYPE_BY_SOURCE = {
 STREAM_TYPE_BY_FEED_TYPE = {value: key for key, value in FEED_TYPE_BY_SOURCE.items()}
 PARTITION_DATA_FILENAME = "data.parquet"
 PARTITION_SEGMENTS_DIRNAME = "segments"
+PARTITION_COMPACTION_FAILURE_FILENAME = "compaction-failures.jsonl"
 
 
 def validate_output_path(base_dir: Path, *, require_absolute: bool = False) -> Path:
@@ -413,6 +415,10 @@ def partition_segments_dir(partition_path: Path) -> Path:
     return partition_path / PARTITION_SEGMENTS_DIRNAME
 
 
+def partition_compaction_failure_path(partition_path: Path) -> Path:
+    return partition_path / PARTITION_COMPACTION_FAILURE_FILENAME
+
+
 def legacy_partition_path(base_dir: Path, env: str, symbol: str, day: str) -> Path:
     return base_dir / env / f"symbol={symbol}" / f"date={day}" / "data.parquet"
 
@@ -422,6 +428,22 @@ def list_normalized_parquet_files(base_dir: Path, env: str, *, include_legacy: b
     if partitions or not include_legacy:
         return partitions
     return sorted(base_dir.glob(f"{env}/symbol=*/date=*/data.parquet"))
+
+
+def list_normalized_partition_paths(base_dir: Path, env: str) -> list[Path]:
+    return sorted(base_dir.glob(f"normalized/*/env={env}/venue=*/symbol=*/date=*"))
+
+
+def record_compaction_failure(partition_path: Path, error: Exception | str, *, occurred_at: datetime | None = None) -> Path:
+    path = partition_compaction_failure_path(partition_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ts": (occurred_at or datetime.now(timezone.utc)).isoformat(),
+        "error": str(error),
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, default=str) + "\n")
+    return path
 
 
 @dataclass
