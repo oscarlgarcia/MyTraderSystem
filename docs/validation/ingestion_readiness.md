@@ -6,7 +6,8 @@
 - [ ] `pytest -q` pasa completo
 - [ ] `tests/slow/test_ingestion_readiness.py` pasa completo
 - [ ] `python scripts/ingestion_soak.py` devuelve `0`
-- [ ] `python scripts/ingestion_canary.py --refresh-baseline` devuelve `0`
+- [ ] `python scripts/ingestion_canary.py --mode rest-baseline --refresh-baseline` devuelve `0`
+- [ ] `python scripts/ingestion_canary.py --mode ws-live --symbol BTCUSDT --max-events 2 --duration-seconds 130` devuelve `0`
 - [ ] `python scripts/ingestion_storage_benchmark.py` devuelve `0`
 - [ ] existe ADR aprobada para el alcance historico: `docs/adr/ADR-0001-historical-market-data-scope.md`
 - [ ] el alcance historico soportado esta declarado explicitamente y alineado con la ADR: bars-only (`kline`); trade historical no se promete
@@ -34,6 +35,7 @@
 
 ### Migracion / canary
 - [ ] `ingestion_canary_report.json` existe
+- [ ] `ingestion_ws_canary_report.json` existe
 - [ ] `ingestion_canary_baseline.json` existe
 - [ ] `ingestion_storage_benchmark.json` existe
 - [ ] `comparisons.jsonl` existe si hubo `shadow_mode`
@@ -52,6 +54,7 @@
 - `docs/validation/ingestion_soak_evidence.json`
 - `docs/validation/ingestion_canary_baseline.json`
 - `docs/validation/ingestion_canary_report.json`
+- `docs/validation/ingestion_ws_canary_report.json`
 - `docs/validation/ingestion_storage_benchmark.json`
 - commit validado
 - fecha de ejecucion

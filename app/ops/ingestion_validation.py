@@ -17,9 +17,10 @@ import httpx
 from app.common.dto import MarketEvent
 from app.ingestion.backfill import _interval_to_ms, fetch_klines, normalize_kline_row
 from app.ingestion.compaction import CompactionJobPolicy, run_compaction_job
+from app.ingestion.checkpoints import CheckpointStore
 from app.ingestion.pipeline import collect_events
 from app.ingestion.sinks import ParquetEventSink
-from app.ingestion.sources import StaticSource
+from app.ingestion.sources import BinanceSource, Source, heartbeat_policy_for_streams, StaticSource, _ws_stream
 from app.ingestion.storage import ParquetWriter, read_parquet
 from app.ingestion.storage_health import collect_storage_health
 from app.marketdata.instruments import ensure_default_instruments
@@ -119,7 +120,31 @@ class StorageBenchmarkEvidence:
     pass_ok: bool
 
 
+@dataclass(frozen=True, slots=True)
+class WSCanaryEvidence:
+    mode: str
+    vendor: str
+    ws_base: str
+    symbol: str
+    stream_type: str
+    interval: str | None
+    max_events: int
+    duration_seconds: float
+    reconnects_target: int
+    reconnect_after_events: int
+    reconnects_observed: int
+    continuity: dict[str, object]
+    stream_metrics: list[dict[str, object]]
+    alert_types: list[str]
+    checkpoint_audit_events: int
+    recovery_audit_events: int
+    report_generated_at: str
+    pass_ok: bool
+    comparison_reason: str
+
+
 CanaryFetchRows = Callable[..., list[list[object]]]
+WSCanarySourceBuilder = Callable[[SimpleNamespace], Source]
 
 
 def _cfg(base_dir: Path, *, rest_base: str = "https://api.binance.com", symbols: list[str] | None = None) -> SimpleNamespace:
@@ -173,6 +198,20 @@ def _extract_run(logs: list[dict[str, object]], *, pipeline_version: str, shadow
         streams_degraded=list(health.get("streams_degraded", [])),
         result=str(health["result"]),
     )
+
+
+def _extract_alert_types(logs: list[dict[str, object]]) -> list[str]:
+    return [
+        str(record["alert_type"])
+        for record in logs
+        if record.get("message") == "operational alert" and record.get("alert_type")
+    ]
+
+
+def _count_jsonl_records(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
 
 
 def write_json_report(path: Path, payload: object) -> Path:
@@ -569,6 +608,142 @@ def run_canary_validation(
         pass_ok=pass_ok,
         comparison_reason=reason,
     )
+    write_json_report(output_path, asdict(evidence))
+    return evidence
+
+
+def _build_ws_live_canary_source(
+    cfg: SimpleNamespace,
+    *,
+    stream_type: str,
+    reconnect_after_events: int,
+    induced_reconnects: int,
+) -> Source:
+    reconnect_state = {"remaining": max(0, induced_reconnects)}
+    heartbeat = heartbeat_policy_for_streams((stream_type,))
+
+    def controlled_ws_stream(url: str, end_time: float | None = None):
+        session_events = 0
+        for raw in _ws_stream(url, end_time=end_time, heartbeat=heartbeat):
+            yield raw
+            session_events += 1
+            if reconnect_state["remaining"] > 0 and session_events >= max(1, reconnect_after_events):
+                reconnect_state["remaining"] -= 1
+                raise TimeoutError("ws canary induced reconnect")
+
+    return BinanceSource(
+        cfg=cfg,
+        stream_types=(stream_type,),
+        ws_stream=controlled_ws_stream,
+        raw_sink=JsonlRawSink(Path(cfg.data_dir) / "raw", env=cfg.env),
+        heartbeat_policy=heartbeat,
+    )
+
+
+def run_ws_live_canary(
+    output_path: Path,
+    *,
+    symbol: str = "BTCUSDT",
+    stream_type: str = "kline",
+    interval: str = "1m",
+    ws_base: str = "wss://stream.binance.com:9443",
+    rest_base: str = "https://api.binance.com",
+    max_events: int = 2,
+    duration_seconds: float = 130.0,
+    reconnect_after_events: int = 1,
+    induced_reconnects: int = 1,
+    pipeline_version: str = "v2",
+    source_builder: WSCanarySourceBuilder | None = None,
+) -> WSCanaryEvidence:
+    if stream_type != "kline":
+        raise ValueError("ws-live canary currently supports only kline feeds because live pipeline support is bars-only")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        cfg = _cfg(base_dir, rest_base=rest_base, symbols=[symbol])
+        cfg.ws_base = ws_base
+        log_buffer = io.StringIO()
+        checkpoint_dir = base_dir / "checkpoints"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_store = CheckpointStore(checkpoint_dir / "canary-checkpoint.json")
+        source = source_builder(cfg) if source_builder is not None else _build_ws_live_canary_source(
+            cfg,
+            stream_type=stream_type,
+            reconnect_after_events=reconnect_after_events,
+            induced_reconnects=induced_reconnects,
+        )
+        collect_events(
+            mode="live",
+            cfg=cfg,
+            max_events=max_events,
+            duration_s=duration_seconds,
+            logger=get_logger(name="ops.ws_canary", level="INFO", stream=log_buffer),
+            source=source,
+            sink=None,
+            snapshot_enabled=True,
+            summary_logging=True,
+            dedup_enabled=True,
+            batch_size=1,
+            pipeline_version=pipeline_version,
+            stream_types=(stream_type,),
+            checkpoint_store=checkpoint_store,
+        )
+        logs = _json_lines(log_buffer)
+        summary = next(record for record in logs if record["message"] == "ingestion summary")
+        run = _extract_run(logs, pipeline_version=pipeline_version, shadow_mode=False)
+        alert_types = _extract_alert_types(logs)
+        stream_metrics = list(summary.get("stream_metrics") or [])
+        continuity = {
+            "events_persisted": run.events_persisted,
+            "duplicates": run.duplicates,
+            "gaps": run.gaps,
+            "gap_irreparable": run.gap_irreparable,
+            "reconnects": run.reconnects,
+            "result": run.result,
+            "streams_degraded": list(run.streams_degraded),
+        }
+        checkpoint_audit_events = _count_jsonl_records(checkpoint_dir / "ingestion-checkpoint-audit.jsonl")
+        recovery_audit_events = sum(
+            1
+            for metric in stream_metrics
+            if metric.get("last_recovery_request_start_ts") is not None
+        )
+        pass_ok = (
+            run.result == "ok"
+            and run.events_persisted > 0
+            and run.reconnects >= max(0, induced_reconnects)
+            and run.gap_irreparable == 0
+        )
+        reasons: list[str] = []
+        if run.result != "ok":
+            reasons.append(f"result={run.result}")
+        if run.events_persisted <= 0:
+            reasons.append("no_events_persisted")
+        if run.reconnects < max(0, induced_reconnects):
+            reasons.append("reconnect_target_not_met")
+        if run.gap_irreparable > 0:
+            reasons.append("gap_irreparable_detected")
+        evidence = WSCanaryEvidence(
+            mode="ws-live",
+            vendor="BINANCE",
+            ws_base=ws_base,
+            symbol=symbol,
+            stream_type=stream_type,
+            interval=interval if stream_type == "kline" else None,
+            max_events=max_events,
+            duration_seconds=float(duration_seconds),
+            reconnects_target=max(0, induced_reconnects),
+            reconnect_after_events=max(1, reconnect_after_events),
+            reconnects_observed=run.reconnects,
+            continuity=continuity,
+            stream_metrics=stream_metrics,
+            alert_types=alert_types,
+            checkpoint_audit_events=checkpoint_audit_events,
+            recovery_audit_events=recovery_audit_events,
+            report_generated_at=datetime.now(timezone.utc).isoformat(),
+            pass_ok=pass_ok,
+            comparison_reason="continuity_ok" if pass_ok else ",".join(reasons),
+        )
     write_json_report(output_path, asdict(evidence))
     return evidence
 

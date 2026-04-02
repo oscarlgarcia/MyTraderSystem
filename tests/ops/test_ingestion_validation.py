@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
+import subprocess
 from pathlib import Path
+import sys
 
-from app.ops.ingestion_validation import run_canary_validation, run_soak_validation
+from app.ingestion.backfill import normalize_kline_row
+from app.ops.ingestion_validation import run_canary_validation, run_soak_validation, run_ws_live_canary
 
 
 def _kline_rows(count: int) -> list[list[object]]:
@@ -23,6 +26,21 @@ def _kline_rows(count: int) -> list[list[object]]:
             ]
         )
     return rows
+
+
+def _bar_events(count: int):
+    receive_ts = datetime(2024, 1, 1, 0, 5, tzinfo=timezone.utc)
+    return [
+        normalize_kline_row(
+            "BTCUSDT",
+            row,
+            interval="1m",
+            receive_ts=receive_ts,
+            process_ts=receive_ts,
+            venue="BINANCE",
+        )
+        for row in _kline_rows(count)
+    ]
 
 
 def test_soak_validation_writes_evidence_and_passes(tmp_path: Path):
@@ -96,3 +114,59 @@ def test_canary_validation_reuses_persisted_baseline_without_network(tmp_path: P
     assert evidence.bars == 4
     assert evidence.diffs["row_count"] == 0
     assert evidence.diffs["projection_checksum_match"] is True
+
+
+def test_ws_live_canary_writes_report_and_records_reconnects(tmp_path: Path):
+    output = tmp_path / "ws-canary.json"
+    events = _bar_events(3)
+
+    class FakeWSCanarySource:
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, end_time=None):
+            del end_time
+            if self.calls == 0:
+                self.calls += 1
+                yield events[0]
+                raise TimeoutError("induced reconnect")
+            self.calls += 1
+            for event in events[1:]:
+                yield event
+
+        def snapshot(self, request=None):
+            del request
+            return [events[0], events[1]]
+
+    evidence = run_ws_live_canary(
+        output,
+        symbol="BTCUSDT",
+        stream_type="kline",
+        max_events=2,
+        duration_seconds=5.0,
+        reconnect_after_events=1,
+        induced_reconnects=1,
+        source_builder=lambda cfg: FakeWSCanarySource(),
+    )
+
+    assert evidence.pass_ok is True
+    assert evidence.reconnects_observed >= 1
+    assert evidence.continuity["events_persisted"] == 2
+    assert evidence.continuity["gaps"] >= 1
+    assert evidence.continuity["gap_irreparable"] == 0
+    assert "reconnects" in evidence.continuity
+    assert "duplicates" in evidence.continuity
+    assert output.exists()
+
+
+def test_ingestion_canary_script_help_exposes_ws_mode():
+    result = subprocess.run(
+        [sys.executable, "scripts/ingestion_canary.py", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--mode" in result.stdout
+    assert "--stream-type" in result.stdout
