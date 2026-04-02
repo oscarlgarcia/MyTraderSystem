@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from app.ops.ingestion_validation import run_storage_benchmark
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Deterministic storage throughput benchmark for segmented normalized storage")
+    parser.add_argument("--symbol-count", type=int, default=12)
+    parser.add_argument("--bursts", type=int, default=4)
+    parser.add_argument("--events-per-symbol-per-burst", type=int, default=12)
+    parser.add_argument("--min-rows-per-second", type=float, default=100.0)
+    parser.add_argument("--max-write-latency-seconds", type=float, default=2.0)
+    parser.add_argument("--max-compaction-elapsed-seconds", type=float, default=5.0)
+    parser.add_argument("--max-shadow-elapsed-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--output",
+        default="docs/validation/ingestion_storage_benchmark.json",
+        help="JSON evidence output path",
+    )
+    args = parser.parse_args()
+
+    evidence = run_storage_benchmark(
+        Path(args.output),
+        symbol_count=args.symbol_count,
+        bursts=args.bursts,
+        events_per_symbol_per_burst=args.events_per_symbol_per_burst,
+        min_rows_per_second=args.min_rows_per_second,
+        max_write_latency_slo=args.max_write_latency_seconds,
+        max_compaction_elapsed_slo=args.max_compaction_elapsed_seconds,
+        max_shadow_elapsed_slo=args.max_shadow_elapsed_seconds,
+    )
+    return 0 if evidence.pass_ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

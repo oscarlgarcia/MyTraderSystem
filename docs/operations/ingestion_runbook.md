@@ -14,6 +14,8 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - `docker compose exec app poetry run python scripts/ingestion_soak.py`
 - Canary determinista:
   - `docker compose exec app poetry run python scripts/ingestion_canary.py`
+- Benchmark de storage segmentado:
+  - `docker compose exec app poetry run python scripts/ingestion_storage_benchmark.py`
 - Compactacion offline:
   - `docker compose exec app poetry run python scripts/ingestion_compact.py --env dev --dry-run`
   - `docker compose exec app poetry run python scripts/ingestion_compact.py --env dev --batch-limit 10 --retain-compacted-segments 1`
@@ -21,6 +23,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 ## Artefactos de evidencia
 - `docs/validation/ingestion_soak_evidence.json`
 - `docs/validation/ingestion_canary_report.json`
+- `docs/validation/ingestion_storage_benchmark.json`
 - `<data_dir>/shadow/env=<env>/comparisons.jsonl`
 - `<data_dir>/normalized/.../data.parquet`
 - `<data_dir>/normalized/.../retained-segments/`
@@ -57,20 +60,25 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 3. Ejecutar `python scripts/ingestion_soak.py`.
 4. Ejecutar `python scripts/ingestion_canary.py`.
 5. Ejecutar `python scripts/ingestion_compact.py --env dev --dry-run`.
-6. Verificar que no hay `FAILED` y que todos los scripts devuelven exit code `0`.
-7. Revisar `docs/validation/ingestion_soak_evidence.json`:
+6. Ejecutar `python scripts/ingestion_storage_benchmark.py`.
+7. Verificar que no hay `FAILED` y que todos los scripts devuelven exit code `0`.
+8. Revisar `docs/validation/ingestion_soak_evidence.json`:
    - `pass_ok = true`
    - `max_gaps = 0`
    - `max_gap_irreparable = 0`
-8. Revisar `docs/validation/ingestion_canary_report.json`:
+9. Revisar `docs/validation/ingestion_canary_report.json`:
    - `pass_ok = true`
    - `diffs.events_persisted = 0`
    - `diffs.duplicates = 0`
    - `diffs.gaps = 0`
-9. Revisar el reporte de compactacion:
+10. Revisar `docs/validation/ingestion_storage_benchmark.json`:
+   - `pass_ok = true`
+   - existe `slo`
+   - los cuatro casos (`synthetic_case`, `replay_case`, `concurrent_compaction_case`, `shadow_scoped_case`) quedan medidos
+11. Revisar el reporte de compactacion:
    - `failed_partitions = 0`
    - `planned_partitions` consistente con el estado de `segments/`
-10. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
+12. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
    - se publica `data.parquet`
    - el path activo `segments/` queda vacio o eliminado
    - `retained-segments/` solo existe si se pidio retencion
@@ -98,6 +106,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - suite slow verde
   - soak determinista verde
   - canary determinista verde
+  - benchmark de storage verde
   - compactacion sin backlog critico ni fallos
   - no hay corrupcion de Parquet
   - los summaries de fallo siguen siendo diagnosticables

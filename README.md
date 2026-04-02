@@ -168,6 +168,14 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - CLI operativa de compactacion:
   - `python scripts/ingestion_compact.py --env dev --dry-run`
   - `python scripts/ingestion_compact.py --env dev --batch-limit 10 --retain-compacted-segments 1`
+- Benchmark reproducible de storage segmentado:
+  - `python scripts/ingestion_storage_benchmark.py`
+  - mide:
+    - synthetic multi-partition burst
+    - replay raw -> normalized segmentado
+    - compactacion intercalada con escrituras
+    - shadow scoped runtime
+  - persiste SLO y resultados en `docs/validation/ingestion_storage_benchmark.json`
 - Adapters por feed/venue:
   - `app.marketdata.connectors.binance.BinanceTradeNormalizer`
   - `app.marketdata.connectors.binance.BinanceBarNormalizer`
@@ -364,10 +372,12 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
 - Validacion live local:
   - `python scripts/ingestion_soak.py`
   - `python scripts/ingestion_canary.py --refresh-baseline`
+  - `python scripts/ingestion_storage_benchmark.py`
   - generan:
     - `docs/validation/ingestion_soak_evidence.json`
     - `docs/validation/ingestion_canary_baseline.json`
     - `docs/validation/ingestion_canary_report.json`
+    - `docs/validation/ingestion_storage_benchmark.json`
 Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Seguridad operativa minima
