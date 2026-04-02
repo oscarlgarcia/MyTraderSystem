@@ -1,7 +1,7 @@
 # Ingestion Runbook
 
 ## Objetivo
-Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo a live. Todo el flujo usa fuentes mock/deterministas; no depende de Binance real.
+Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo a live. Todo el flujo usa fuentes mock/deterministas salvo el canary real cuando se ejecute expresamente.
 
 ## Comandos base
 - Shell del contenedor:
@@ -14,13 +14,18 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - `docker compose exec app poetry run python scripts/ingestion_soak.py`
 - Canary determinista:
   - `docker compose exec app poetry run python scripts/ingestion_canary.py`
+- Compactacion offline:
+  - `docker compose exec app poetry run python scripts/ingestion_compact.py --env dev --dry-run`
+  - `docker compose exec app poetry run python scripts/ingestion_compact.py --env dev --batch-limit 10 --retain-compacted-segments 1`
 
 ## Artefactos de evidencia
 - `docs/validation/ingestion_soak_evidence.json`
 - `docs/validation/ingestion_canary_report.json`
 - `<data_dir>/shadow/env=<env>/comparisons.jsonl`
+- `<data_dir>/normalized/.../data.parquet`
+- `<data_dir>/normalized/.../retained-segments/`
 
-## Señales a revisar
+## Senales a revisar
 - `ingestion summary`
   - `result`
   - `events_persisted`
@@ -39,33 +44,43 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - `result`
   - `streams_observed`
   - `streams_degraded`
+- `storage health`
+  - `segments_pending_total`
+  - `segments_per_partition_max`
+  - `compaction_lag_seconds`
+  - `compaction_failures_total`
+  - `normalized_partition_row_count`
 
-## Procedimiento mínimo de validación
+## Procedimiento minimo de validacion
 1. Ejecutar `pytest -q`.
 2. Ejecutar `pytest tests/slow/test_ingestion_readiness.py -m slow -q`.
 3. Ejecutar `python scripts/ingestion_soak.py`.
 4. Ejecutar `python scripts/ingestion_canary.py`.
-5. Verificar que no hay `FAILED` y que ambos scripts devuelven exit code `0`.
-6. Revisar `docs/validation/ingestion_soak_evidence.json`:
+5. Ejecutar `python scripts/ingestion_compact.py --env dev --dry-run`.
+6. Verificar que no hay `FAILED` y que todos los scripts devuelven exit code `0`.
+7. Revisar `docs/validation/ingestion_soak_evidence.json`:
    - `pass_ok = true`
    - `max_gaps = 0`
    - `max_gap_irreparable = 0`
-7. Revisar `docs/validation/ingestion_canary_report.json`:
+8. Revisar `docs/validation/ingestion_canary_report.json`:
    - `pass_ok = true`
    - `diffs.events_persisted = 0`
    - `diffs.duplicates = 0`
    - `diffs.gaps = 0`
-8. Confirmar que los tests lentos dejan evidencia de:
-   - reconnect con checkpoint
-   - sobrecarga controlada bajo 10k eventos
-   - reinicio tras fallo parcial sin corrupcion
-   - fallo compuesto diagnosticable
+9. Revisar el reporte de compactacion:
+   - `failed_partitions = 0`
+   - `planned_partitions` consistente con el estado de `segments/`
+10. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
+   - se publica `data.parquet`
+   - el path activo `segments/` queda vacio o eliminado
+   - `retained-segments/` solo existe si se pidio retencion
+   - no queda `compaction-failures.jsonl` nuevo
 
-## Interpretación operativa
+## Interpretacion operativa
 - Si falla `test_end_to_end_live_mock_with_reconnect_checkpoint_and_sink_flush`
   - problema probable en reconnect, checkpoint o persistencia final.
 - Si falla `test_overload_policy_under_10k_mock_events`
-  - politica de saturacion no es estable o el sistema se degrada peor de lo documentado.
+  - la politica de saturacion no es estable o el sistema se degrada peor de lo documentado.
 - Si falla `test_restart_after_partial_failure_preserves_consistency`
   - no hay garantias suficientes ante reinicio/fallo parcial.
 - Si falla `test_corrupt_input_and_sink_failure_leave_system_diagnosable`
@@ -74,6 +89,8 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - no se debe promover el pipeline aunque la suite slow pase.
 - Si falla el canary
   - no se debe promover la version candidata; revisar `comparisons.jsonl` y usar rollback.
+- Si falla la compactacion
+  - no se debe confiar en lecturas largas de normalized hasta inspeccionar `compaction-failures.jsonl`.
 
 ## Criterio operativo de salida
 - `GO` solo si:
@@ -81,19 +98,22 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - suite slow verde
   - soak determinista verde
   - canary determinista verde
-  - no hay corrupción de Parquet
+  - compactacion sin backlog critico ni fallos
+  - no hay corrupcion de Parquet
   - los summaries de fallo siguen siendo diagnosticables
 - `GO CONDICIONAL` solo si:
-  - no hay diferencias semánticas (`events_persisted`, `duplicates`, `gaps`)
-  - y la única desviación es de latencia, documentada y aceptada explícitamente
+  - no hay diferencias semanticas (`events_persisted`, `duplicates`, `gaps`)
+  - y la unica desviacion es de latencia, documentada y aceptada explicitamente
 - `NO-GO` si:
   - cualquier test slow falla
   - soak o canary fallan
-  - hay pérdida silenciosa
+  - hay perdida silenciosa
   - hay fallo no diagnosticable
-  - hay diferencias semánticas entre baseline y candidata
+  - hay diferencias semanticas entre baseline y candidata
+  - `compaction_lag_seconds` supera el umbral critico
+  - `compaction_failures_total > 0`
 
-## Alertas operativas mínimas
+## Alertas operativas minimas
 - `reconnect_storm` (warning, umbral 3):
   - comprobar conectividad hacia el vendor
   - revisar si el websocket esta inestable o si hay rate limit
@@ -102,7 +122,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - confirmar si el recovery aplicable se ejecuto
 - `gap_irreparable` (error, umbral 1):
   - tratar el stream como degradado
-  - no asumir continuidad para paper/live hasta rehacer bootstrap o reiniciar la sesión
+  - no asumir continuidad para paper/live hasta rehacer bootstrap o reiniciar la sesion
 - `heartbeat_missed` (warning, umbral 1):
   - verificar watchdog y latencia de red
   - confirmar que hubo reconnect posterior
@@ -111,9 +131,15 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - buscar schema drift o payloads corruptos por stream
 - `sink_failure` (error, umbral 1):
   - detener confianza en persistencia
-  - revisar raw sink, normalized sink o error sink según `sink_component`
+  - revisar raw sink, normalized sink o error sink segun `sink_component`
+- `compaction_backlog_high` (warning, umbral 1):
+  - ejecutar el job de compactacion antes de seguir confiando en sesiones largas
+  - revisar `segments_pending_total`, `segments_per_partition_max` y `compaction_lag_seconds`
+- `compaction_failure_detected` (error, umbral 1):
+  - tratar normalized storage como degradado
+  - inspeccionar `compaction-failures.jsonl` y reintentar solo tras corregir la causa
 
-## Campos estándar de alerta
+## Campos estandar de alerta
 - `message = operational alert`
 - `alert_type`
 - `alert_severity`
@@ -121,14 +147,15 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `threshold`
 - `recommended_action`
 
-## Rollback mínimo
+## Rollback minimo
 - Ver checklist detallada en `docs/operations/ingestion_rollback_checklist.md`.
-- Regla práctica:
+- Regla practica:
   1. si `ingestion_canary_report.json` muestra diffs relevantes, no promocionar
   2. volver a `--ingest-pipeline-version v1`
   3. mantener `--ingest-shadow-mode` activo si se quiere seguir comparando sin exponer `v2`
   4. no borrar evidencias `shadow/` ni `docs/validation/*.json` hasta cerrar el incidente
+  5. no borrar `retained-segments/` ni `compaction-failures.jsonl` hasta cerrar el incidente de storage
 
 ## Limitaciones conocidas
 - Los benchmarks son deterministas y locales; no sustituyen soak test largo ni canary real contra vendor.
-- La suite no usa Binance real en CI a propósito.
+- La suite no usa Binance real en CI a proposito.

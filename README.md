@@ -156,6 +156,18 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `app.main.run_cycle(...)` queda como wrapper de composicion para compatibilidad
 - Catalogo autoritativo de instrumentos: `app.marketdata.instrument_loader` carga un snapshot del `exchangeInfo` del venue y `app.marketdata.instruments` lo usa como source-of-truth para construir el `InstrumentCatalog` runtime. Cada run/backfill persiste el snapshot autoritativo en `data/.../metadata/instruments/...`, compara contra `latest.json` y emite `provider_metadata_drift` cuando cambian `tick_size`, `precision`, `contract_type` o metadata equivalente. La normalizacion persiste `base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`, `metadata_source`, `venue_snapshot_version`, `instrument_catalog_version` e `instrument_snapshot`, y el parquet `normalized` añade tambien `instrument_catalog_snapshot_hash` e `instrument_catalog_snapshot` a nivel de schema metadata. Si un simbolo no esta soportado por el snapshot autoritativo, la normalizacion falla rapido.
 - Compactacion offline: `app.ingestion.compaction.compact_partition(...)` fusiona segmentos de una particion, aplica dedup/proyeccion de lectura y publica `data.parquet` como snapshot compactado.
+- Job de compactacion: `app.ingestion.compaction.run_compaction_job(...)` selecciona particiones pendientes segun `segments_pending` / `compaction_lag_seconds`, aplica `batch_limit`, retries por particion, `dry_run` y retencion de segmentos ya compactados fuera del path activo de lectura en `retained-segments/`.
+- Salud del storage segmentado: `app.ingestion.storage_health.collect_storage_health(...)` expone:
+  - `segments_pending_total`
+  - `segments_per_partition_max`
+  - `compaction_lag_seconds`
+  - `compaction_failures_total`
+  - `normalized_partition_row_count`
+  - detalle por particion con `symbol`, `day`, `segments_pending`, `compaction_lag_seconds` y `has_compacted_snapshot`
+- Gating de produccion por storage: `production_mode` ahora falla si hay `compaction_failures_total > 0` o si `compaction_lag_seconds` supera el umbral critico.
+- CLI operativa de compactacion:
+  - `python scripts/ingestion_compact.py --env dev --dry-run`
+  - `python scripts/ingestion_compact.py --env dev --batch-limit 10 --retain-compacted-segments 1`
 - Adapters por feed/venue:
   - `app.marketdata.connectors.binance.BinanceTradeNormalizer`
   - `app.marketdata.connectors.binance.BinanceBarNormalizer`
