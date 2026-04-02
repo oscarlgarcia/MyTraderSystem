@@ -11,11 +11,14 @@
 - ADR vigente: `docs/adr/ADR-0001-historical-market-data-scope.md`
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
-- **Catalogo minimo de instrumentos**:
+- **Catalogo autoritativo de instrumentos**:
+  - `app.marketdata.instrument_loader.load_binance_exchange_info_snapshot(...)`
+  - `app.marketdata.instrument_loader.load_binance_instrument_records(...)`
   - `app.marketdata.instruments.Instrument`
   - `app.marketdata.instruments.InstrumentCatalog`
-  - resolucion por `(venue, symbol)` para `base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`
-  - los normalizadores typed consultan este catalogo y fallan si el simbolo no esta soportado
+  - resolucion por `(venue, symbol)` para `base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`, `metadata_source`, `venue_snapshot_version`
+  - el `InstrumentCatalog` runtime se construye a partir de metadata del venue y actua como cache/version model, no como source-of-truth primario
+  - los normalizadores typed consultan este catalogo y fallan si el simbolo no esta soportado por el snapshot autoritativo
   - cada evento typed y cada parquet `normalized` persisten `instrument_catalog_version` e `instrument_snapshot`
 - **Adapters Binance por feed**:
   - `app.marketdata.connectors.binance.BinanceTradeNormalizer`

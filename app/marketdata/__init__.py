@@ -20,6 +20,7 @@ from .models import (
 from .normalization import NORMALIZER_VERSION, SUPPORTED_NORMALIZER_VERSIONS, resolve_normalizer_version
 from .raw_sink import JsonlRawSink, NullRawSink, RawRecord, RawSink
 from .gaps import GapObservation, detect_gap
+from .instrument_loader import InstrumentRecord, load_binance_exchange_info_snapshot, load_binance_instrument_records
 from .instruments import (
     DEFAULT_INSTRUMENT_CATALOG,
     DEFAULT_INSTRUMENTS,
@@ -94,10 +95,13 @@ __all__ = [
     "JsonlRawSink",
     "GapObservation",
     "detect_gap",
+    "InstrumentRecord",
     "Instrument",
     "InstrumentCatalog",
     "DEFAULT_INSTRUMENTS",
     "DEFAULT_INSTRUMENT_CATALOG",
+    "load_binance_exchange_info_snapshot",
+    "load_binance_instrument_records",
     "infer_spot_assets",
     "get_default_instrument_catalog",
     "ensure_default_instruments",
