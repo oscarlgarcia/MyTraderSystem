@@ -350,9 +350,10 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
     4. rollback: volver a `--ingest-pipeline-version v1` y desactivar shadow
 - Validacion live local:
   - `python scripts/ingestion_soak.py`
-  - `python scripts/ingestion_canary.py`
+  - `python scripts/ingestion_canary.py --refresh-baseline`
   - generan:
     - `docs/validation/ingestion_soak_evidence.json`
+    - `docs/validation/ingestion_canary_baseline.json`
     - `docs/validation/ingestion_canary_report.json`
 Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 

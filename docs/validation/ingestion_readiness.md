@@ -6,7 +6,7 @@
 - [ ] `pytest -q` pasa completo
 - [ ] `tests/slow/test_ingestion_readiness.py` pasa completo
 - [ ] `python scripts/ingestion_soak.py` devuelve `0`
-- [ ] `python scripts/ingestion_canary.py` devuelve `0`
+- [ ] `python scripts/ingestion_canary.py --refresh-baseline` devuelve `0`
 - [ ] el alcance historico soportado esta declarado explicitamente: bars-only (`kline`); trade historical no se promete
 - [ ] no hay duplicados no explicados en reconnect/restart/handoff
 - [ ] no hay corrupción de `data.parquet`
@@ -30,10 +30,11 @@
 
 ### Migración / canary
 - [ ] `ingestion_canary_report.json` existe
+- [ ] `ingestion_canary_baseline.json` existe
 - [ ] `comparisons.jsonl` existe si hubo `shadow_mode`
-- [ ] `diffs.events_persisted = 0`
-- [ ] `diffs.duplicates = 0`
-- [ ] `diffs.gaps = 0`
+- [ ] `comparison_reason = semantic_match`
+- [ ] `diffs.row_count = 0`
+- [ ] `diffs.projection_checksum_match = true`
 
 ### Seguridad operativa
 - [ ] `--production-mode` rechaza defaults inseguros
@@ -44,6 +45,7 @@
 - salida de `pytest -q`
 - salida de `pytest tests/slow/test_ingestion_readiness.py -m slow -q`
 - `docs/validation/ingestion_soak_evidence.json`
+- `docs/validation/ingestion_canary_baseline.json`
 - `docs/validation/ingestion_canary_report.json`
 - commit validado
 - fecha de ejecución
@@ -63,3 +65,6 @@
   - pérdida silenciosa
   - `gap_irreparable` sin mitigación
   - diferencias semánticas entre baseline y candidata
+
+
+

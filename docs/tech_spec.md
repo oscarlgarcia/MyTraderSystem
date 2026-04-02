@@ -526,7 +526,7 @@
   - handoff historico -> live limpio o inconsistente segun corresponda
   - recovery por snapshot para barras, sin declararlo exacto mientras siga acotado, y marcacion explicita de `gap_irreparable` para trades sin recovery exacto
   - soak determinista con evidencia persistida
-  - canary baseline vs candidate con comparacion automatica de metricas
+  - canary baseline vs candidate sobre una ventana corta persistida del vendor real
 - **Seguridad operativa**:
   - `app.config.get_secret_env(name, required=False)`: punto de entrada explicito para secretos via `APP_SECRET_*`.
   - `app.ingestion.storage.validate_output_path(...)`: valida rutas y permisos de escritura.

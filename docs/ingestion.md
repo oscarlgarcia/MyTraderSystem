@@ -416,7 +416,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - con `shadow_block_on_diff=True`, la promocion falla con `ShadowPromotionError`
 - Validacion operativa reproducible:
   - `scripts/ingestion_soak.py` ejecuta un soak determinista y escribe `docs/validation/ingestion_soak_evidence.json`
-  - `scripts/ingestion_canary.py` compara baseline/candidate y escribe `docs/validation/ingestion_canary_report.json`
+  - `scripts/ingestion_canary.py --refresh-baseline` captura una ventana corta del vendor real, persiste `docs/validation/ingestion_canary_baseline.json` y compara baseline/candidate sobre ese baseline
 - Si el proceso cae antes del cierre del handler, el lote en memoria aun no persistido se pierde.
 
 ## Que hace y que no debe hacer
