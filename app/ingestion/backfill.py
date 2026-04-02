@@ -195,6 +195,7 @@ def raw_record_from_kline_row(
     *,
     interval: str,
     receive_ts: dt.datetime,
+    process_ts: dt.datetime | None,
     trace_id: str | None,
     venue: str = "BINANCE",
 ) -> RawRecord:
@@ -206,6 +207,7 @@ def raw_record_from_kline_row(
         symbol=symbol,
         exchange_ts=dt.datetime.fromtimestamp(int(row[6]) / 1000, tz=dt.timezone.utc),
         receive_ts=receive_ts,
+        process_ts=process_ts,
         trace_id=trace_id,
         source_id=str(row[0]),
     )
@@ -266,6 +268,7 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             row,
             interval=args.interval,
             receive_ts=receive_ts,
+            process_ts=receive_ts,
             trace_id=trace_id,
         )
         for row in klines

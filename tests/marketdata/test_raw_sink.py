@@ -25,6 +25,7 @@ def test_jsonl_raw_sink_writes_append_only_layout(tmp_path):
         symbol="btcusdt",
         exchange_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
         receive_ts=datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+        process_ts=datetime(2024, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
         trace_id="trace-1",
     )
 
@@ -43,6 +44,7 @@ def test_jsonl_raw_sink_writes_append_only_layout(tmp_path):
     rows = _read_jsonl(path)
     assert rows[0]["payload"] == {"foo": "bar"}
     assert rows[0]["trace_id"] == "trace-1"
+    assert rows[0]["process_ts"] == "2024-01-01T00:00:02+00:00"
     assert rows[0]["run_id"] == sink.run_id
     assert rows[0]["ingestion_seq"] == 1
 
@@ -155,6 +157,7 @@ def test_valid_stream_message_is_persisted_to_raw_landing(tmp_path):
     assert rows[0]["symbol"] == "BTCUSDT"
     assert rows[0]["stream_type"] == "trade"
     assert rows[0]["trace_id"] == "trace-raw-1"
+    assert rows[0]["process_ts"] == events[0].process_ts.isoformat()
     assert rows[0]["run_id"] == raw_sink.run_id
     assert rows[0]["ingestion_seq"] == 1
     assert rows[0]["payload"]["data"]["t"] == 7

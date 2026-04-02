@@ -92,6 +92,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `run_id + ingestion_seq` cuando ambos existen
     - fallback legacy: `receive_ts`, path de particion y numero de linea
   - `detect_replay_order_ambiguities(...)` detecta raws con metadata parcial de orden (por ejemplo `ingestion_seq` sin `run_id`) para evitar interpretarlos como replay fuerte.
+  - Preserva `process_ts` cuando el raw lo incluye; en raws legacy sin ese campo hace fallback explicito a `receive_ts`.
   - Re-normaliza payloads usando la version de normalizador solicitada (`normalizer_version`).
   - La politica actual es global: toda normalizacion nueva usa `normalizer_version="v1"` hasta que se introduzca una migracion versionada.
   - Soporta filtros por:
@@ -289,7 +290,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - trade WS -> `exchange_ts = E`
   - kline WS/REST -> `exchange_ts = k.T` si existe, si no `E`
   - `receive_ts` se fija al recibir el frame WS o la respuesta REST
-  - `process_ts` se fija al normalizar; si una fuente custom no lo aporta, `ResilientRunner` lo completa al aceptar el evento
+  - `process_ts` se fija al normalizar y el raw landing lo persiste; si una fuente custom no lo aporta, `ResilientRunner` lo completa al aceptar el evento
 - El raw valido se escribe inmediatamente despues de validar y normalizar el mensaje, antes de hacer `yield` al pipeline. Si el sink normalized falla despues, el raw ya queda preservado para diagnostico/replay.
 - `ReplaySource` se apoya en raw landing; no lee normalized Parquet. Esto permite re-ejecutar normalizacion de forma determinista para backtesting/debugging sin depender del layout final del sink.
 - `normalizer_version` queda fijada explicitamente tanto en replay como en normalized. Si mañana cambia la normalizacion, el contrato exige introducir una nueva version y no sobreescribir silenciosamente el significado de los datasets ya escritos.

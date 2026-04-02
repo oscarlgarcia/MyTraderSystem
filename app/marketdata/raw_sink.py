@@ -23,6 +23,7 @@ class RawRecord:
     symbol: str
     exchange_ts: datetime
     receive_ts: datetime
+    process_ts: datetime | None = None
     run_id: str | None = None
     ingestion_seq: int | None = None
     trace_id: str | None = None
@@ -34,6 +35,8 @@ class RawRecord:
         self.symbol = normalize_symbol(self.symbol)
         ensure_aware_utc(self.exchange_ts)
         ensure_aware_utc(self.receive_ts)
+        if self.process_ts is not None:
+            ensure_aware_utc(self.process_ts)
         if not self.venue:
             raise ValueError("venue must be non-empty")
         if not self.stream_type:
@@ -67,6 +70,7 @@ class RawRecord:
             "symbol": self.symbol,
             "exchange_ts": self.exchange_ts.isoformat(),
             "receive_ts": self.receive_ts.isoformat(),
+            "process_ts": self.process_ts.isoformat() if self.process_ts is not None else None,
             "run_id": self.run_id,
             "ingestion_seq": self.ingestion_seq,
             "trace_id": self.trace_id,

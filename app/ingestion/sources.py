@@ -267,6 +267,7 @@ class BinanceSource:
             symbol=symbol,
             exchange_ts=event.event_ts,
             receive_ts=receive_ts,
+            process_ts=getattr(event, "process_ts", None),
             trace_id=get_trace_id(),
             source_id=getattr(event, "source_id", None),
         )
@@ -501,7 +502,7 @@ class BinanceSource:
                         event_type,
                         data,
                         receive_ts=receive_ts,
-                        process_ts=receive_ts,
+                        process_ts=None,
                     )
                     validate_ingestion_event(event)
                     metric = _ensure_stream_metric(
@@ -602,7 +603,7 @@ class BinanceSource:
                                 stream_type,
                                 payload,
                                 receive_ts=receive_ts,
-                                process_ts=receive_ts,
+                                process_ts=None,
                             )
                             validate_ingestion_event(event)
                             metric = _ensure_stream_metric(

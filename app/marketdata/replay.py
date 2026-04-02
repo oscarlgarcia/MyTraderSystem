@@ -84,6 +84,7 @@ def _record_from_dict(payload: dict) -> RawRecord:
         symbol=payload["symbol"],
         exchange_ts=_parse_ts(payload["exchange_ts"]),
         receive_ts=_parse_ts(payload["receive_ts"]),
+        process_ts=_parse_ts(payload["process_ts"]) if payload.get("process_ts") not in (None, "") else None,
         run_id=payload.get("run_id"),
         ingestion_seq=int(payload["ingestion_seq"]) if payload.get("ingestion_seq") is not None else None,
         trace_id=payload.get("trace_id"),
@@ -147,6 +148,7 @@ def read_raw_entries(
 
 def normalize_replay_record(record: RawRecord, *, normalizer_version: str = NORMALIZER_VERSION) -> IngestionEvent:
     normalizer_version = resolve_normalizer_version(normalizer_version)
+    replay_process_ts = record.process_ts or record.receive_ts
     payload = record.payload
     if isinstance(payload, str):
         payload = json.loads(payload)
@@ -155,21 +157,21 @@ def normalize_replay_record(record: RawRecord, *, normalizer_version: str = NORM
             json.dumps(payload),
             venue=record.venue,
             receive_ts=record.receive_ts,
-            process_ts=record.receive_ts,
+            process_ts=replay_process_ts,
         )
     elif record.stream_type == "trade":
         event = normalize_trade_typed(
             payload,
             venue=record.venue,
             receive_ts=record.receive_ts,
-            process_ts=record.receive_ts,
+            process_ts=replay_process_ts,
         )
     elif record.stream_type == "kline":
         event = normalize_kline_typed(
             payload,
             venue=record.venue,
             receive_ts=record.receive_ts,
-            process_ts=record.receive_ts,
+            process_ts=replay_process_ts,
         )
     else:
         raise KeyError(f"unsupported replay stream_type: {record.stream_type}")

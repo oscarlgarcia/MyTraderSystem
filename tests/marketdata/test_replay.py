@@ -140,6 +140,29 @@ def test_replay_orders_append_only_runs_by_run_id_then_ingestion_seq(tmp_path):
     assert [event.trade_id for event in out] == ["11", "12", "21", "22"]
 
 
+def test_replay_preserves_process_ts_when_present_in_raw(tmp_path):
+    sink = JsonlRawSink(tmp_path / "raw", env="test")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    process_ts = base + timedelta(seconds=3)
+    sink.write(
+        RawRecord(
+            payload=_trade_envelope("BTCUSDT", int(base.timestamp() * 1000), 15, "100"),
+            venue="BINANCE",
+            stream_type="trade",
+            symbol="BTCUSDT",
+            exchange_ts=base,
+            receive_ts=base + timedelta(seconds=1),
+            process_ts=process_ts,
+            source_id="15",
+        )
+    )
+
+    out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("trade",)).stream())
+
+    assert len(out) == 1
+    assert out[0].process_ts == process_ts
+
+
 def test_replay_keeps_legacy_fallback_order_without_ingestion_seq(tmp_path):
     path = (
         tmp_path
@@ -183,6 +206,40 @@ def test_replay_keeps_legacy_fallback_order_without_ingestion_seq(tmp_path):
     out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("trade",)).stream())
 
     assert [event.trade_id for event in out] == ["11", "10"]
+
+
+def test_replay_legacy_rows_fallback_process_ts_to_receive_ts(tmp_path):
+    path = (
+        tmp_path
+        / "raw"
+        / "env=test"
+        / "venue=BINANCE"
+        / "stream_type=trade"
+        / "symbol=BTCUSDT"
+        / "date=2024-01-01"
+        / "events.jsonl"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    row = {
+        "payload": _trade_envelope("BTCUSDT", int(base.timestamp() * 1000), 40, "100"),
+        "venue": "BINANCE",
+        "stream_type": "trade",
+        "symbol": "BTCUSDT",
+        "exchange_ts": base.isoformat(),
+        "receive_ts": (base + timedelta(seconds=2)).isoformat(),
+        "trace_id": "legacy-process-fallback",
+        "source_id": "40",
+    }
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(row))
+        handle.write("\n")
+
+    out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("trade",)).stream())
+
+    assert len(out) == 1
+    assert out[0].receive_ts == base + timedelta(seconds=2)
+    assert out[0].process_ts == base + timedelta(seconds=2)
 
 
 def test_replay_detects_partial_order_metadata_for_legacy_rows(tmp_path):

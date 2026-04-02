@@ -279,6 +279,9 @@
 - Invariante temporal objetivo de esta fase:
   - cuando el feed se captura en el conector local, debe cumplirse `exchange_ts <= receive_ts <= process_ts`
   - si una fuente custom inyecta un evento sin `process_ts`, `ResilientRunner` lo completa al aceptarlo
+- Persistencia temporal en raw:
+  - raw nuevo preserva `exchange_ts`, `receive_ts` y `process_ts`
+  - raw legacy sin `process_ts` mantiene compatibilidad; replay hace fallback explicito a `receive_ts`
 - Watermark runtime actual:
   - `app.marketdata.temporal_state.TemporalPartitionKey = (venue, symbol, stream_type)`
   - `ResilientRunner` mantiene `last_event_ts`, gaps y late metrics por esa clave
@@ -382,6 +385,7 @@
   - secundario legacy: path de particion
   - terciario legacy: numero de linea dentro de `events.jsonl`
 - `detect_replay_order_ambiguities(...)` permite detectar raws legacy con metadata parcial de orden, por ejemplo `ingestion_seq` presente sin `run_id`.
+- `normalize_replay_record(...)` preserva `process_ts` desde raw cuando existe; solo usa `receive_ts` como fallback de compatibilidad para raws legacy.
 - Filtros soportados:
   - `venue`
   - `stream_types`
