@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, Iterator, List
 from uuid import uuid4
 
 import pyarrow as pa
@@ -764,11 +764,10 @@ def _read_single_parquet(path: Path) -> pa.Table:
             normalizer_version.decode("utf-8") if normalizer_version is not None else None
         )
         if "normalizer_version" not in table.column_names:
-            rows = []
-            for row in table.to_pylist():
-                row["normalizer_version"] = resolved
-                rows.append(row)
-            table = pa.Table.from_pylist(rows)
+            table = table.append_column(
+                "normalizer_version",
+                pa.array([resolved] * table.num_rows, type=pa.string()),
+            )
         table = table.replace_schema_metadata(
             {
                 **(table.schema.metadata or {}),
@@ -910,26 +909,38 @@ def _row_identity(row: dict[str, object]) -> tuple:
     )
 
 
+def _iter_table_rows(
+    table: pa.Table,
+    *,
+    columns: list[str] | None = None,
+    batch_size: int = 4096,
+) -> Iterator[dict[str, object]]:
+    selected = table.select(columns) if columns is not None else table
+    for batch in selected.to_batches(max_chunksize=batch_size):
+        for row in batch.to_pylist():
+            yield row
+
+
 def _read_existing_table_for_merge(out_path: Path, target_schema: pa.Schema) -> pa.Table:
     table = pq.ParquetFile(out_path).read()
     metadata = table.schema.metadata or {}
     version = metadata.get(b"schema_version", b"v1").decode("utf-8")
     target_columns = set(target_schema.names)
     if _is_trade_schema(target_schema):
-        rows = [_trade_row_from_existing(row) for row in table.to_pylist()]
+        rows = [_trade_row_from_existing(row) for row in _iter_table_rows(table)]
         return pa.Table.from_pylist(
             [{key: value for key, value in row.items() if key in target_columns} for row in rows],
             schema=target_schema,
         )
     if _is_bar_schema(target_schema):
-        rows = [_bar_row_from_existing(row) for row in table.to_pylist()]
+        rows = [_bar_row_from_existing(row) for row in _iter_table_rows(table)]
         return pa.Table.from_pylist(
             [{key: value for key, value in row.items() if key in target_columns} for row in rows],
             schema=target_schema,
         )
     if version == "v2":
         rows = []
-        for row in table.to_pylist():
+        for row in _iter_table_rows(table):
             metadata_row = row.get("metadata") or {}
             adapted = {
                 "venue": row.get("venue") or str(metadata_row.get("venue", "BINANCE")).upper(),
@@ -948,7 +959,7 @@ def _read_existing_table_for_merge(out_path: Path, target_schema: pa.Schema) -> 
         return pa.Table.from_pylist(rows, schema=target_schema)
 
     rows = []
-    for row in table.to_pylist():
+    for row in _iter_table_rows(table):
         metadata = row.get("metadata") or {}
         adapted = {
             "venue": str(metadata.get("venue", "BINANCE")).upper(),
@@ -970,7 +981,7 @@ def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
     merged: list[dict] = []
     seen = set()
 
-    def add_rows(rows: list[dict]) -> None:
+    def add_rows(rows: Iterable[dict[str, object]]) -> None:
         for row in rows:
             key = _row_identity(row)
             if key in seen:
@@ -978,8 +989,8 @@ def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
             seen.add(key)
             merged.append(row)
 
-    add_rows(existing.to_pylist())
-    add_rows(new.to_pylist())
+    add_rows(_iter_table_rows(existing))
+    add_rows(_iter_table_rows(new))
     merged.sort(key=lambda r: r["event_ts"])
     return pa.Table.from_pylist(merged, schema=schema)
 
@@ -994,7 +1005,7 @@ def _key_set_from_table(tbl: pa.Table) -> set[tuple]:
     cols.extend(name for name in size_cols if name in tbl.column_names and name not in cols)
     optional_cols = ["event_ts", "exchange_ts", "venue", "metadata", "source_id", "trade_id", "sequence_id"]
     cols.extend(name for name in optional_cols if name in tbl.column_names and name not in cols)
-    for row in tbl.select(cols).to_pylist():
+    for row in _iter_table_rows(tbl, columns=cols):
         keys.add(_row_identity(row))
     return keys
 
@@ -1002,7 +1013,7 @@ def _key_set_from_table(tbl: pa.Table) -> set[tuple]:
 def _filter_new_rows(tbl: pa.Table, existing_keys: set[tuple]) -> pa.Table:
     schema = tbl.schema
     filtered = []
-    for row in tbl.to_pylist():
+    for row in _iter_table_rows(tbl):
         key = _row_identity(row)
         if key in existing_keys:
             continue

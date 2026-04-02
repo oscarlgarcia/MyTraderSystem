@@ -63,36 +63,34 @@ def build_shadow_snapshot(
     partition_keys: Iterable[str] | None = None,
 ) -> ShadowSnapshot:
     scoped_partitions = tuple(sorted({str(key) for key in (partition_keys or ()) if str(key).strip()}))
-    rows = _load_canonical_rows(
+    global_identities: set[str] = set()
+    global_row_digest = hashlib.sha256()
+    min_event_ts: str | None = None
+    max_event_ts: str | None = None
+    row_count = 0
+    partitions: dict[str, ShadowPartitionSnapshot] = {}
+    for partition_key, rows in _iter_partition_canonical_rows(
         base_dir=Path(base_dir),
         env=env,
         pipeline_version=pipeline_version,
         partition_keys=scoped_partitions or None,
-    )
-    partition_rows: dict[str, list[dict[str, Any]]] = {}
-    global_identities: set[str] = set()
-    min_event_ts: str | None = None
-    max_event_ts: str | None = None
-
-    for row in rows:
-        partition_rows.setdefault(row["partition_key"], []).append(row)
-        global_identities.add(row["identity"])
-        event_ts = row["event_ts"]
-        if min_event_ts is None or event_ts < min_event_ts:
-            min_event_ts = event_ts
-        if max_event_ts is None or event_ts > max_event_ts:
-            max_event_ts = event_ts
-
-    partitions = {
-        key: _partition_snapshot(items)
-        for key, items in sorted(partition_rows.items())
-    }
+    ):
+        row_count += len(rows)
+        for row in rows:
+            global_identities.add(row["identity"])
+            _checksum_update(global_row_digest, row["row_hash"])
+            event_ts = row["event_ts"]
+            if min_event_ts is None or event_ts < min_event_ts:
+                min_event_ts = event_ts
+            if max_event_ts is None or event_ts > max_event_ts:
+                max_event_ts = event_ts
+        partitions[partition_key] = _partition_snapshot(rows)
     return ShadowSnapshot(
         pipeline_version=pipeline_version,
-        row_count=len(rows),
+        row_count=row_count,
         identity_count=len(global_identities),
         identity_checksum=_checksum_lines(sorted(global_identities)),
-        row_checksum=_checksum_rows(rows),
+        row_checksum=global_row_digest.hexdigest(),
         partitions=partitions,
         min_event_ts=min_event_ts,
         max_event_ts=max_event_ts,
@@ -254,14 +252,13 @@ def _shadow_paths(
     return sorted(paths)
 
 
-def _load_canonical_rows(
+def _iter_partition_canonical_rows(
     base_dir: Path,
     *,
     env: str,
     pipeline_version: str,
     partition_keys: tuple[str, ...] | None = None,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+) -> Iterable[tuple[str, list[dict[str, Any]]]]:
     for path in _shadow_paths(
         base_dir,
         env=env,
@@ -269,13 +266,21 @@ def _load_canonical_rows(
         partition_keys=partition_keys,
     ):
         table = read_parquet(path)
-        for row in table.to_pylist():
+        partition_rows: dict[str, list[dict[str, Any]]] = {}
+        for row in _iter_table_rows(table):
             canonical = _canonical_row(row)
             if partition_keys and canonical["partition_key"] not in partition_keys:
                 continue
-            rows.append(canonical)
-    rows.sort(key=lambda row: (row["partition_key"], row["event_ts"], row["identity"], row["row_hash"]))
-    return rows
+            partition_rows.setdefault(canonical["partition_key"], []).append(canonical)
+        for partition_key, rows in sorted(partition_rows.items()):
+            rows.sort(key=lambda row: (row["event_ts"], row["identity"], row["row_hash"]))
+            yield partition_key, rows
+
+
+def _iter_table_rows(table: Any, *, batch_size: int = 4096) -> Iterable[dict[str, Any]]:
+    for batch in table.to_batches(max_chunksize=batch_size):
+        for row in batch.to_pylist():
+            yield row
 
 
 def _shadow_partition_key_for_event(event: Any) -> str | None:
@@ -388,9 +393,13 @@ def _checksum_rows(rows: list[dict[str, Any]]) -> str:
 def _checksum_lines(values: list[str]) -> str:
     digest = hashlib.sha256()
     for value in values:
-        digest.update(str(value).encode("utf-8"))
-        digest.update(b"\n")
+        _checksum_update(digest, value)
     return digest.hexdigest()
+
+
+def _checksum_update(digest: Any, value: str) -> None:
+    digest.update(str(value).encode("utf-8"))
+    digest.update(b"\n")
 
 
 def _checksum_payload(value: dict[str, Any]) -> str:
