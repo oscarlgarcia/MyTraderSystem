@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.marketdata.gaps import GapObservation
 from app.ingestion.resilience import ResilientRunner
 from app.marketdata.recovery import build_recovery_request, supports_live_recovery
 from app.marketdata.models import BarEvent, TradeEvent
+from app.marketdata.support_matrix import FEED_SUPPORT_MATRIX
 from app.marketdata.temporal_state import TemporalPartitionKey
 
 
@@ -104,9 +107,17 @@ def test_trade_gap_without_exact_recovery_is_marked_irreparable():
     assert stream_metrics["last_gap_detection_mode"] == "sequence_gap_detection"
 
 
-def test_build_recovery_request_scales_bar_snapshot_window_with_gap():
+@pytest.mark.parametrize(
+    ("gap_minutes", "expected_limit"),
+    [
+        (1, 2),
+        (5, 6),
+        (12, 13),
+    ],
+)
+def test_build_recovery_request_scales_bar_snapshot_window_with_gap(gap_minutes: int, expected_limit: int):
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    current = _bar("BTCUSDT", base + timedelta(minutes=5))
+    current = _bar("BTCUSDT", base + timedelta(minutes=gap_minutes))
     request = build_recovery_request(
         current,
         partition=TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline"),
@@ -114,15 +125,15 @@ def test_build_recovery_request_scales_bar_snapshot_window_with_gap():
         gap_observation=GapObservation(
             detected=True,
             mode="weak_gap_detection",
-            gap_seconds=300.0,
+            gap_seconds=float(gap_minutes * 60),
         ),
     )
 
     assert request is not None
     assert request.start_ts == base
-    assert request.end_ts == base + timedelta(minutes=5)
+    assert request.end_ts == base + timedelta(minutes=gap_minutes)
     assert request.interval == "1m"
-    assert request.limit == 6
+    assert request.limit == expected_limit
     assert request.reason == "weak_gap_detection"
 
 
@@ -153,3 +164,35 @@ def test_runner_passes_recovery_request_window_to_snapshot_fn():
     assert request.end_ts == base + timedelta(minutes=5)
     assert request.interval == "1m"
     assert request.limit == 6
+
+
+def test_large_gap_partial_snapshot_does_not_imply_exact_recovery():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    stream_events = [
+        _bar("BTCUSDT", base),
+        _bar("BTCUSDT", base + timedelta(minutes=12)),
+    ]
+    handled: list[datetime] = []
+
+    def snapshot_fn(*, request=None):
+        assert request is not None
+        assert request.limit == 13
+        return [
+            _bar("BTCUSDT", base + timedelta(minutes=1)),
+            _bar("BTCUSDT", base + timedelta(minutes=12)),
+        ]
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(stream_events),
+        snapshot_fn=snapshot_fn,
+        lag_threshold_seconds=2,
+        sleeper=lambda _seconds: None,
+    )
+    runner.run(lambda event: handled.append(event.event_ts), stop_on_complete=True)
+
+    assert handled == [
+        base,
+        base + timedelta(minutes=1),
+        base + timedelta(minutes=12),
+    ]
+    assert FEED_SUPPORT_MATRIX["kline"].supports_exact_recovery is False

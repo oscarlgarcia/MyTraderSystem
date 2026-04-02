@@ -448,7 +448,19 @@ def test_snapshot_circuit_breaker_fails_fast_after_threshold():
     assert sum(1 for record in alerts if record["alert_type"] == "snapshot_retry_exhausted") >= 2
 
 
-def test_snapshot_request_uses_recovery_window_params_instead_of_fixed_limit():
+@pytest.mark.parametrize(
+    ("gap_minutes", "interval", "expected_limit"),
+    [
+        (1, "1m", 2),
+        (5, "5m", 6),
+        (12, "1m", 13),
+    ],
+)
+def test_snapshot_request_uses_recovery_window_params_instead_of_fixed_limit(
+    gap_minutes: int,
+    interval: str,
+    expected_limit: int,
+):
     cfg = mock.Mock(
         env="dev",
         ws_base="wss://stream.binance.com:9443",
@@ -473,9 +485,9 @@ def test_snapshot_request_uses_recovery_window_params_instead_of_fixed_limit():
     request = RecoveryRequest(
         partition=TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline"),
         start_ts=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-        end_ts=datetime(2024, 1, 1, 0, 5, tzinfo=timezone.utc),
-        interval="5m",
-        limit=11,
+        end_ts=datetime(2024, 1, 1, 0, gap_minutes, tzinfo=timezone.utc),
+        interval=interval,
+        limit=expected_limit,
         reason="weak_gap_detection",
     )
 
@@ -484,10 +496,10 @@ def test_snapshot_request_uses_recovery_window_params_instead_of_fixed_limit():
     assert len(events) == 1
     assert captured["url"].endswith("/api/v3/klines")
     assert captured["params"]["symbol"] == "BTCUSDT"
-    assert captured["params"]["interval"] == "5m"
-    assert captured["params"]["limit"] == 11
+    assert captured["params"]["interval"] == interval
+    assert captured["params"]["limit"] == expected_limit
     assert captured["params"]["startTime"] == 1704067200000
-    assert captured["params"]["endTime"] == 1704067500000
+    assert captured["params"]["endTime"] == 1704067200000 + (gap_minutes * 60 * 1000)
 
 
 def test_sink_failure_alert_is_emitted_when_normalized_sink_fails():
