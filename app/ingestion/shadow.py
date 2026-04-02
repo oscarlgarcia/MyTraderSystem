@@ -5,10 +5,16 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from app.ingestion.dedup import identity_from_fields
-from app.ingestion.storage import feed_type_for_source, read_parquet
+from app.ingestion.storage import (
+    STREAM_TYPE_BY_FEED_TYPE,
+    feed_type_for_source,
+    legacy_partition_path,
+    normalized_partition_path,
+    read_parquet,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +40,8 @@ class ShadowSnapshot:
     gaps_total: int
     processing_latency_seconds: float
     write_latency_seconds: float
+    scope_mode: str = "full_scan"
+    scope_partitions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +64,15 @@ def build_shadow_snapshot(
     gaps_total: int,
     processing_latency_seconds: float,
     write_latency_seconds: float,
+    partition_keys: Iterable[str] | None = None,
 ) -> ShadowSnapshot:
-    rows = _load_canonical_rows(base_dir=Path(base_dir), env=env, pipeline_version=pipeline_version)
+    scoped_partitions = tuple(sorted({str(key) for key in (partition_keys or ()) if str(key).strip()}))
+    rows = _load_canonical_rows(
+        base_dir=Path(base_dir),
+        env=env,
+        pipeline_version=pipeline_version,
+        partition_keys=scoped_partitions or None,
+    )
     partition_rows: dict[str, list[dict[str, Any]]] = {}
     global_identities: set[str] = set()
     min_event_ts: str | None = None
@@ -88,7 +103,18 @@ def build_shadow_snapshot(
         gaps_total=int(gaps_total),
         processing_latency_seconds=float(processing_latency_seconds),
         write_latency_seconds=float(write_latency_seconds),
+        scope_mode="partition_scope" if scoped_partitions else "full_scan",
+        scope_partitions=scoped_partitions,
     )
+
+
+def affected_shadow_partitions(events: Iterable[Any]) -> tuple[str, ...]:
+    partitions = {
+        key
+        for key in (_shadow_partition_key_for_event(event) for event in events)
+        if key is not None
+    }
+    return tuple(sorted(partitions))
 
 
 def compare_shadow_snapshots(primary: ShadowSnapshot, shadow: ShadowSnapshot) -> ShadowComparison:
@@ -193,22 +219,90 @@ def assert_shadow_promotable(comparison: ShadowComparison, *, block_on_diff: boo
         )
 
 
-def _shadow_paths(base_dir: Path, *, env: str, pipeline_version: str) -> list[Path]:
-    if pipeline_version == "v1":
-        return sorted(base_dir.glob(f"{env}/symbol=*/date=*/data.parquet"))
-    if pipeline_version == "v2":
-        return sorted(base_dir.glob(f"normalized/*/env={env}/venue=*/symbol=*/date=*"))
-    return []
+def _shadow_paths(
+    base_dir: Path,
+    *,
+    env: str,
+    pipeline_version: str,
+    partition_keys: tuple[str, ...] | None = None,
+) -> list[Path]:
+    if not partition_keys:
+        if pipeline_version == "v1":
+            return sorted(base_dir.glob(f"{env}/symbol=*/date=*/data.parquet"))
+        if pipeline_version == "v2":
+            return sorted(base_dir.glob(f"normalized/*/env={env}/venue=*/symbol=*/date=*"))
+        return []
+
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for partition_key in partition_keys:
+        feed_type, venue, symbol, day = _parse_partition_key(partition_key)
+        if pipeline_version == "v1":
+            path = legacy_partition_path(base_dir, env, symbol, day)
+        elif pipeline_version == "v2":
+            source = STREAM_TYPE_BY_FEED_TYPE.get(feed_type)
+            if source is None:
+                continue
+            path = normalized_partition_path(
+                base_dir,
+                env,
+                source=source,
+                symbol=symbol,
+                day=day,
+                venue=venue,
+            )
+        else:
+            continue
+        if path.exists() and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return sorted(paths)
 
 
-def _load_canonical_rows(base_dir: Path, *, env: str, pipeline_version: str) -> list[dict[str, Any]]:
+def _load_canonical_rows(
+    base_dir: Path,
+    *,
+    env: str,
+    pipeline_version: str,
+    partition_keys: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for path in _shadow_paths(base_dir, env=env, pipeline_version=pipeline_version):
+    for path in _shadow_paths(
+        base_dir,
+        env=env,
+        pipeline_version=pipeline_version,
+        partition_keys=partition_keys,
+    ):
         table = read_parquet(path)
         for row in table.to_pylist():
-            rows.append(_canonical_row(row))
+            canonical = _canonical_row(row)
+            if partition_keys and canonical["partition_key"] not in partition_keys:
+                continue
+            rows.append(canonical)
     rows.sort(key=lambda row: (row["partition_key"], row["event_ts"], row["identity"], row["row_hash"]))
     return rows
+
+
+def _shadow_partition_key_for_event(event: Any) -> str | None:
+    event_ts = getattr(event, "event_ts", None) or getattr(event, "exchange_ts", None)
+    source = getattr(event, "source", None)
+    symbol = getattr(event, "symbol", None)
+    if event_ts is None or source in (None, "") or symbol in (None, ""):
+        return None
+    metadata = _metadata_mapping(getattr(event, "metadata", None))
+    venue = str(getattr(event, "venue", metadata.get("venue", "BINANCE"))).upper()
+    day = _iso_ts(event_ts)
+    if day is None:
+        return None
+    return f"{feed_type_for_source(str(source))}:{venue}:{str(symbol)}:{day[:10]}"
+
+
+def _parse_partition_key(partition_key: str) -> tuple[str, str, str, str]:
+    parts = str(partition_key).split(":")
+    if len(parts) != 4:
+        raise ValueError(f"invalid shadow partition key: {partition_key}")
+    feed_type, venue, symbol, day = parts
+    return feed_type, venue.upper(), symbol, day
 
 
 def _canonical_row(row: dict[str, Any]) -> dict[str, Any]:

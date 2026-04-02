@@ -19,6 +19,7 @@ from app.ingestion.errors import ErrorPolicy, IngestionError, resolve_error_poli
 from app.ingestion.resilience import BackpressurePolicy, ResilientRunner, TemporalPolicy
 from app.ingestion.shadow import (
     ShadowPromotionError,
+    affected_shadow_partitions,
     assert_shadow_promotable,
     build_shadow_snapshot,
     compare_shadow_snapshots,
@@ -662,6 +663,7 @@ def collect_events(
         shadow_row_diff_total = 0
         shadow_checksum_diff_total = 0
         if shadow_mode and shadow_sink_impl is not None:
+            shadow_partitions = affected_shadow_partitions(handler.events)
             primary_snapshot = build_shadow_snapshot(
                 Path(cfg.data_dir),
                 env=cfg.env,
@@ -669,6 +671,7 @@ def collect_events(
                 gaps_total=runner.metrics.gaps_total,
                 processing_latency_seconds=runner.metrics.max_latency_seconds,
                 write_latency_seconds=write_latency_seconds,
+                partition_keys=shadow_partitions or None,
             )
             shadow_snapshot = build_shadow_snapshot(
                 Path(cfg.data_dir),
@@ -677,6 +680,7 @@ def collect_events(
                 gaps_total=runner.metrics.gaps_total,
                 processing_latency_seconds=runner.metrics.max_latency_seconds,
                 write_latency_seconds=_safe_float(getattr(shadow_sink_impl, "write_latency_seconds", 0.0)),
+                partition_keys=shadow_partitions or None,
             )
             shadow_comparison = compare_shadow_snapshots(
                 primary_snapshot,
@@ -699,6 +703,8 @@ def collect_events(
                         "shadow_version": shadow_comparison.shadow.pipeline_version,
                         "shadow_row_diff_total": shadow_row_diff_total,
                         "shadow_checksum_diff_total": shadow_checksum_diff_total,
+                        "shadow_scope_mode": shadow_comparison.primary.scope_mode,
+                        "shadow_scope_partitions": list(shadow_comparison.primary.scope_partitions),
                     },
                 )
             assert_shadow_promotable(shadow_comparison, block_on_diff=shadow_block_on_diff)
@@ -706,6 +712,8 @@ def collect_events(
                 "primary_version": shadow_comparison.primary.pipeline_version,
                 "shadow_version": shadow_comparison.shadow.pipeline_version,
                 "significant": shadow_comparison.significant,
+                "scope_mode": shadow_comparison.primary.scope_mode,
+                "scope_partitions": list(shadow_comparison.primary.scope_partitions),
                 "diffs": shadow_comparison.diffs,
             }
         if summary_logging:

@@ -463,8 +463,10 @@
   - `--ingest-shadow-block-on-diff`
 - Operativa:
   - el sink principal escribe en la version seleccionada
-  - si shadow mode esta activo y se usa el sink Parquet por defecto, se escribe en paralelo en la version opuesta
-  - el comparador genera snapshots old-vs-new con paridad semantica:
+- si shadow mode esta activo y se usa el sink Parquet por defecto, se escribe en paralelo en la version opuesta
+- la comparacion runtime se acota a las particiones afectadas por el lote/promocion actual
+- el full-scan se reserva para validacion offline completa
+- el comparador genera snapshots old-vs-new con paridad semantica:
     - `row_count`
     - `identity set`
     - `checksum` por particion

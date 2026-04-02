@@ -285,8 +285,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - `shadow_row_diff_total`
   - `shadow_checksum_diff_total`
 - Shadow mode / promotion safety:
-  - el comparador shadow ya evalua paridad semantica de dataset entre `v1` y `v2`
-  - compara:
+- el comparador shadow ya evalua paridad semantica de dataset entre `v1` y `v2`
+- en runtime compara por defecto solo las particiones afectadas por el lote/promocion actual
+- el full-scan sigue disponible como validacion offline
+- compara:
     - `row_count`
     - `identity set`
     - `checksum` por particion

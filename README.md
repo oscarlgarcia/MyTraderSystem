@@ -335,6 +335,8 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
   - `--ingest-shadow-mode` activa doble escritura sobre la version contraria cuando se usa el sink Parquet por defecto.
   - `--ingest-shadow-block-on-diff` aborta si el comparador detecta diferencias relevantes entre primary y shadow.
   - Las diferencias se persisten en `<data_dir>/shadow/env=<env>/comparisons.jsonl`.
+  - En runtime, la comparacion se acota por defecto a las particiones afectadas por el lote/promocion actual.
+  - El modo full-scan se mantiene como validacion offline para barridos completos del dataset.
   - El comparador shadow ya no se limita a conteos:
     - `row_count`
     - `identity set`
