@@ -225,6 +225,54 @@ def test_replay_detects_partial_order_metadata_for_legacy_rows(tmp_path):
     assert ambiguities[0].line_no == 1
 
 
+def test_replay_keeps_full_legacy_rows_compatible_without_ambiguity(tmp_path):
+    path = (
+        tmp_path
+        / "raw"
+        / "env=test"
+        / "venue=BINANCE"
+        / "stream_type=trade"
+        / "symbol=BTCUSDT"
+        / "date=2024-01-01"
+        / "events.jsonl"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    rows = [
+        {
+            "payload": _trade_envelope("BTCUSDT", int(base.timestamp() * 1000), 30, "100"),
+            "venue": "BINANCE",
+            "stream_type": "trade",
+            "symbol": "BTCUSDT",
+            "exchange_ts": base.isoformat(),
+            "receive_ts": (base + timedelta(seconds=1)).isoformat(),
+            "trace_id": "legacy-full-1",
+            "source_id": "30",
+        },
+        {
+            "payload": _trade_envelope("BTCUSDT", int((base + timedelta(seconds=1)).timestamp() * 1000), 31, "101"),
+            "venue": "BINANCE",
+            "stream_type": "trade",
+            "symbol": "BTCUSDT",
+            "exchange_ts": (base + timedelta(seconds=1)).isoformat(),
+            "receive_ts": (base + timedelta(seconds=2)).isoformat(),
+            "trace_id": "legacy-full-2",
+            "source_id": "31",
+        },
+    ]
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            handle.write(json.dumps(row))
+            handle.write("\n")
+
+    entries = read_raw_entries(tmp_path / "raw", "test", symbol="BTCUSDT", stream_types=("trade",))
+    ambiguities = detect_replay_order_ambiguities(entries)
+    out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("trade",)).stream())
+
+    assert ambiguities == []
+    assert [event.trade_id for event in out] == ["30", "31"]
+
+
 def test_replay_can_filter_by_window_stream_and_symbol(tmp_path):
     sink = JsonlRawSink(tmp_path / "raw", env="test")
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
