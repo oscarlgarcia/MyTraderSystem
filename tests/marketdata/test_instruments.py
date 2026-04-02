@@ -14,6 +14,7 @@ from app.marketdata.instruments import (
     instrument_metadata,
     instrument_snapshot,
     persist_instrument_catalog_snapshot,
+    persist_runtime_instrument_catalog_snapshot,
     resolve_instrument,
 )
 
@@ -29,7 +30,7 @@ def test_default_catalog_resolves_static_binance_symbol():
     assert instrument.quote_asset == "USDT"
     assert instrument.contract_type == "spot"
     assert instrument.price_precision == 2
-    assert instrument.metadata_source == "venue_snapshot"
+    assert instrument.metadata_source in {"venue_snapshot", "venue_runtime_snapshot"}
     assert instrument.venue_snapshot_version is not None
 
 
@@ -40,8 +41,8 @@ def test_ensure_default_instruments_registers_config_symbols():
 
     assert instrument.base_asset == "SOL"
     assert instrument.quote_asset == "USDT"
-    assert instrument.tick_size == "0.00100000"
-    assert instrument.metadata_source == "venue_snapshot"
+    assert float(instrument.tick_size) > 0.0
+    assert instrument.metadata_source in {"venue_snapshot", "venue_runtime_snapshot"}
 
 
 def test_catalog_raises_for_unknown_symbol_without_quote_match():
@@ -71,7 +72,7 @@ def test_instrument_metadata_includes_catalog_version_and_snapshot():
     assert metadata["instrument_catalog_version"] == instrument_catalog_version()
     assert "\"symbol\":\"BTCUSDT\"" in metadata["instrument_snapshot"]
     assert instrument_snapshot("BTCUSDT", venue="BINANCE")["quote_asset"] == "USDT"
-    assert metadata["metadata_source"] == "venue_snapshot"
+    assert metadata["metadata_source"] in {"venue_snapshot", "venue_runtime_snapshot"}
     assert "venue_snapshot_version" in metadata
 
 
@@ -88,8 +89,9 @@ def test_binance_loader_reads_authoritative_snapshot_records():
 def test_detect_instrument_catalog_drift_marks_material_field_changes():
     before = [entry for entry in json.loads(instrument_catalog_snapshot_json())]
     after = [dict(entry) for entry in before]
-    after[0]["tick_size"] = "0.10000000"
-    after[0]["price_precision"] = 1
+    btc_entry = next(entry for entry in after if entry["symbol"] == "BTCUSDT")
+    btc_entry["tick_size"] = "0.10000000"
+    btc_entry["price_precision"] = 1
 
     drift = detect_instrument_catalog_drift(before, after)
 
@@ -141,3 +143,43 @@ def test_persist_instrument_catalog_snapshot_writes_run_and_detects_previous_dri
     assert current.drift is not None
     assert current.drift.material is True
     assert "BTCUSDT" in current.drift.changed_symbols
+
+
+def test_persist_runtime_instrument_catalog_snapshot_uses_runtime_snapshot(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "app.marketdata.instruments.fetch_binance_exchange_info_snapshot",
+        lambda *, base_url: load_binance_exchange_info_snapshot(),
+    )
+
+    current = persist_runtime_instrument_catalog_snapshot(
+        base_dir=tmp_path,
+        env="dev",
+        venue="BINANCE",
+        run_label="runtime-run",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+    )
+
+    assert current.metadata_snapshot_mode == "runtime"
+    assert current.venue_snapshot_path is not None
+    assert current.venue_snapshot_path.exists()
+    assert current.fallback_reason is None
+
+
+def test_persist_runtime_instrument_catalog_snapshot_falls_back_when_vendor_fetch_fails(monkeypatch, tmp_path: Path):
+    def _raise(*, base_url):
+        raise RuntimeError(f"failed against {base_url}")
+
+    monkeypatch.setattr("app.marketdata.instruments.fetch_binance_exchange_info_snapshot", _raise)
+
+    current = persist_runtime_instrument_catalog_snapshot(
+        base_dir=tmp_path,
+        env="dev",
+        venue="BINANCE",
+        run_label="fallback-run",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+    )
+
+    assert current.metadata_snapshot_mode == "fallback"
+    assert current.fallback_reason is not None

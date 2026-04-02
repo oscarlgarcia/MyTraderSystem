@@ -4,6 +4,7 @@ Append-only raw landing for valid market data messages.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -130,3 +131,26 @@ class JsonlRawSink:
             handle.write(json.dumps(record.to_dict(), ensure_ascii=False, default=str))
             handle.write("\n")
         return path
+
+
+def build_raw_manifest(path: Path) -> dict[str, Any]:
+    resolved = Path(path)
+    raw_bytes = resolved.read_bytes()
+    rows = [json.loads(line) for line in resolved.read_text(encoding="utf-8").splitlines() if line.strip()]
+    exchange_timestamps = [row.get("exchange_ts") for row in rows if row.get("exchange_ts") not in (None, "")]
+    run_ids = sorted({str(row["run_id"]) for row in rows if row.get("run_id") not in (None, "")})
+    return {
+        "path": str(resolved),
+        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        "line_count": len(rows),
+        "run_ids": run_ids,
+        "first_exchange_ts": exchange_timestamps[0] if exchange_timestamps else None,
+        "last_exchange_ts": exchange_timestamps[-1] if exchange_timestamps else None,
+    }
+
+
+def write_raw_manifest(path: Path) -> Path:
+    resolved = Path(path)
+    manifest_path = resolved.with_suffix(".manifest.json")
+    manifest_path.write_text(json.dumps(build_raw_manifest(resolved), ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest_path

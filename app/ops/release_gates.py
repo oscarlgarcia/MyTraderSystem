@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -65,17 +65,21 @@ def run_release_gates(
     output_path: Path | None = None,
     rest_canary_path: Path | None = None,
     ws_canary_path: Path | None = None,
+    benchmark_path: Path | None = None,
+    live_drill_path: Path | None = None,
 ) -> ReleaseGateReport:
     normalized_stream_types = normalize_feed_types(stream_types)
     blocks = (
         _support_matrix_block(normalized_stream_types, target=target),
         _exact_recovery_block(normalized_stream_types, target=target),
+        _metadata_snapshot_block(base_dir=Path(base_dir), env=env, required=True, target=target),
         _canary_block(
             name="canary_rest",
             path=Path(rest_canary_path or "docs/validation/ingestion_canary_report.json"),
             required=True,
             expected_keys=("pass_ok", "diffs", "comparison_reason"),
             bool_paths=(("pass_ok",),),
+            max_age=timedelta(hours=24),
         ),
         _canary_block(
             name="canary_ws",
@@ -84,6 +88,24 @@ def run_release_gates(
             expected_keys=("pass_ok", "continuity", "reconnects_observed"),
             bool_paths=(("pass_ok",),),
             extra_checks=_validate_ws_canary_payload,
+            max_age=timedelta(hours=24),
+        ),
+        _canary_block(
+            name="storage_benchmark",
+            path=Path(benchmark_path or "docs/validation/ingestion_storage_benchmark.json"),
+            required=True,
+            expected_keys=("pass_ok", "slo"),
+            bool_paths=(("pass_ok",),),
+            max_age=timedelta(days=7),
+        ),
+        _canary_block(
+            name="live_drill",
+            path=Path(live_drill_path or "docs/validation/ingestion_live_drill_report.json"),
+            required=(target == "live"),
+            expected_keys=("drill_executed", "promote_ready", "rollback_ready", "overall_status"),
+            bool_paths=(("drill_executed",), ("promote_ready",), ("rollback_ready",)),
+            extra_checks=_validate_live_drill_payload,
+            max_age=timedelta(hours=24),
         ),
         _shadow_block(base_dir=Path(base_dir), env=env, required=(target == "live")),
         _storage_health_block(base_dir=Path(base_dir), env=env, required=True),
@@ -162,6 +184,7 @@ def _canary_block(
     expected_keys: tuple[str, ...],
     bool_paths: tuple[tuple[str, ...], ...],
     extra_checks=None,
+    max_age: timedelta | None = None,
 ) -> GateBlockReport:
     if not path.exists():
         return GateBlockReport(
@@ -185,6 +208,9 @@ def _canary_block(
             value = value[key]
         if value is not True:
             reasons.append(f"{'.'.join(bool_path)} is not true")
+    age = _artifact_age(path, payload)
+    if max_age is not None and age is not None and age > max_age:
+        reasons.append(f"artifact stale: {path} older than {int(max_age.total_seconds())}s")
     if callable(extra_checks):
         reasons.extend(extra_checks(payload))
     status: GateStatus = "pass" if not reasons else ("fail" if required else "warn")
@@ -197,6 +223,7 @@ def _canary_block(
             "path": str(path),
             "pass_ok": bool(payload.get("pass_ok", False)),
             "comparison_reason": payload.get("comparison_reason"),
+            "artifact_age_seconds": age.total_seconds() if age is not None else None,
         },
     )
 
@@ -217,6 +244,75 @@ def _validate_ws_canary_payload(payload: dict[str, object]) -> list[str]:
     except (TypeError, ValueError):
         reasons.append("invalid reconnect counters")
     return reasons
+
+
+def _validate_live_drill_payload(payload: dict[str, object]) -> list[str]:
+    reasons: list[str] = []
+    if payload.get("overall_status") != "PASS":
+        reasons.append("overall_status is not PASS")
+    return reasons
+
+
+def _artifact_age(path: Path, payload: dict[str, object]) -> timedelta | None:
+    candidates = [
+        payload.get("generated_at"),
+        payload.get("report_generated_at"),
+        payload.get("fetched_at"),
+    ]
+    timestamp: datetime | None = None
+    for candidate in candidates:
+        if candidate in (None, ""):
+            continue
+        try:
+            timestamp = datetime.fromisoformat(str(candidate))
+            break
+        except ValueError:
+            continue
+    if timestamp is None:
+        timestamp = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - timestamp
+
+
+def _metadata_snapshot_block(*, base_dir: Path, env: str, required: bool, target: ReleaseTarget) -> GateBlockReport:
+    path = base_dir / "metadata" / "instruments" / f"env={env}" / "venue=BINANCE" / "latest.json"
+    if not path.exists():
+        return GateBlockReport(
+            name="instrument_metadata",
+            status="fail" if required else "warn",
+            required=required,
+            reasons=(f"missing instrument metadata artifact: {path}",),
+            details={"path": str(path)},
+        )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    reasons: list[str] = []
+    mode = str(payload.get("metadata_snapshot_mode") or "bundled")
+    drift_payload = payload.get("drift") or {}
+    material_drift = bool(isinstance(drift_payload, dict) and drift_payload.get("material"))
+    if target == "live" and mode != "runtime":
+        reasons.append("live requires runtime instrument metadata snapshot")
+    elif target == "paper" and mode != "runtime":
+        reasons.append(f"paper is running with metadata snapshot mode={mode}")
+    if material_drift:
+        reasons.append("material provider metadata drift detected")
+    if mode == "fallback" and payload.get("fallback_reason") in (None, ""):
+        reasons.append("fallback metadata snapshot missing fallback_reason")
+    status: GateStatus = "pass" if not reasons else ("fail" if required else "warn")
+    return GateBlockReport(
+        name="instrument_metadata",
+        status=status,
+        required=required,
+        reasons=tuple(reasons or ["instrument metadata snapshot valid"]),
+        details={
+            "path": str(path),
+            "metadata_snapshot_mode": mode,
+            "venue_snapshot_path": payload.get("venue_snapshot_path"),
+            "venue_snapshot_version": payload.get("venue_snapshot_version"),
+            "fallback_reason": payload.get("fallback_reason"),
+            "drift": drift_payload,
+        },
+    )
 
 
 def _shadow_block(*, base_dir: Path, env: str, required: bool) -> GateBlockReport:

@@ -8,6 +8,8 @@ Implements a dual-mode pipeline:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import List, Optional, Dict
 from uuid import uuid4
 
@@ -150,6 +152,8 @@ def _validate_operational_security(
         return
 
     errors: list[str] = []
+    if cfg.env != "prod":
+        errors.append("production mode requires --env prod")
     if mode != "live":
         errors.append("production mode requires --mode live")
     if bool(runtime.get("fast_path", False)):
@@ -178,6 +182,14 @@ def _validate_operational_security(
             )
         except ValueError as exc:
             raise ValueError("Unsafe production configuration: " + str(exc)) from exc
+        metadata_path = Path(cfg.data_dir) / "metadata" / "instruments" / f"env={cfg.env}" / "venue=BINANCE" / "latest.json"
+        if not metadata_path.exists():
+            raise ValueError(f"Unsafe production configuration: missing instrument metadata snapshot {metadata_path}")
+        metadata_payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata_payload.get("metadata_snapshot_mode") != "runtime":
+            raise ValueError("Unsafe production configuration: production mode requires runtime instrument metadata snapshot")
+        if bool((metadata_payload.get("drift") or {}).get("material")):
+            raise ValueError("Unsafe production configuration: material provider metadata drift detected")
         assert_storage_health_for_runtime(cfg.data_dir, cfg.env)
 
 
@@ -264,6 +276,8 @@ def run() -> int:
             output_path=args.release_gates_output,
             rest_canary_path=args.release_gates_rest_canary_path,
             ws_canary_path=args.release_gates_ws_canary_path,
+            benchmark_path=args.release_gates_benchmark_path,
+            live_drill_path=args.release_gates_live_drill_path,
         )
         print(render_release_gate_summary(report))
         return 0 if report.pass_ok else 1

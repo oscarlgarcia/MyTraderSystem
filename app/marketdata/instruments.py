@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Iterable
 
 from app.common.dto import normalize_symbol
-from app.marketdata.instrument_loader import InstrumentRecord, load_binance_instrument_records
+from app.marketdata.instrument_loader import (
+    InstrumentRecord,
+    fetch_binance_exchange_info_snapshot,
+    load_binance_instrument_records,
+    load_binance_instrument_records_from_snapshot,
+)
 
 
 KNOWN_QUOTE_ASSETS: tuple[str, ...] = (
@@ -220,6 +225,10 @@ class PersistedInstrumentCatalogSnapshot:
     instrument_catalog_snapshot: tuple[dict[str, str | int], ...]
     path: Path
     drift: InstrumentCatalogDrift | None = None
+    metadata_snapshot_mode: str = "bundled"
+    venue_snapshot_path: Path | None = None
+    venue_snapshot_version: str | None = None
+    fallback_reason: str | None = None
 
 
 def _snapshot_key(entry: dict[str, str | int]) -> tuple[str, str]:
@@ -286,11 +295,22 @@ def _catalog_snapshot_root(base_dir: Path, *, env: str, venue: str) -> Path:
     return Path(base_dir) / "metadata" / "instruments" / f"env={env}" / f"venue={_normalize_venue(venue)}"
 
 
+def _vendor_snapshot_root(base_dir: Path, *, env: str, venue: str) -> Path:
+    return Path(base_dir) / "metadata" / "vendor" / f"env={env}" / f"venue={_normalize_venue(venue)}"
+
+
 def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f"{path.name}.tmp")
     tmp_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
     tmp_path.replace(path)
+
+
+def _catalog_from_records(records: Iterable[InstrumentRecord]) -> InstrumentCatalog:
+    catalog = InstrumentCatalog()
+    for record in records:
+        catalog.register_authoritative_record(record)
+    return catalog
 
 
 def persist_instrument_catalog_snapshot(
@@ -300,6 +320,10 @@ def persist_instrument_catalog_snapshot(
     venue: str = "BINANCE",
     run_label: str,
     catalog: InstrumentCatalog | None = None,
+    metadata_snapshot_mode: str = "bundled",
+    venue_snapshot_path: Path | None = None,
+    venue_snapshot_version: str | None = None,
+    fallback_reason: str | None = None,
 ) -> PersistedInstrumentCatalogSnapshot:
     resolved_catalog = catalog or DEFAULT_INSTRUMENT_CATALOG
     snapshot = resolved_catalog.snapshot()
@@ -322,6 +346,22 @@ def persist_instrument_catalog_snapshot(
         "persisted_at": persisted_at,
         "instrument_catalog_version": version,
         "instrument_catalog_snapshot": snapshot,
+        "metadata_snapshot_mode": metadata_snapshot_mode,
+        "venue_snapshot_path": str(venue_snapshot_path) if venue_snapshot_path is not None else None,
+        "venue_snapshot_version": venue_snapshot_version,
+        "fallback_reason": fallback_reason,
+        "drift": None
+        if drift is None
+        else {
+            "has_drift": drift.has_drift,
+            "material": drift.material,
+            "added_symbols": list(drift.added_symbols),
+            "removed_symbols": list(drift.removed_symbols),
+            "changed_symbols": list(drift.changed_symbols),
+            "changed_fields_by_symbol": {
+                symbol: list(fields) for symbol, fields in drift.changed_fields_by_symbol.items()
+            },
+        },
     }
     _write_json_atomic(run_path, payload)
     _write_json_atomic(latest_path, payload)
@@ -335,7 +375,81 @@ def persist_instrument_catalog_snapshot(
         instrument_catalog_snapshot=snapshot,
         path=run_path,
         drift=drift,
+        metadata_snapshot_mode=metadata_snapshot_mode,
+        venue_snapshot_path=venue_snapshot_path,
+        venue_snapshot_version=venue_snapshot_version,
+        fallback_reason=fallback_reason,
     )
+
+
+def persist_runtime_instrument_catalog_snapshot(
+    *,
+    base_dir: Path,
+    env: str,
+    venue: str = "BINANCE",
+    run_label: str,
+    rest_base: str,
+    symbols: Iterable[str] | None = None,
+) -> PersistedInstrumentCatalogSnapshot:
+    normalized_venue = _normalize_venue(venue)
+    if normalized_venue != "BINANCE":
+        raise KeyError(f"runtime instrument snapshot loader not available for venue={normalized_venue}")
+
+    vendor_root = _vendor_snapshot_root(Path(base_dir), env=env, venue=normalized_venue)
+    latest_vendor_path = vendor_root / "latest.json"
+    run_vendor_path = vendor_root / "runs" / f"{_sanitize_run_label(run_label)}-exchange-info.json"
+
+    try:
+        snapshot = fetch_binance_exchange_info_snapshot(base_url=rest_base)
+        _write_json_atomic(run_vendor_path, snapshot)
+        _write_json_atomic(latest_vendor_path, snapshot)
+        records = load_binance_instrument_records_from_snapshot(
+            snapshot,
+            symbols=None,
+            metadata_source="venue_runtime_snapshot",
+        )
+        if symbols is not None:
+            requested = {normalize_symbol(symbol) for symbol in symbols}
+            resolved = {record.symbol for record in records}
+            missing = sorted(requested - resolved)
+            if missing:
+                raise KeyError(f"missing authoritative Binance instrument metadata for symbols: {missing}")
+        for record in records:
+            DEFAULT_INSTRUMENT_CATALOG.register_authoritative_record(record)
+        catalog = _catalog_from_records(records)
+        venue_snapshot_version = records[0].venue_snapshot_version if records else catalog.version()
+        return persist_instrument_catalog_snapshot(
+            base_dir=base_dir,
+            env=env,
+            venue=normalized_venue,
+            run_label=run_label,
+            catalog=catalog,
+            metadata_snapshot_mode="runtime",
+            venue_snapshot_path=run_vendor_path,
+            venue_snapshot_version=venue_snapshot_version,
+        )
+    except Exception as exc:
+        fallback_catalog = InstrumentCatalog()
+        fallback_records = load_binance_instrument_records(symbols=None)
+        if symbols is not None:
+            requested = {normalize_symbol(symbol) for symbol in symbols}
+            resolved = {record.symbol for record in fallback_records}
+            missing = sorted(requested - resolved)
+            if missing:
+                raise KeyError(f"missing authoritative Binance instrument metadata for symbols: {missing}") from exc
+        for record in fallback_records:
+            fallback_catalog.register_authoritative_record(record)
+        return persist_instrument_catalog_snapshot(
+            base_dir=base_dir,
+            env=env,
+            venue=normalized_venue,
+            run_label=run_label,
+            catalog=fallback_catalog,
+            metadata_snapshot_mode="fallback",
+            venue_snapshot_path=latest_vendor_path if latest_vendor_path.exists() else None,
+            venue_snapshot_version=fallback_records[0].venue_snapshot_version if fallback_records else fallback_catalog.version(),
+            fallback_reason=str(exc),
+        )
 
 
 def _load_default_instrument_catalog() -> InstrumentCatalog:

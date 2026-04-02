@@ -116,12 +116,12 @@ def test_compaction_failure_is_recorded_for_storage_health(monkeypatch, tmp_path
 
 def test_production_mode_blocks_when_compaction_lag_is_critical(monkeypatch, tmp_path: Path):
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
+    writer = ParquetWriter(base_dir=tmp_path, env="prod", flush_size=1)
     writer.add(_event(base))
 
     partition_path = normalized_partition_path(
         tmp_path,
-        "dev",
+        "prod",
         source="trade",
         symbol="BTCUSDT",
         day="2024-01-01",
@@ -132,7 +132,7 @@ def test_production_mode_blocks_when_compaction_lag_is_critical(monkeypatch, tmp
 
     cfg = main.load_config("dev")
     cfg = type(cfg)(
-        env=cfg.env,
+        env="prod",
         data_dir=tmp_path.resolve(),
         log_level=cfg.log_level,
         ws_base=cfg.ws_base,
@@ -151,6 +151,17 @@ def test_production_mode_blocks_when_compaction_lag_is_critical(monkeypatch, tmp
     }
 
     monkeypatch.setattr(main, "validate_live_feed_support", lambda *args, **kwargs: None)
+    metadata_path = tmp_path / "metadata" / "instruments" / "env=prod" / "venue=BINANCE" / "latest.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "metadata_snapshot_mode": "runtime",
+                "drift": {"material": False},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     with pytest.raises(ValueError, match="storage compaction lag exceeds the critical threshold"):
         main._validate_operational_security(cfg, mode="live", runtime=runtime)

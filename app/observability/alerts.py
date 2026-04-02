@@ -18,6 +18,7 @@ AlertType = Literal[
     "provider_metadata_drift",
     "compaction_backlog_high",
     "compaction_failure_detected",
+    "marketdata_anomaly_detected",
     "shadow_semantic_diff",
     "dlq_spike",
     "sink_failure",
@@ -86,6 +87,11 @@ ALERT_SPECS: dict[AlertType, AlertSpec] = {
         severity="error",
         threshold=1,
         recommended_action="Treat normalized storage as degraded until compaction failures are inspected and cleared.",
+    ),
+    "marketdata_anomaly_detected": AlertSpec(
+        severity="warning",
+        threshold=1,
+        recommended_action="Inspect the affected stream for price or volume anomalies before trusting downstream consumers.",
     ),
     "shadow_semantic_diff": AlertSpec(
         severity="error",

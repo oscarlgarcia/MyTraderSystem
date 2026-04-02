@@ -198,6 +198,7 @@ def test_operational_shadow_diff_blocks_promotion(tmp_path: Path, monkeypatch):
 
 def test_operational_production_gating_blocks_unsupported_live_trade(tmp_path: Path):
     cfg = _cfg(tmp_path)
+    cfg.env = "prod"
     runtime = {
         "production_mode": True,
         "fast_path": False,

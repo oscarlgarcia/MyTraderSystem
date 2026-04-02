@@ -115,3 +115,10 @@ def test_load_config_registers_symbols_in_instrument_catalog(monkeypatch, tmp_pa
 def test_parse_args_accepts_pytest_flags():
     args = parse_args(["--env", "test", "-vv"])
     assert args.env == "test"
+
+
+def test_load_prod_config():
+    cfg = load_config("prod")
+    assert isinstance(cfg, AppConfig)
+    assert cfg.env == "prod"
+    assert cfg.data_dir.is_absolute()

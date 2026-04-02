@@ -28,10 +28,11 @@ from app.ingestion.client import (
 )
 from app.ingestion.errors import IngestionError, classify_connector_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
+from app.marketdata.anomaly_checks import detect_price_jump, stream_price_key
 from app.marketdata.connectors.binance import BINANCE_FEED_NORMALIZERS, normalize_binance_event, snapshot_payload_from_row
 from app.marketdata.errors import SchemaDriftError
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
-from app.marketdata.instruments import ensure_default_instruments, persist_instrument_catalog_snapshot
+from app.marketdata.instruments import ensure_default_instruments, persist_runtime_instrument_catalog_snapshot
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
 from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.validators import validate_ingestion_event
@@ -109,6 +110,7 @@ def _ensure_stream_metric(
             "recovery_window_rows_requested": 0,
             "recovery_window_rows_received": 0,
             "recovery_exactness_violation_total": 0,
+            "marketdata_anomaly_total": 0,
         },
     )
     return metric
@@ -259,16 +261,19 @@ class BinanceSource:
     snapshot_default_limit: int = 500
     snapshot_breaker: CircuitBreaker | None = None
     stats: SourceStats = field(default_factory=SourceStats)
+    last_prices: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         ensure_default_instruments(self.cfg.symbols, venue="BINANCE")
         logger = logging.getLogger("ingest.source")
         trace_id = get_trace_id() or f"binance-source-{int(time.time())}"
-        catalog_state = persist_instrument_catalog_snapshot(
+        catalog_state = persist_runtime_instrument_catalog_snapshot(
             base_dir=Path(self.cfg.data_dir),
             env=self.cfg.env,
             venue="BINANCE",
             run_label=trace_id,
+            rest_base=self.cfg.rest_base,
+            symbols=self.cfg.symbols,
         )
         logger.info(
             "instrument catalog snapshot persisted",
@@ -278,6 +283,8 @@ class BinanceSource:
                 "venue": "BINANCE",
                 "instrument_catalog_version": catalog_state.instrument_catalog_version,
                 "instrument_catalog_snapshot_path": str(catalog_state.path),
+                "metadata_snapshot_mode": catalog_state.metadata_snapshot_mode,
+                "venue_snapshot_path": str(catalog_state.venue_snapshot_path) if catalog_state.venue_snapshot_path else None,
             },
         )
         if catalog_state.drift is not None and catalog_state.drift.has_drift:
@@ -298,6 +305,9 @@ class BinanceSource:
                     },
                     "instrument_catalog_version": catalog_state.instrument_catalog_version,
                     "instrument_catalog_snapshot_path": str(catalog_state.path),
+                    "metadata_snapshot_mode": catalog_state.metadata_snapshot_mode,
+                    "venue_snapshot_path": str(catalog_state.venue_snapshot_path) if catalog_state.venue_snapshot_path else None,
+                    "fallback_reason": catalog_state.fallback_reason,
                 },
             )
         if isinstance(self.error_sink, NullErrorSink):
@@ -344,6 +354,14 @@ class BinanceSource:
         try:
             started = time.perf_counter()
             self.raw_sink.write(record)
+            metadata = getattr(event, "metadata", None)
+            if isinstance(metadata, dict):
+                if record.provider_ts is not None:
+                    metadata.setdefault("provider_ts", record.provider_ts.isoformat())
+                if record.run_id is not None:
+                    metadata["raw_run_id"] = str(record.run_id)
+                if record.ingestion_seq is not None:
+                    metadata["raw_ingestion_seq"] = str(record.ingestion_seq)
             duration = max(0.0, time.perf_counter() - started)
             metric["raw_write_latency"] = max(float(metric["raw_write_latency"]), duration)
         except Exception as exc:
@@ -389,6 +407,31 @@ class BinanceSource:
         metric["receive_process_skew_seconds"] = max(
             float(metric.get("receive_process_skew_seconds", 0.0)),
             receive_process_skew,
+        )
+
+    def _record_marketdata_anomaly(self, event: IngestionEvent) -> None:
+        stream_key = stream_price_key(event)
+        previous_price = self.last_prices.get(stream_key)
+        anomaly = detect_price_jump(previous_price=previous_price, current_price=event.price)
+        self.last_prices[stream_key] = float(event.price)
+        if anomaly is None:
+            return
+        venue, symbol, stream_type = _event_stream_context(event)
+        metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
+        metric["marketdata_anomaly_total"] = int(metric.get("marketdata_anomaly_total", 0)) + 1
+        emit_operational_alert(
+            logging.getLogger("ingest.source"),
+            alert_type="marketdata_anomaly_detected",
+            observed=int(metric["marketdata_anomaly_total"]),
+            extra={
+                "venue": venue,
+                "symbol": symbol,
+                "stream_type": stream_type,
+                "anomaly_type": anomaly.anomaly_type,
+                "previous_price": anomaly.previous_price,
+                "current_price": anomaly.current_price,
+                "relative_jump": anomaly.relative_jump,
+            },
         )
 
     def _record_rejected(self, raw_message: object, error: IngestionError, *, context: dict[str, object]) -> None:
@@ -629,6 +672,7 @@ class BinanceSource:
                     )
                     metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
                     self._record_temporal_quality(event)
+                    self._record_marketdata_anomaly(event)
                     self._write_raw_record(
                         payload=payload,
                         event=event,
@@ -749,6 +793,7 @@ class BinanceSource:
                             metric = _ensure_stream_metric(self.stats, venue=getattr(event, "venue", "BINANCE"), symbol=event.symbol, stream_type=stream_type)
                             metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
                             self._record_temporal_quality(event)
+                            self._record_marketdata_anomaly(event)
                             self._write_raw_record(
                                 payload=payload,
                                 event=event,

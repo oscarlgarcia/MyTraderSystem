@@ -17,6 +17,8 @@ def test_defaults_flags():
     assert args.allow_live_fallback is False
     assert args.error_policy is None
     assert args.ingest_stream_types == ("kline",)
+
+
 def test_trace_steps_flag():
     args = parse_args(["--trace-steps"])
     assert args.trace_steps is True
@@ -65,3 +67,21 @@ def test_shadow_mode_flags():
 def test_ingest_stream_types_flag():
     args = parse_args(["--ingest-stream-types", "kline"])
     assert args.ingest_stream_types == ("kline",)
+
+
+def test_release_gate_paths_flags():
+    args = parse_args(
+        [
+            "--env",
+            "prod",
+            "--release-gates",
+            "--release-gates-benchmark-path",
+            "bench.json",
+            "--release-gates-live-drill-path",
+            "drill.json",
+        ]
+    )
+    assert args.env == "prod"
+    assert args.release_gates is True
+    assert args.release_gates_benchmark_path == "bench.json"
+    assert args.release_gates_live_drill_path == "drill.json"

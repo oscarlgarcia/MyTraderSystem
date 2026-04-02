@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+import httpx
+
 
 def _precision_from_increment(value: str) -> int:
     text = str(value)
@@ -59,12 +61,24 @@ def load_binance_exchange_info_snapshot(snapshot_path: Path | None = None) -> di
         return json.load(handle)
 
 
-def load_binance_instrument_records(
+def fetch_binance_exchange_info_snapshot(
+    *,
+    base_url: str,
+    timeout: float = 10.0,
+    http_get=httpx.get,
+) -> dict[str, Any]:
+    url = f"{str(base_url).rstrip('/')}/api/v3/exchangeInfo"
+    response = http_get(url, timeout=timeout)
+    response.raise_for_status()
+    return response.json()
+
+
+def load_binance_instrument_records_from_snapshot(
+    snapshot: dict[str, Any],
     *,
     symbols: Iterable[str] | None = None,
-    snapshot_path: Path | None = None,
+    metadata_source: str = "venue_snapshot",
 ) -> tuple[InstrumentRecord, ...]:
-    snapshot = load_binance_exchange_info_snapshot(snapshot_path)
     requested = None if symbols is None else {str(symbol).upper() for symbol in symbols}
     version = _snapshot_version(snapshot)
     records: list[InstrumentRecord] = []
@@ -86,7 +100,7 @@ def load_binance_instrument_records(
                 step_size=_filter_value(item, "LOT_SIZE", "stepSize"),
                 price_precision=_precision_from_increment(_filter_value(item, "PRICE_FILTER", "tickSize")),
                 size_precision=_precision_from_increment(_filter_value(item, "LOT_SIZE", "stepSize")),
-                metadata_source="venue_snapshot",
+                metadata_source=metadata_source,
                 venue_snapshot_version=version,
             )
         )
@@ -98,3 +112,12 @@ def load_binance_instrument_records(
             raise KeyError(f"missing authoritative Binance instrument metadata for symbols: {missing}")
 
     return tuple(records)
+
+
+def load_binance_instrument_records(
+    *,
+    symbols: Iterable[str] | None = None,
+    snapshot_path: Path | None = None,
+) -> tuple[InstrumentRecord, ...]:
+    snapshot = load_binance_exchange_info_snapshot(snapshot_path)
+    return load_binance_instrument_records_from_snapshot(snapshot, symbols=symbols, metadata_source="venue_snapshot")

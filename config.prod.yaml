@@ -1,0 +1,8 @@
+{
+  "env": "prod",
+  "data_dir": "/var/lib/mytradersystem/data/prod",
+  "log_level": "INFO",
+  "ws_base": "wss://stream.binance.com:9443",
+  "rest_base": "https://api.binance.com",
+  "symbols": ["BTCUSDT", "ETHUSDT"]
+}

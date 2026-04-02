@@ -7,8 +7,14 @@ from app.ops.ingestion_validation import run_storage_benchmark
 
 
 def main() -> int:
+    def _parse_counts(value: str) -> tuple[int, ...]:
+        if str(value).strip() == "":
+            return ()
+        return tuple(int(part.strip()) for part in str(value).split(",") if part.strip())
+
     parser = argparse.ArgumentParser(description="Deterministic storage throughput benchmark for segmented normalized storage")
     parser.add_argument("--symbol-count", type=int, default=12)
+    parser.add_argument("--high-cardinality-symbol-counts", type=_parse_counts, default=(100, 500))
     parser.add_argument("--bursts", type=int, default=4)
     parser.add_argument("--events-per-symbol-per-burst", type=int, default=12)
     parser.add_argument("--min-rows-per-second", type=float, default=100.0)
@@ -25,6 +31,7 @@ def main() -> int:
     evidence = run_storage_benchmark(
         Path(args.output),
         symbol_count=args.symbol_count,
+        high_cardinality_symbol_counts=args.high_cardinality_symbol_counts,
         bursts=args.bursts,
         events_per_symbol_per_burst=args.events_per_symbol_per_burst,
         min_rows_per_second=args.min_rows_per_second,

@@ -53,7 +53,7 @@ def test_flush_writes_partition_and_preserves_order(tmp_path):
     assert table.schema.metadata[b"instrument_catalog_version"] == instrument_catalog_version().encode("utf-8")
     assert table.schema.metadata[b"instrument_catalog_snapshot_hash"] == instrument_catalog_version().encode("utf-8")
     assert table.schema.metadata[b"instrument_catalog_snapshot"] == instrument_catalog_snapshot_json().encode("utf-8")
-    assert table.schema.metadata[b"instrument_metadata_source"] == b"venue_snapshot"
+    assert table.schema.metadata[b"instrument_metadata_source"] in {b"venue_snapshot", b"venue_runtime_snapshot"}
 
 
 def test_partition_by_date(tmp_path):

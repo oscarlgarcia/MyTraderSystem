@@ -66,7 +66,7 @@ def _production_runtime(feed_type: str) -> dict[str, object]:
 def _production_cfg(tmp_path: Path):
     cfg = load_config("dev")
     return type(cfg)(
-        env=cfg.env,
+        env="prod",
         data_dir=tmp_path.resolve(),
         log_level=cfg.log_level,
         ws_base=cfg.ws_base,
@@ -141,6 +141,12 @@ def test_production_mode_rejects_any_feed_without_full_live_claims(tmp_path: Pat
     runtime = _production_runtime(feed_type)
 
     if support.supports_live and support.supports_exact_verified_recovery and support.supports_handoff:
+        metadata_path = tmp_path / "metadata" / "instruments" / "env=prod" / "venue=BINANCE" / "latest.json"
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(
+            '{"metadata_snapshot_mode":"runtime","drift":{"material":false}}',
+            encoding="utf-8",
+        )
         main._validate_operational_security(cfg, mode="live", runtime=runtime)
         return
 

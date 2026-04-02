@@ -14,9 +14,11 @@ def test_storage_benchmark_writes_artifact_and_measures_all_cases(tmp_path: Path
     evidence = run_storage_benchmark(
         output,
         symbol_count=4,
+        high_cardinality_symbol_counts=(8,),
         bursts=2,
         events_per_symbol_per_burst=4,
         min_rows_per_second=0.001,
+        max_write_latency_slo=60.0,
         max_compaction_elapsed_slo=60.0,
         max_shadow_elapsed_slo=60.0,
     )
@@ -26,11 +28,13 @@ def test_storage_benchmark_writes_artifact_and_measures_all_cases(tmp_path: Path
     assert evidence.replay_case.rows_in > 0
     assert evidence.concurrent_compaction_case.compaction_elapsed_seconds >= 0.0
     assert evidence.shadow_scoped_case.shadow_elapsed_seconds >= 0.0
+    assert evidence.high_cardinality_cases
     assert output.exists()
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["synthetic_case"]["dataset_kind"] == "synthetic"
     assert payload["replay_case"]["dataset_kind"] == "replay_raw"
+    assert payload["high_cardinality_cases"][0]["dataset_kind"] == "synthetic_high_cardinality"
     assert "min_rows_per_second" in payload["slo"]
 
 
@@ -44,4 +48,5 @@ def test_storage_benchmark_script_help_runs():
 
     assert result.returncode == 0
     assert "--symbol-count" in result.stdout
+    assert "--high-cardinality-symbol-counts" in result.stdout
     assert "--min-rows-per-second" in result.stdout

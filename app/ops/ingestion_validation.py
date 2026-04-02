@@ -23,7 +23,7 @@ from app.ingestion.sinks import ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, heartbeat_policy_for_streams, StaticSource, _ws_stream
 from app.ingestion.storage import ParquetWriter, read_parquet
 from app.ingestion.storage_health import collect_storage_health
-from app.marketdata.instruments import ensure_default_instruments
+from app.marketdata.instruments import ensure_default_instruments, get_default_instrument_catalog
 from app.marketdata.models import BarEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord
 from app.marketdata.replay import ReplaySource
@@ -118,6 +118,7 @@ class StorageBenchmarkEvidence:
     shadow_scoped_case: StorageBenchmarkCase
     slo: dict[str, float]
     pass_ok: bool
+    high_cardinality_cases: tuple[StorageBenchmarkCase, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +157,19 @@ def _cfg(base_dir: Path, *, rest_base: str = "https://api.binance.com", symbols:
         rest_base=rest_base,
         symbols=symbols or ["BTCUSDT"],
     )
+
+
+def _ensure_benchmark_symbols_registered(symbols: Sequence[str], *, venue: str = "BINANCE") -> None:
+    catalog = get_default_instrument_catalog()
+    missing = [str(symbol).upper() for symbol in symbols if not catalog.has(venue, symbol)]
+    if not missing:
+        return
+    try:
+        ensure_default_instruments(missing, venue=venue)
+    except KeyError:
+        for symbol in missing:
+            if not catalog.has(venue, symbol):
+                catalog.register_static_spot_symbol(symbol, venue=venue)
 
 
 def _events(count: int, *, duplicate_edge: bool = False) -> list[MarketEvent]:
@@ -876,6 +890,7 @@ def run_storage_benchmark(
     output_path: Path,
     *,
     symbol_count: int = 12,
+    high_cardinality_symbol_counts: Sequence[int] = (),
     bursts: int = 4,
     events_per_symbol_per_burst: int = 12,
     min_rows_per_second: float = 100.0,
@@ -883,12 +898,12 @@ def run_storage_benchmark(
     max_compaction_elapsed_slo: float = 5.0,
     max_shadow_elapsed_slo: float = 5.0,
 ) -> StorageBenchmarkEvidence:
-    benchmark_symbols = [
-        "BTCUSDT",
-        "ETHUSDT",
-        "SOLUSDT",
-    ]
-    symbols = benchmark_symbols[: max(1, min(symbol_count, len(benchmark_symbols)))]
+    benchmark_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    if symbol_count <= len(benchmark_symbols):
+        symbols = benchmark_symbols[: max(1, symbol_count)]
+    else:
+        symbols = [f"BENCH{index:04d}USDT" for index in range(1, symbol_count + 1)]
+    _ensure_benchmark_symbols_registered(symbols)
     rows_in = len(symbols) * max(1, bursts) * max(1, events_per_symbol_per_burst)
     partitions = len(symbols)
     slo = {
@@ -1125,12 +1140,69 @@ def run_storage_benchmark(
             max_shadow_elapsed_slo=max_shadow_elapsed_slo,
         )
 
+        high_cardinality_cases: list[StorageBenchmarkCase] = []
+        for high_symbol_count in high_cardinality_symbol_counts:
+            case_symbols = [f"HICARD{index:04d}USDT" for index in range(1, max(1, int(high_symbol_count)) + 1)]
+            _ensure_benchmark_symbols_registered(case_symbols)
+            case_events = _benchmark_trade_events(
+                symbols=case_symbols,
+                bursts=max(1, min(2, bursts)),
+                events_per_symbol_per_burst=max(2, min(4, events_per_symbol_per_burst)),
+            )
+            case_base_dir = base_dir / f"high-cardinality-{high_symbol_count}"
+            case_writer = ParquetWriter(
+                base_dir=case_base_dir,
+                env="test",
+                flush_size=max(16, min(64, len(case_symbols))),
+                dedup=True,
+            )
+            case_started = time.perf_counter()
+            case_sink = ParquetEventSink(case_writer)
+            collect_events(
+                mode="live",
+                cfg=_cfg(case_base_dir, symbols=list(case_symbols)),
+                max_events=len(case_events),
+                duration_s=0,
+                logger=get_logger(name=f"ops.storage.high.{high_symbol_count}", level="INFO", stream=io.StringIO()),
+                source=StaticSource(events=case_events),
+                sink=case_sink,
+                snapshot_enabled=False,
+                summary_logging=True,
+                dedup_enabled=True,
+                batch_size=max(16, min(64, len(case_symbols))),
+                pipeline_version="v2",
+            )
+            case_sink.close()
+            case_elapsed = max(0.0, time.perf_counter() - case_started)
+            case_health = collect_storage_health(case_base_dir, "test")
+            high_cardinality_cases.append(
+                _make_benchmark_case(
+                    name=f"high_cardinality_{high_symbol_count}",
+                    dataset_kind="synthetic_high_cardinality",
+                    rows_in=len(case_events),
+                    partitions=len(case_symbols),
+                    bursts=max(1, min(2, bursts)),
+                    elapsed_seconds=case_elapsed,
+                    max_write_latency_seconds=case_writer.max_write_latency_seconds,
+                    compaction_elapsed_seconds=0.0,
+                    shadow_elapsed_seconds=0.0,
+                    segments_pending_total=case_health.segments_pending_total,
+                    segments_per_partition_max=case_health.segments_per_partition_max,
+                    normalized_partition_row_count=case_health.normalized_partition_row_count,
+                    min_rows_per_second=min_rows_per_second,
+                    max_write_latency_slo=max_write_latency_slo,
+                    max_compaction_elapsed_slo=max_compaction_elapsed_slo,
+                    max_shadow_elapsed_slo=max_shadow_elapsed_slo,
+                )
+            )
+
     evidence = StorageBenchmarkEvidence(
         generated_at=datetime.now(timezone.utc).isoformat(),
         synthetic_case=synthetic_case,
         replay_case=replay_case,
         concurrent_compaction_case=concurrent_case,
         shadow_scoped_case=shadow_case,
+        high_cardinality_cases=tuple(high_cardinality_cases),
         slo=slo,
         pass_ok=all(
             case.pass_ok
@@ -1139,6 +1211,7 @@ def run_storage_benchmark(
                 replay_case,
                 concurrent_case,
                 shadow_case,
+                *high_cardinality_cases,
             )
         ),
     )

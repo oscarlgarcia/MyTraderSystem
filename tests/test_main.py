@@ -51,6 +51,8 @@ def test_run_release_gates_exits_before_pipeline(monkeypatch, tmp_path: Path):
         release_gates_output=str(tmp_path / "release-gates.json"),
         release_gates_rest_canary_path=str(tmp_path / "rest.json"),
         release_gates_ws_canary_path=str(tmp_path / "ws.json"),
+        release_gates_benchmark_path=str(tmp_path / "benchmark.json"),
+        release_gates_live_drill_path=str(tmp_path / "live-drill.json"),
         ingest_stream_types=("kline",),
     )
     cfg = load_config("dev")
@@ -227,7 +229,7 @@ def test_run_cycle_does_not_pass_removed_feature_flag_to_ingestion(monkeypatch):
 def test_production_mode_rejects_unsafe_fallback(tmp_path):
     cfg = load_config("dev")
     cfg = type(cfg)(
-        env=cfg.env,
+        env="prod",
         data_dir=tmp_path.resolve(),
         log_level=cfg.log_level,
         ws_base=cfg.ws_base,
@@ -252,7 +254,7 @@ def test_production_mode_rejects_unsafe_fallback(tmp_path):
 def test_production_mode_rejects_live_trade_without_exact_recovery(tmp_path):
     cfg = load_config("dev")
     cfg = type(cfg)(
-        env=cfg.env,
+        env="prod",
         data_dir=tmp_path.resolve(),
         log_level=cfg.log_level,
         ws_base=cfg.ws_base,
@@ -302,7 +304,7 @@ def test_live_mode_rejects_trade_feed_until_exact_recovery_exists(tmp_path):
 def test_production_mode_accepts_live_kline_with_exact_verified_recovery(tmp_path):
     cfg = load_config("dev")
     cfg = type(cfg)(
-        env=cfg.env,
+        env="prod",
         data_dir=tmp_path.resolve(),
         log_level=cfg.log_level,
         ws_base=cfg.ws_base,
@@ -319,6 +321,18 @@ def test_production_mode_accepts_live_kline_with_exact_verified_recovery(tmp_pat
         "ingest_backpressure_policy": "pause",
         "ingest_stream_types": ("kline",),
     }
+
+    metadata_path = tmp_path / "metadata" / "instruments" / "env=prod" / "venue=BINANCE" / "latest.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "metadata_snapshot_mode": "runtime",
+                "drift": {"material": False},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     main._validate_operational_security(cfg, mode="live", runtime=runtime)
 

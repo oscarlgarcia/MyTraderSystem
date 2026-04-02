@@ -94,6 +94,29 @@ def _record_from_dict(payload: dict) -> RawRecord:
     )
 
 
+def _record_replay_corruption(
+    *,
+    base_dir: Path,
+    path: Path,
+    line_no: int,
+    line: str,
+    error: json.JSONDecodeError,
+) -> Path:
+    out_path = Path(base_dir).parent / "errors" / "replay-corruption-dlq.jsonl"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "path": str(path),
+        "line_no": line_no,
+        "error_type": "ReplayRawCorruptionError",
+        "error_message": str(error),
+        "raw_line": line.rstrip("\n"),
+    }
+    with out_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
+    return out_path
+
+
 def list_raw_files(
     base_dir: Path,
     env: str,
@@ -138,7 +161,17 @@ def read_raw_entries(
             for line_no, line in enumerate(handle, start=1):
                 if not line.strip():
                     continue
-                record = _record_from_dict(json.loads(line))
+                try:
+                    record = _record_from_dict(json.loads(line))
+                except json.JSONDecodeError as exc:
+                    _record_replay_corruption(
+                        base_dir=Path(base_dir),
+                        path=path,
+                        line_no=line_no,
+                        line=line,
+                        error=exc,
+                    )
+                    continue
                 if start_ts is not None and record.exchange_ts < start_ts:
                     continue
                 if end_ts is not None and record.exchange_ts > end_ts:
@@ -180,8 +213,24 @@ def normalize_replay_record(record: RawRecord, *, normalizer_version: str = NORM
     if isinstance(event, BaseMarketEvent):
         event.provider_ts = record.provider_ts
         stamp_normalizer_version(event.metadata, version=normalizer_version)
+        if record.run_id is not None:
+            event.metadata["raw_run_id"] = str(record.run_id)
+        if record.ingestion_seq is not None:
+            event.metadata["raw_ingestion_seq"] = str(record.ingestion_seq)
+        payload = record.payload if isinstance(record.payload, dict) else {}
+        if isinstance(payload, dict) and payload.get("_historical_trade_kind") is not None:
+            event.metadata.setdefault("historical_feed_kind", str(payload["_historical_trade_kind"]))
     elif isinstance(event, MarketEvent):
         stamp_normalizer_version(event.metadata, version=normalizer_version)
+        if record.provider_ts is not None:
+            event.metadata.setdefault("provider_ts", record.provider_ts.isoformat())
+        if record.run_id is not None:
+            event.metadata["raw_run_id"] = str(record.run_id)
+        if record.ingestion_seq is not None:
+            event.metadata["raw_ingestion_seq"] = str(record.ingestion_seq)
+        payload = record.payload if isinstance(record.payload, dict) else {}
+        if isinstance(payload, dict) and payload.get("_historical_trade_kind") is not None:
+            event.metadata.setdefault("historical_feed_kind", str(payload["_historical_trade_kind"]))
     validate_ingestion_event(event)
     return event
 

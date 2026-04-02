@@ -21,7 +21,8 @@ from app.ingestion.client import normalize_kline_typed, normalize_trade_typed
 from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_market_events
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
-from app.marketdata.instruments import ensure_default_instruments, persist_instrument_catalog_snapshot
+from app.marketdata.anomaly_checks import detect_price_jump
+from app.marketdata.instruments import ensure_default_instruments, persist_runtime_instrument_catalog_snapshot
 from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
 from app.observability.alerts import emit_operational_alert
@@ -30,6 +31,8 @@ from app.observability.logger import get_logger, set_trace_id
 
 SUPPORTED_HISTORICAL_BACKFILL_FEEDS = ("kline", "trade")
 HISTORICAL_BACKFILL_SCOPE = "bars-and-trades"
+HISTORICAL_TRADE_FEED_KIND = "aggregate_trade"
+HISTORICAL_TRADE_ENDPOINT = "aggTrades"
 
 
 def supports_historical_backfill(feed_type: str) -> bool:
@@ -64,11 +67,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "Backfill historico soportado para `kline` y `trade`: escribe raw + normalized o solo descarga con --dry-run"
         ),
         epilog=(
-            "Trade historical backfill usa Binance REST `aggTrades` y normaliza el snapshot historico a `TradeEvent`; "
-            "live `trade` sigue fuera del scope live."
+            "Trade historical backfill usa Binance REST `aggTrades` y queda tipado como `aggregate_trade`; "
+            "no reclama raw trade history y live `trade` sigue fuera del scope live."
         ),
     )
-    parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
+    parser.add_argument("--env", choices=["dev", "test", "prod"], default=None, help="Config environment")
     parser.add_argument("--symbol", required=True, help="Simbolo (ej: BTCUSDT)")
     parser.add_argument(
         "--feed-type",
@@ -264,8 +267,8 @@ def _trade_payload_from_row(symbol: str, row: dict[str, Any]) -> dict[str, Any]:
         "a": aggregate_trade_id,
         "f": int(row["f"]) if row.get("f") is not None else None,
         "l": int(row["l"]) if row.get("l") is not None else None,
-        "_backfill_endpoint": "aggTrades",
-        "_historical_trade_kind": "aggregate_trade",
+        "_backfill_endpoint": HISTORICAL_TRADE_ENDPOINT,
+        "_historical_trade_kind": HISTORICAL_TRADE_FEED_KIND,
     }
 
 
@@ -368,6 +371,20 @@ def _raw_sort_key(record: RawRecord) -> tuple[Any, ...]:
     return (record.exchange_ts, str(record.source_id or ""), record.symbol, record.stream_type)
 
 
+def _stamp_event_with_raw_lineage(event: IngestionEvent, record: RawRecord) -> None:
+    metadata = getattr(event, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    if record.provider_ts is not None:
+        metadata.setdefault("provider_ts", record.provider_ts.isoformat())
+    if record.run_id is not None:
+        metadata["raw_run_id"] = str(record.run_id)
+    if record.ingestion_seq is not None:
+        metadata["raw_ingestion_seq"] = str(record.ingestion_seq)
+    if record.stream_type == "trade":
+        metadata.setdefault("historical_feed_kind", HISTORICAL_TRADE_FEED_KIND)
+
+
 def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_sink: Optional[RawSink] = None) -> int:
     args = parse_args(argv)
     assert_historical_backfill_support(args.feed_type)
@@ -381,11 +398,13 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
     trace_id = f"backfill-{int(time.time())}"
     logger = get_logger(name="backfill", level=cfg.log_level)
     set_trace_id(trace_id)
-    catalog_state = persist_instrument_catalog_snapshot(
+    catalog_state = persist_runtime_instrument_catalog_snapshot(
         base_dir=cfg.data_dir,
         env=cfg.env,
         venue="BINANCE",
         run_label=trace_id,
+        rest_base=cfg.rest_base,
+        symbols=[symbol],
     )
 
     logger.info(
@@ -405,6 +424,8 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             "dry_run": args.dry_run,
             "instrument_catalog_version": catalog_state.instrument_catalog_version,
             "instrument_catalog_snapshot_path": str(catalog_state.path),
+            "metadata_snapshot_mode": catalog_state.metadata_snapshot_mode,
+            "venue_snapshot_path": str(catalog_state.venue_snapshot_path) if catalog_state.venue_snapshot_path else None,
         },
     )
     if catalog_state.drift is not None and catalog_state.drift.has_drift:
@@ -427,6 +448,9 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
                 },
                 "instrument_catalog_version": catalog_state.instrument_catalog_version,
                 "instrument_catalog_snapshot_path": str(catalog_state.path),
+                "metadata_snapshot_mode": catalog_state.metadata_snapshot_mode,
+                "venue_snapshot_path": str(catalog_state.venue_snapshot_path) if catalog_state.venue_snapshot_path else None,
+                "fallback_reason": catalog_state.fallback_reason,
             },
         )
 
@@ -504,6 +528,16 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
     events.sort(key=_event_sort_key)
     raw_records.sort(key=_raw_sort_key)
 
+    if not args.dry_run:
+        raw_sink_impl = raw_sink or JsonlRawSink(base_dir=cfg.data_dir / "raw", env=cfg.env)
+        sink_impl = sink or ParquetEventSink(
+            ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=args.dedup)
+        )
+        for record in raw_records:
+            raw_sink_impl.write(record)
+        for event, record in zip(events, raw_records, strict=True):
+            _stamp_event_with_raw_lineage(event, record)
+
     duplicates_dropped = 0
     if args.dedup:
         events, duplicates_dropped = deduplicate_events(events)
@@ -518,13 +552,31 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
                 },
             )
 
-    if not args.dry_run:
-        raw_sink_impl = raw_sink or JsonlRawSink(base_dir=cfg.data_dir / "raw", env=cfg.env)
-        sink_impl = sink or ParquetEventSink(
-            ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=args.dedup)
+    previous_price: float | None = None
+    anomalies_detected = 0
+    for event in events:
+        anomaly = detect_price_jump(previous_price=previous_price, current_price=event.price)
+        previous_price = float(event.price)
+        if anomaly is None:
+            continue
+        anomalies_detected += 1
+        emit_operational_alert(
+            logger,
+            alert_type="marketdata_anomaly_detected",
+            observed=anomalies_detected,
+            extra={
+                "trace_id": trace_id,
+                "env": cfg.env,
+                "symbol": event.symbol,
+                "feed_type": event.source,
+                "anomaly_type": anomaly.anomaly_type,
+                "previous_price": anomaly.previous_price,
+                "current_price": anomaly.current_price,
+                "relative_jump": anomaly.relative_jump,
+            },
         )
-        for record in raw_records:
-            raw_sink_impl.write(record)
+
+    if not args.dry_run:
         for event in events:
             sink_impl.add(event)
         sink_impl.close()

@@ -114,7 +114,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         return normalize_feed_types([part.strip() for part in str(value).split(",")])
 
     parser = argparse.ArgumentParser(description="MyTraderSystem")
-    parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
+    parser.add_argument("--env", choices=["dev", "test", "prod"], default=None, help="Config environment")
     parser.add_argument(
         "--production-mode",
         action="store_true",
@@ -145,6 +145,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--release-gates-ws-canary-path",
         default="docs/validation/ingestion_ws_canary_report.json",
         help="Ruta al artifact del canary WS live.",
+    )
+    parser.add_argument(
+        "--release-gates-benchmark-path",
+        default="docs/validation/ingestion_storage_benchmark.json",
+        help="Ruta al artifact del benchmark de storage segmentado.",
+    )
+    parser.add_argument(
+        "--release-gates-live-drill-path",
+        default="docs/validation/ingestion_live_drill_report.json",
+        help="Ruta al artifact del drill operativo de live cutover.",
     )
     parser.add_argument(
         "--mode",

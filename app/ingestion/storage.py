@@ -144,6 +144,27 @@ def event_process_ts(event: IngestionEvent) -> datetime | None:
     return _optional_ts(event_metadata(event).get("process_ts"))
 
 
+def event_provider_ts(event: IngestionEvent) -> datetime | None:
+    if isinstance(event, BaseMarketEvent):
+        return event.provider_ts
+    return _optional_ts(event_metadata(event).get("provider_ts"))
+
+
+def event_raw_run_id(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("raw_run_id")
+
+
+def event_raw_ingestion_seq(event: IngestionEvent) -> int | None:
+    value = event_metadata(event).get("raw_ingestion_seq")
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def event_historical_feed_kind(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("historical_feed_kind")
+
+
 def event_source_id(event: IngestionEvent) -> str | None:
     if isinstance(event, BaseMarketEvent):
         return event.source_id
@@ -231,6 +252,24 @@ def event_bar_close_ts(event: IngestionEvent) -> datetime | None:
     return _optional_ts(metadata.get("close_ts")) or event.event_ts
 
 
+def _coerce_optional_int(value: object | None) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def _event_storage_sort_key(event: IngestionEvent) -> tuple[object, ...]:
+    return (
+        event_exchange_ts(event),
+        event_raw_run_id(event) or "",
+        event_raw_ingestion_seq(event) if event_raw_ingestion_seq(event) is not None else -1,
+        event_source_id(event) or "",
+        event_trade_id(event) or "",
+        event.symbol,
+        event.source,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class TradeParquetWriter:
     @staticmethod
@@ -242,6 +281,7 @@ class TradeParquetWriter:
                 ("normalizer_version", pa.string()),
                 ("symbol", pa.string()),
                 ("exchange_ts", pa.timestamp("ms", tz="UTC")),
+                ("provider_ts", pa.timestamp("ms", tz="UTC")),
                 ("receive_ts", pa.timestamp("ms", tz="UTC")),
                 ("process_ts", pa.timestamp("ms", tz="UTC")),
                 ("event_ts", pa.timestamp("ms", tz="UTC")),
@@ -251,18 +291,23 @@ class TradeParquetWriter:
                 ("source_id", pa.string()),
                 ("trade_id", pa.string()),
                 ("side", pa.string()),
+                ("historical_feed_kind", pa.string()),
+                ("raw_run_id", pa.string()),
+                ("raw_ingestion_seq", pa.int64()),
                 ("metadata", pa.map_(pa.string(), pa.string())),
             ]
         )
 
     @classmethod
     def to_table(cls, events: list[IngestionEvent]) -> pa.Table:
-        events_sorted = sorted(events, key=lambda ev: event_exchange_ts(ev))
+        events_sorted = sorted(events, key=_event_storage_sort_key)
         rows = []
         for event in events_sorted:
             metadata = event_metadata(event)
             metadata.setdefault("venue", event_venue(event))
             metadata.setdefault("normalizer_version", event_normalizer_version(event))
+            if event_provider_ts(event) is not None:
+                metadata.setdefault("provider_ts", event_provider_ts(event).isoformat())
             if event_receive_ts(event) is not None:
                 metadata.setdefault("receive_ts", event_receive_ts(event).isoformat())
             if event_process_ts(event) is not None:
@@ -273,6 +318,12 @@ class TradeParquetWriter:
                 metadata.setdefault("trade_id", str(event_trade_id(event)))
             if event_trade_side(event) is not None:
                 metadata.setdefault("side", str(event_trade_side(event)))
+            if event_historical_feed_kind(event) is not None:
+                metadata.setdefault("historical_feed_kind", str(event_historical_feed_kind(event)))
+            if event_raw_run_id(event) is not None:
+                metadata.setdefault("raw_run_id", str(event_raw_run_id(event)))
+            if event_raw_ingestion_seq(event) is not None:
+                metadata.setdefault("raw_ingestion_seq", str(event_raw_ingestion_seq(event)))
             rows.append(
                 {
                     "venue": event_venue(event),
@@ -280,6 +331,7 @@ class TradeParquetWriter:
                     "normalizer_version": event_normalizer_version(event),
                     "symbol": event.symbol,
                     "exchange_ts": event_exchange_ts(event),
+                    "provider_ts": event_provider_ts(event),
                     "receive_ts": event_receive_ts(event),
                     "process_ts": event_process_ts(event),
                     "event_ts": event.event_ts,
@@ -289,6 +341,9 @@ class TradeParquetWriter:
                     "source_id": event_source_id(event),
                     "trade_id": event_trade_id(event),
                     "side": event_trade_side(event),
+                    "historical_feed_kind": event_historical_feed_kind(event),
+                    "raw_run_id": event_raw_run_id(event),
+                    "raw_ingestion_seq": event_raw_ingestion_seq(event),
                     "metadata": metadata,
                 }
             )
@@ -306,6 +361,7 @@ class BarParquetWriter:
                 ("normalizer_version", pa.string()),
                 ("symbol", pa.string()),
                 ("exchange_ts", pa.timestamp("ms", tz="UTC")),
+                ("provider_ts", pa.timestamp("ms", tz="UTC")),
                 ("receive_ts", pa.timestamp("ms", tz="UTC")),
                 ("process_ts", pa.timestamp("ms", tz="UTC")),
                 ("event_ts", pa.timestamp("ms", tz="UTC")),
@@ -319,13 +375,15 @@ class BarParquetWriter:
                 ("close_ts", pa.timestamp("ms", tz="UTC")),
                 ("source", pa.string()),
                 ("source_id", pa.string()),
+                ("raw_run_id", pa.string()),
+                ("raw_ingestion_seq", pa.int64()),
                 ("metadata", pa.map_(pa.string(), pa.string())),
             ]
         )
 
     @classmethod
     def to_table(cls, events: list[IngestionEvent]) -> pa.Table:
-        events_sorted = sorted(events, key=lambda ev: event_exchange_ts(ev))
+        events_sorted = sorted(events, key=_event_storage_sort_key)
         rows = []
         for event in events_sorted:
             metadata = event_metadata(event)
@@ -335,6 +393,8 @@ class BarParquetWriter:
             metadata.setdefault("open", str(event_bar_open(event)))
             metadata.setdefault("high", str(event_bar_high(event)))
             metadata.setdefault("low", str(event_bar_low(event)))
+            if event_provider_ts(event) is not None:
+                metadata.setdefault("provider_ts", event_provider_ts(event).isoformat())
             if event_receive_ts(event) is not None:
                 metadata.setdefault("receive_ts", event_receive_ts(event).isoformat())
             if event_process_ts(event) is not None:
@@ -345,6 +405,10 @@ class BarParquetWriter:
                 metadata.setdefault("close_ts", event_bar_close_ts(event).isoformat())
             if event_source_id(event) is not None:
                 metadata.setdefault("source_id", str(event_source_id(event)))
+            if event_raw_run_id(event) is not None:
+                metadata.setdefault("raw_run_id", str(event_raw_run_id(event)))
+            if event_raw_ingestion_seq(event) is not None:
+                metadata.setdefault("raw_ingestion_seq", str(event_raw_ingestion_seq(event)))
             rows.append(
                 {
                     "venue": event_venue(event),
@@ -352,6 +416,7 @@ class BarParquetWriter:
                     "normalizer_version": event_normalizer_version(event),
                     "symbol": event.symbol,
                     "exchange_ts": event_exchange_ts(event),
+                    "provider_ts": event_provider_ts(event),
                     "receive_ts": event_receive_ts(event),
                     "process_ts": event_process_ts(event),
                     "event_ts": event.event_ts,
@@ -365,6 +430,8 @@ class BarParquetWriter:
                     "close_ts": event_bar_close_ts(event),
                     "source": event.source,
                     "source_id": event_source_id(event),
+                    "raw_run_id": event_raw_run_id(event),
+                    "raw_ingestion_seq": event_raw_ingestion_seq(event),
                     "metadata": metadata,
                 }
             )
@@ -718,8 +785,17 @@ def _concat_tables_ordered(existing: pa.Table, new_table: pa.Table) -> pa.Table:
     last_ts = existing.column("event_ts")[-1].as_py()
     first_new_ts = new_table.column("event_ts")[0].as_py()
     combined = pa.concat_tables([existing, new_table], promote_options="default")
-    if last_ts is not None and first_new_ts is not None and last_ts > first_new_ts:
-        return combined.sort_by([("event_ts", "ascending")])
+    if last_ts is not None and first_new_ts is not None and last_ts >= first_new_ts:
+        sort_keys = [("event_ts", "ascending")]
+        if "raw_run_id" in combined.column_names:
+            sort_keys.append(("raw_run_id", "ascending"))
+        if "raw_ingestion_seq" in combined.column_names:
+            sort_keys.append(("raw_ingestion_seq", "ascending"))
+        if "source_id" in combined.column_names:
+            sort_keys.append(("source_id", "ascending"))
+        if "trade_id" in combined.column_names:
+            sort_keys.append(("trade_id", "ascending"))
+        return combined.sort_by(sort_keys)
     return combined
 
 
@@ -748,6 +824,32 @@ def read_parquet(path: Path) -> pa.Table:
     return _read_single_parquet(path)
 
 
+def _append_missing_normalized_columns(table: pa.Table) -> pa.Table:
+    metadata = table.schema.metadata or {}
+    resolved = resolve_normalizer_version(
+        metadata.get(b"normalizer_version").decode("utf-8") if metadata.get(b"normalizer_version") is not None else None
+    )
+    column_types: dict[str, pa.DataType] = {
+        "normalizer_version": pa.string(),
+        "provider_ts": pa.timestamp("ms", tz="UTC"),
+        "historical_feed_kind": pa.string(),
+        "raw_run_id": pa.string(),
+        "raw_ingestion_seq": pa.int64(),
+    }
+    for column_name, column_type in column_types.items():
+        if column_name in table.column_names:
+            continue
+        fill_value = resolved if column_name == "normalizer_version" else None
+        table = table.append_column(column_name, pa.array([fill_value] * table.num_rows, type=column_type))
+    return table.replace_schema_metadata(
+        {
+            **(table.schema.metadata or {}),
+            b"schema_version": b"v2",
+            b"normalizer_version": resolved.encode("utf-8"),
+        }
+    )
+
+
 def _read_single_parquet(path: Path) -> pa.Table:
     pf = pq.ParquetFile(path)
     table = pf.read()
@@ -756,25 +858,10 @@ def _read_single_parquet(path: Path) -> pa.Table:
     if version is None:
         raise ValueError("schema_version missing in parquet metadata")
     decoded = version.decode("utf-8")
-    if decoded not in {"v1", "v2"}:
+    if decoded not in {"v1", "v2", "v3"}:
         raise ValueError(f"unsupported schema_version: {decoded}")
-    if decoded == "v2":
-        normalizer_version = metadata.get(b"normalizer_version")
-        resolved = resolve_normalizer_version(
-            normalizer_version.decode("utf-8") if normalizer_version is not None else None
-        )
-        if "normalizer_version" not in table.column_names:
-            table = table.append_column(
-                "normalizer_version",
-                pa.array([resolved] * table.num_rows, type=pa.string()),
-            )
-        table = table.replace_schema_metadata(
-            {
-                **(table.schema.metadata or {}),
-                b"schema_version": b"v2",
-                b"normalizer_version": resolved.encode("utf-8"),
-            }
-        )
+    if decoded in {"v2", "v3"}:
+        table = _append_missing_normalized_columns(table)
     return table
 
 
@@ -844,6 +931,12 @@ def _trade_row_from_existing(row: dict[str, object]) -> dict[str, object]:
     metadata = _identity_metadata_from_row(row)
     source = str(row.get("source", "trade"))
     exchange_ts = row.get("exchange_ts") or row.get("event_ts")
+    provider_ts = row.get("provider_ts") or _optional_ts(metadata.get("provider_ts"))
+    historical_feed_kind = row.get("historical_feed_kind") or metadata.get("historical_feed_kind")
+    raw_run_id = row.get("raw_run_id") or metadata.get("raw_run_id")
+    raw_ingestion_seq = row.get("raw_ingestion_seq")
+    if raw_ingestion_seq in (None, ""):
+        raw_ingestion_seq = _coerce_optional_int(metadata.get("raw_ingestion_seq"))
     return {
         "venue": str(row.get("venue") or metadata.get("venue", "BINANCE")).upper(),
         "feed_type": row.get("feed_type") or feed_type_for_source(source),
@@ -852,6 +945,7 @@ def _trade_row_from_existing(row: dict[str, object]) -> dict[str, object]:
         ),
         "symbol": row["symbol"],
         "exchange_ts": exchange_ts,
+        "provider_ts": provider_ts,
         "receive_ts": row.get("receive_ts") or _optional_ts(metadata.get("receive_ts")),
         "process_ts": row.get("process_ts") or _optional_ts(metadata.get("process_ts")),
         "event_ts": row.get("event_ts") or exchange_ts,
@@ -861,6 +955,9 @@ def _trade_row_from_existing(row: dict[str, object]) -> dict[str, object]:
         "source_id": row.get("source_id") or metadata.get("source_id"),
         "trade_id": row.get("trade_id") or metadata.get("trade_id"),
         "side": row.get("side") or metadata.get("side"),
+        "historical_feed_kind": historical_feed_kind,
+        "raw_run_id": raw_run_id,
+        "raw_ingestion_seq": _coerce_optional_int(raw_ingestion_seq),
         "metadata": _metadata_mapping(metadata),
     }
 
@@ -869,6 +966,9 @@ def _bar_row_from_existing(row: dict[str, object]) -> dict[str, object]:
     metadata = _identity_metadata_from_row(row)
     source = str(row.get("source", "kline"))
     exchange_ts = row.get("exchange_ts") or row.get("event_ts")
+    raw_ingestion_seq = row.get("raw_ingestion_seq")
+    if raw_ingestion_seq in (None, ""):
+        raw_ingestion_seq = _coerce_optional_int(metadata.get("raw_ingestion_seq"))
     return {
         "venue": str(row.get("venue") or metadata.get("venue", "BINANCE")).upper(),
         "feed_type": row.get("feed_type") or feed_type_for_source(source),
@@ -877,6 +977,7 @@ def _bar_row_from_existing(row: dict[str, object]) -> dict[str, object]:
         ),
         "symbol": row["symbol"],
         "exchange_ts": exchange_ts,
+        "provider_ts": row.get("provider_ts") or _optional_ts(metadata.get("provider_ts")),
         "receive_ts": row.get("receive_ts") or _optional_ts(metadata.get("receive_ts")),
         "process_ts": row.get("process_ts") or _optional_ts(metadata.get("process_ts")),
         "event_ts": row.get("event_ts") or exchange_ts,
@@ -890,6 +991,8 @@ def _bar_row_from_existing(row: dict[str, object]) -> dict[str, object]:
         "close_ts": row.get("close_ts") or _optional_ts(metadata.get("close_ts")) or row.get("event_ts") or exchange_ts,
         "source": source,
         "source_id": row.get("source_id") or metadata.get("source_id"),
+        "raw_run_id": row.get("raw_run_id") or metadata.get("raw_run_id"),
+        "raw_ingestion_seq": _coerce_optional_int(raw_ingestion_seq),
         "metadata": _metadata_mapping(metadata),
     }
 
@@ -906,6 +1009,18 @@ def _row_identity(row: dict[str, object]) -> tuple:
         venue=row.get("venue"),
         metadata=_identity_metadata_from_row(row),
         source_id=str(row.get("source_id")) if row.get("source_id") not in (None, "") else None,
+    )
+
+
+def _row_sort_key(row: dict[str, object]) -> tuple[object, ...]:
+    return (
+        row.get("event_ts") or row.get("exchange_ts"),
+        str(row.get("raw_run_id") or ""),
+        _coerce_optional_int(row.get("raw_ingestion_seq")) if row.get("raw_ingestion_seq") not in (None, "") else -1,
+        str(row.get("source_id") or ""),
+        str(row.get("trade_id") or ""),
+        str(row.get("symbol") or ""),
+        str(row.get("source") or ""),
     )
 
 
@@ -991,7 +1106,7 @@ def _dedup_tables(existing: pa.Table, new: pa.Table) -> pa.Table:
 
     add_rows(_iter_table_rows(existing))
     add_rows(_iter_table_rows(new))
-    merged.sort(key=lambda r: r["event_ts"])
+    merged.sort(key=_row_sort_key)
     return pa.Table.from_pylist(merged, schema=schema)
 
 
@@ -1018,8 +1133,7 @@ def _filter_new_rows(tbl: pa.Table, existing_keys: set[tuple]) -> pa.Table:
         if key in existing_keys:
             continue
         filtered.append(row)
-    sort_key = "event_ts" if "event_ts" in schema.names else "exchange_ts"
     if not filtered:
         return pa.Table.from_pylist([], schema=schema)
-    filtered.sort(key=lambda r: r[sort_key])
+    filtered.sort(key=_row_sort_key)
     return pa.Table.from_pylist(filtered, schema=schema)

@@ -122,6 +122,7 @@ def test_backfill_cli_help_declares_trade_support(capsys):
     out = capsys.readouterr().out
     assert "{kline,trade}" in out
     assert "aggTrades" in out
+    assert "aggregate_trade" in out
 
 
 def test_429_retries_and_fails(monkeypatch):
@@ -238,6 +239,9 @@ def test_backfill_trade_writes_and_idempotent(monkeypatch, tmp_path):
     rows_out = table.to_pylist()
     assert [row["trade_id"] for row in rows_out] == ["101", "102"]
     assert all(dict(row["metadata"])["historical_trade_endpoint"] == "aggTrades" for row in rows_out)
+    assert all(row["historical_feed_kind"] == "aggregate_trade" for row in rows_out)
+    assert all(row["raw_run_id"] is not None for row in rows_out)
+    assert all(row["raw_ingestion_seq"] is not None for row in rows_out)
 
     raw_files = list((tmp_path / "raw").glob("env=dev/venue=BINANCE/stream_type=trade/symbol=BTCUSDT/date=*/events.jsonl"))
     assert len(raw_files) == 1
