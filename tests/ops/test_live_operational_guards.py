@@ -14,6 +14,7 @@ from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.shadow import ShadowComparison, ShadowPartitionSnapshot, ShadowPromotionError, ShadowSnapshot
 from app.ingestion.sources import StaticSource
+from app.marketdata.instruments import DEFAULT_INSTRUMENTS, Instrument, InstrumentCatalog, persist_instrument_catalog_snapshot, resolve_instrument
 from app.marketdata.connectors.binance_sources import BinanceBarSource
 from app.marketdata.models import BarEvent
 from app.observability.logger import get_logger
@@ -237,3 +238,44 @@ def test_operational_incomplete_recovery_emits_exactness_violation_and_degrades_
     recovery_alert = next(record for record in alerts if record["alert_type"] == "recovery_exactness_violation")
     assert recovery_alert["recovery_window_rows_requested"] == 13
     assert recovery_alert["recovery_window_rows_received"] == 2
+
+
+def test_operational_provider_metadata_drift_alerts_when_authoritative_snapshot_changes(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    buffer = io.StringIO()
+    get_logger(name="ingest.source", level="INFO", stream=buffer)
+    btc = resolve_instrument("BTCUSDT", venue="BINANCE")
+    previous_catalog = InstrumentCatalog(
+        [
+            Instrument(
+                venue=btc.venue,
+                symbol=btc.symbol,
+                base_asset=btc.base_asset,
+                quote_asset=btc.quote_asset,
+                contract_type=btc.contract_type,
+                tick_size="0.10000000",
+                step_size=btc.step_size,
+                price_precision=1,
+                size_precision=btc.size_precision,
+                metadata_source=btc.metadata_source,
+                venue_snapshot_version="older-snapshot",
+            ),
+            *[instrument for instrument in DEFAULT_INSTRUMENTS if instrument.symbol != "BTCUSDT"],
+        ]
+    )
+    persist_instrument_catalog_snapshot(
+        base_dir=tmp_path,
+        env="dev",
+        venue="BINANCE",
+        run_label="previous-source",
+        catalog=previous_catalog,
+    )
+
+    source = BinanceBarSource(cfg=cfg)
+    assert source is not None
+
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    drift_alert = next(record for record in alerts if record["alert_type"] == "provider_metadata_drift")
+    assert drift_alert["drift_mode"] == "material"
+    assert "BTCUSDT" in drift_alert["drift_changed_symbols"]
+    assert "tick_size" in drift_alert["drift_changed_fields_by_symbol"]["BTCUSDT"]

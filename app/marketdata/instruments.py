@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Iterable
 
 from app.common.dto import normalize_symbol
@@ -195,6 +198,144 @@ class InstrumentCatalog:
 
     def instrument_snapshot(self, venue: str, symbol: str) -> dict[str, str | int]:
         return self.resolve(venue, symbol).as_dict()
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentCatalogDrift:
+    has_drift: bool
+    material: bool
+    added_symbols: tuple[str, ...]
+    removed_symbols: tuple[str, ...]
+    changed_symbols: tuple[str, ...]
+    changed_fields_by_symbol: dict[str, tuple[str, ...]]
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedInstrumentCatalogSnapshot:
+    env: str
+    venue: str
+    run_label: str
+    persisted_at: str
+    instrument_catalog_version: str
+    instrument_catalog_snapshot: tuple[dict[str, str | int], ...]
+    path: Path
+    drift: InstrumentCatalogDrift | None = None
+
+
+def _snapshot_key(entry: dict[str, str | int]) -> tuple[str, str]:
+    return _normalize_venue(str(entry["venue"])), normalize_symbol(str(entry["symbol"]))
+
+
+def _snapshot_map(snapshot: Iterable[dict[str, str | int]]) -> dict[tuple[str, str], dict[str, str | int]]:
+    return {_snapshot_key(entry): dict(entry) for entry in snapshot}
+
+
+def _sanitize_run_label(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value).strip())
+    return normalized or "catalog"
+
+
+def instrument_catalog_snapshot(*, catalog: InstrumentCatalog | None = None) -> tuple[dict[str, str | int], ...]:
+    return (catalog or DEFAULT_INSTRUMENT_CATALOG).snapshot()
+
+
+def instrument_catalog_snapshot_json(*, catalog: InstrumentCatalog | None = None) -> str:
+    return json.dumps(instrument_catalog_snapshot(catalog=catalog), sort_keys=True, separators=(",", ":"))
+
+
+def detect_instrument_catalog_drift(
+    previous_snapshot: Iterable[dict[str, str | int]],
+    current_snapshot: Iterable[dict[str, str | int]],
+) -> InstrumentCatalogDrift:
+    previous = _snapshot_map(previous_snapshot)
+    current = _snapshot_map(current_snapshot)
+    added = sorted(symbol for _, symbol in current.keys() - previous.keys())
+    removed = sorted(symbol for _, symbol in previous.keys() - current.keys())
+    changed_fields_by_symbol: dict[str, tuple[str, ...]] = {}
+    material_fields = {"base_asset", "quote_asset", "contract_type", "tick_size", "step_size", "price_precision", "size_precision"}
+
+    for key in sorted(current.keys() & previous.keys()):
+        before = previous[key]
+        after = current[key]
+        changed_fields = tuple(
+            sorted(
+                field
+                for field in set(before) | set(after)
+                if before.get(field) != after.get(field)
+            )
+        )
+        if changed_fields:
+            changed_fields_by_symbol[key[1]] = changed_fields
+
+    changed_symbols = tuple(sorted(changed_fields_by_symbol))
+    material = bool(added or removed)
+    if not material:
+        material = any(any(field in material_fields for field in fields) for fields in changed_fields_by_symbol.values())
+
+    return InstrumentCatalogDrift(
+        has_drift=bool(added or removed or changed_symbols),
+        material=material,
+        added_symbols=tuple(added),
+        removed_symbols=tuple(removed),
+        changed_symbols=changed_symbols,
+        changed_fields_by_symbol=changed_fields_by_symbol,
+    )
+
+
+def _catalog_snapshot_root(base_dir: Path, *, env: str, venue: str) -> Path:
+    return Path(base_dir) / "metadata" / "instruments" / f"env={env}" / f"venue={_normalize_venue(venue)}"
+
+
+def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def persist_instrument_catalog_snapshot(
+    *,
+    base_dir: Path,
+    env: str,
+    venue: str = "BINANCE",
+    run_label: str,
+    catalog: InstrumentCatalog | None = None,
+) -> PersistedInstrumentCatalogSnapshot:
+    resolved_catalog = catalog or DEFAULT_INSTRUMENT_CATALOG
+    snapshot = resolved_catalog.snapshot()
+    version = resolved_catalog.version()
+    persisted_at = datetime.now(timezone.utc).isoformat()
+    root = _catalog_snapshot_root(Path(base_dir), env=env, venue=venue)
+    latest_path = root / "latest.json"
+    run_path = root / "runs" / f"{_sanitize_run_label(run_label)}.json"
+
+    drift: InstrumentCatalogDrift | None = None
+    if latest_path.exists():
+        previous_payload = json.loads(latest_path.read_text(encoding="utf-8"))
+        previous_snapshot = tuple(previous_payload.get("instrument_catalog_snapshot", []))
+        drift = detect_instrument_catalog_drift(previous_snapshot, snapshot)
+
+    payload = {
+        "env": env,
+        "venue": _normalize_venue(venue),
+        "run_label": run_label,
+        "persisted_at": persisted_at,
+        "instrument_catalog_version": version,
+        "instrument_catalog_snapshot": snapshot,
+    }
+    _write_json_atomic(run_path, payload)
+    _write_json_atomic(latest_path, payload)
+
+    return PersistedInstrumentCatalogSnapshot(
+        env=env,
+        venue=_normalize_venue(venue),
+        run_label=run_label,
+        persisted_at=persisted_at,
+        instrument_catalog_version=version,
+        instrument_catalog_snapshot=snapshot,
+        path=run_path,
+        drift=drift,
+    )
 
 
 def _load_default_instrument_catalog() -> InstrumentCatalog:

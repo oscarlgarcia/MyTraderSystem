@@ -30,7 +30,7 @@ from app.ingestion.errors import IngestionError, classify_connector_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
 from app.marketdata.connectors.binance import BINANCE_FEED_NORMALIZERS, normalize_binance_event, snapshot_payload_from_row
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
-from app.marketdata.instruments import ensure_default_instruments
+from app.marketdata.instruments import ensure_default_instruments, persist_instrument_catalog_snapshot
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
 from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.validators import validate_ingestion_event
@@ -245,6 +245,44 @@ class BinanceSource:
 
     def __post_init__(self) -> None:
         ensure_default_instruments(self.cfg.symbols, venue="BINANCE")
+        logger = logging.getLogger("ingest.source")
+        trace_id = get_trace_id() or f"binance-source-{int(time.time())}"
+        catalog_state = persist_instrument_catalog_snapshot(
+            base_dir=Path(self.cfg.data_dir),
+            env=self.cfg.env,
+            venue="BINANCE",
+            run_label=trace_id,
+        )
+        logger.info(
+            "instrument catalog snapshot persisted",
+            extra={
+                "trace_id": trace_id,
+                "env": self.cfg.env,
+                "venue": "BINANCE",
+                "instrument_catalog_version": catalog_state.instrument_catalog_version,
+                "instrument_catalog_snapshot_path": str(catalog_state.path),
+            },
+        )
+        if catalog_state.drift is not None and catalog_state.drift.has_drift:
+            emit_operational_alert(
+                logger,
+                alert_type="provider_metadata_drift",
+                observed=1,
+                extra={
+                    "trace_id": trace_id,
+                    "env": self.cfg.env,
+                    "venue": "BINANCE",
+                    "drift_mode": "material" if catalog_state.drift.material else "informational",
+                    "drift_added_symbols": list(catalog_state.drift.added_symbols),
+                    "drift_removed_symbols": list(catalog_state.drift.removed_symbols),
+                    "drift_changed_symbols": list(catalog_state.drift.changed_symbols),
+                    "drift_changed_fields_by_symbol": {
+                        symbol: list(fields) for symbol, fields in catalog_state.drift.changed_fields_by_symbol.items()
+                    },
+                    "instrument_catalog_version": catalog_state.instrument_catalog_version,
+                    "instrument_catalog_snapshot_path": str(catalog_state.path),
+                },
+            )
         if isinstance(self.error_sink, NullErrorSink):
             self.error_sink = JsonlErrorSink(
                 Path(self.cfg.data_dir) / "errors" / "ingestion-dlq.jsonl"

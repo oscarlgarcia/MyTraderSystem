@@ -20,9 +20,10 @@ from app.config import load_config
 from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_market_events
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
-from app.marketdata.instruments import ensure_default_instruments
+from app.marketdata.instruments import ensure_default_instruments, persist_instrument_catalog_snapshot
 from app.marketdata.models import BarEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
+from app.observability.alerts import emit_operational_alert
 from app.observability.logger import get_logger, set_trace_id
 
 
@@ -233,6 +234,12 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
     trace_id = f"backfill-{int(time.time())}"
     logger = get_logger(name="backfill", level=cfg.log_level)
     set_trace_id(trace_id)
+    catalog_state = persist_instrument_catalog_snapshot(
+        base_dir=cfg.data_dir,
+        env=cfg.env,
+        venue="BINANCE",
+        run_label=trace_id,
+    )
 
     logger.info(
         "backfill starting",
@@ -248,8 +255,31 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             "batch": args.batch,
             "dedup": args.dedup,
             "dry_run": args.dry_run,
+            "instrument_catalog_version": catalog_state.instrument_catalog_version,
+            "instrument_catalog_snapshot_path": str(catalog_state.path),
         },
     )
+    if catalog_state.drift is not None and catalog_state.drift.has_drift:
+        emit_operational_alert(
+            logger,
+            alert_type="provider_metadata_drift",
+            observed=1,
+            extra={
+                "trace_id": trace_id,
+                "env": cfg.env,
+                "venue": "BINANCE",
+                "run_mode": "backfill",
+                "drift_mode": "material" if catalog_state.drift.material else "informational",
+                "drift_added_symbols": list(catalog_state.drift.added_symbols),
+                "drift_removed_symbols": list(catalog_state.drift.removed_symbols),
+                "drift_changed_symbols": list(catalog_state.drift.changed_symbols),
+                "drift_changed_fields_by_symbol": {
+                    symbol: list(fields) for symbol, fields in catalog_state.drift.changed_fields_by_symbol.items()
+                },
+                "instrument_catalog_version": catalog_state.instrument_catalog_version,
+                "instrument_catalog_snapshot_path": str(catalog_state.path),
+            },
+        )
 
     with httpx.Client() as client:
         klines = fetch_klines(

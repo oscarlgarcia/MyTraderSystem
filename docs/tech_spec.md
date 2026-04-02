@@ -16,10 +16,13 @@
   - `app.marketdata.instrument_loader.load_binance_instrument_records(...)`
   - `app.marketdata.instruments.Instrument`
   - `app.marketdata.instruments.InstrumentCatalog`
+  - `app.marketdata.instruments.persist_instrument_catalog_snapshot(...)`
   - resolucion por `(venue, symbol)` para `base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`, `metadata_source`, `venue_snapshot_version`
   - el `InstrumentCatalog` runtime se construye a partir de metadata del venue y actua como cache/version model, no como source-of-truth primario
+  - cada run/backfill persiste el snapshot usado en `metadata/instruments/.../runs/<trace_id>.json` y actualiza `latest.json`
+  - si cambia metadata material entre snapshots se emite `provider_metadata_drift`
   - los normalizadores typed consultan este catalogo y fallan si el simbolo no esta soportado por el snapshot autoritativo
-  - cada evento typed y cada parquet `normalized` persisten `instrument_catalog_version` e `instrument_snapshot`
+  - cada evento typed y cada parquet `normalized` persisten `instrument_catalog_version`, `instrument_snapshot`, `instrument_catalog_snapshot_hash` e `instrument_catalog_snapshot`
 - **Adapters Binance por feed**:
   - `app.marketdata.connectors.binance.BinanceTradeNormalizer`
   - `app.marketdata.connectors.binance.BinanceBarNormalizer`

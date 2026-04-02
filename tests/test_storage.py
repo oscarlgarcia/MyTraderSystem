@@ -9,7 +9,7 @@ from app.common.dto import MarketEvent
 from app.ingestion.sinks import ParquetEventSink
 from app.ingestion.compaction import compact_partition
 from app.marketdata import NORMALIZER_VERSION
-from app.marketdata.instruments import instrument_catalog_version
+from app.marketdata.instruments import instrument_catalog_snapshot_json, instrument_catalog_version
 from app.marketdata.models import BarEvent, BookEvent, TradeEvent
 from app.ingestion.storage import (
     ParquetWriter,
@@ -50,6 +50,10 @@ def test_flush_writes_partition_and_preserves_order(tmp_path):
     assert table.column("feed_type").to_pylist() == ["trades", "trades", "trades"]
     assert table.column("normalizer_version").to_pylist() == [NORMALIZER_VERSION] * 3
     assert table.schema.metadata[b"normalizer_version"] == NORMALIZER_VERSION.encode("utf-8")
+    assert table.schema.metadata[b"instrument_catalog_version"] == instrument_catalog_version().encode("utf-8")
+    assert table.schema.metadata[b"instrument_catalog_snapshot_hash"] == instrument_catalog_version().encode("utf-8")
+    assert table.schema.metadata[b"instrument_catalog_snapshot"] == instrument_catalog_snapshot_json().encode("utf-8")
+    assert table.schema.metadata[b"instrument_metadata_source"] == b"venue_snapshot"
 
 
 def test_partition_by_date(tmp_path):

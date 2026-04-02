@@ -170,6 +170,11 @@ def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):
     )
     assert len(replayed) == 4
     assert all(isinstance(event, BarEvent) for event in replayed)
+    latest_catalog = tmp_path / "metadata" / "instruments" / "env=dev" / "venue=BINANCE" / "latest.json"
+    assert latest_catalog.exists()
+    latest_payload = json.loads(latest_catalog.read_text(encoding="utf-8"))
+    assert latest_payload["instrument_catalog_version"]
+    assert latest_payload["instrument_catalog_snapshot"]
 
 
 def test_backfill_dedup_drops_duplicates_and_logs(monkeypatch, tmp_path, capsys):

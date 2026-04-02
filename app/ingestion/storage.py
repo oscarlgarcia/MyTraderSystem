@@ -32,7 +32,7 @@ from app.marketdata.models import (
     ensure_legacy_market_event,
     is_supported_marketdata_source,
 )
-from app.marketdata.instruments import instrument_metadata
+from app.marketdata.instruments import instrument_catalog_snapshot_json, instrument_metadata
 from app.marketdata.normalization import NORMALIZER_VERSION, resolve_normalizer_version
 
 FEED_TYPE_BY_SOURCE = {
@@ -155,6 +155,14 @@ def event_instrument_catalog_version(event: IngestionEvent) -> str | None:
 
 def event_instrument_snapshot(event: IngestionEvent) -> str | None:
     return event_metadata(event).get("instrument_snapshot")
+
+
+def event_metadata_source(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("metadata_source")
+
+
+def event_venue_snapshot_version(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("venue_snapshot_version")
 
 
 def event_trade_id(event: IngestionEvent) -> str | None:
@@ -594,10 +602,24 @@ def _table_schema_metadata(
         (value for value in (event_instrument_snapshot(event) for event in events) if value),
         None,
     )
+    metadata_source = next(
+        (value for value in (event_metadata_source(event) for event in events) if value),
+        None,
+    )
+    venue_snapshot_version = next(
+        (value for value in (event_venue_snapshot_version(event) for event in events) if value),
+        None,
+    )
     if catalog_version:
         metadata[b"instrument_catalog_version"] = catalog_version.encode("utf-8")
+        metadata[b"instrument_catalog_snapshot_hash"] = catalog_version.encode("utf-8")
+        metadata[b"instrument_catalog_snapshot"] = instrument_catalog_snapshot_json().encode("utf-8")
     if instrument_snapshot:
         metadata[b"instrument_snapshot"] = instrument_snapshot.encode("utf-8")
+    if metadata_source:
+        metadata[b"instrument_metadata_source"] = metadata_source.encode("utf-8")
+    if venue_snapshot_version:
+        metadata[b"venue_snapshot_version"] = venue_snapshot_version.encode("utf-8")
     return metadata
 
 

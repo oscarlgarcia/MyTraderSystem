@@ -9,6 +9,7 @@
 - [ ] `python scripts/ingestion_canary.py --refresh-baseline` devuelve `0`
 - [ ] existe ADR aprobada para el alcance historico: `docs/adr/ADR-0001-historical-market-data-scope.md`
 - [ ] el alcance historico soportado esta declarado explicitamente y alineado con la ADR: bars-only (`kline`); trade historical no se promete
+- [ ] cada run/backfill persiste `metadata/instruments/.../runs/<trace_id>.json` y no hay alertas `provider_metadata_drift` sin revisar
 - [ ] no hay duplicados no explicados en reconnect/restart/handoff
 - [ ] no hay corrupción de `data.parquet`
 
