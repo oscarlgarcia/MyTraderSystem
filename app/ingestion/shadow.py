@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.ingestion.dedup import identity_from_fields
+from app.marketdata.errors import ShadowPromotionError
 from app.ingestion.storage import (
     STREAM_TYPE_BY_FEED_TYPE,
     feed_type_for_source,
@@ -50,11 +51,6 @@ class ShadowComparison:
     shadow: ShadowSnapshot
     diffs: dict[str, Any]
     significant: bool
-
-
-class ShadowPromotionError(RuntimeError):
-    pass
-
 
 def build_shadow_snapshot(
     base_dir: Path,
@@ -210,12 +206,11 @@ def persist_shadow_comparison(base_dir: Path, *, env: str, comparison: ShadowCom
 def assert_shadow_promotable(comparison: ShadowComparison, *, block_on_diff: bool) -> None:
     if block_on_diff and comparison.significant:
         raise ShadowPromotionError(
-            "shadow comparison detected significant differences: "
-            + ", ".join(
-                f"{key}={value}"
+            diffs={
+                key: value
                 for key, value in comparison.diffs.items()
                 if value not in (0, 0.0, True, {}, [])
-            )
+            }
         )
 
 

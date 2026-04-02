@@ -13,6 +13,7 @@ from app.ingestion.checkpoints import CheckpointState
 from app.ingestion.client import _key
 from app.ingestion.errors import IngestionError
 from app.ingestion.sources import Source, SourceStats
+from app.marketdata.errors import CheckpointMismatchError
 from app.marketdata.models import BarEvent, IngestionEvent
 from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.temporal_state import CursorState, cursor_from_event, temporal_partition_key
@@ -329,15 +330,30 @@ class HandoffSource:
         self.stats.handoff_inconsistent += 1
         if post_window:
             self.stats.handoff_post_inconsistent += 1
+        error = self._handoff_error(message)
         logging.getLogger("ingest.handoff").error(
             "handoff inconsistent",
             extra={
                 "error": message,
+                "error_type": getattr(error, "error_type", type(error).__name__),
                 "handoff_post_window": post_window,
+                **(error.as_context() if isinstance(error, CheckpointMismatchError) else {}),
             },
         )
         if self.strict:
-            raise IngestionError("validation", "permanent", message)
+            raise error
+
+    def _handoff_error(self, message: str) -> IngestionError:
+        if self.checkpoint_state is None or not self.checkpoint_state.stream_cursors:
+            return IngestionError("validation", "permanent", message)
+        first_state = next(iter(self.checkpoint_state.stream_cursors.values()))
+        return CheckpointMismatchError(
+            stream_key=first_state.partition.label(),
+            checkpoint_cursor_kind=first_state.cursor_kind,
+            checkpoint_cursor_value=first_state.cursor_value,
+            checkpoint_last_event_ts=first_state.last_event_ts,
+            reason=message,
+        )
 
     def _record_stream_metric(self, event: IngestionEvent, key: str, delta: int) -> None:
         partition = temporal_partition_key(event)

@@ -430,7 +430,7 @@ def test_shadow_block_on_diff_raises_promotion_error(monkeypatch, tmp_path: Path
 
     monkeypatch.setattr(pipeline, "compare_shadow_snapshots", fake_compare)
 
-    with pytest.raises(ShadowPromotionError):
+    with pytest.raises(ShadowPromotionError) as exc_info:
         pipeline.collect_events(
             mode="live",
             cfg=cfg,
@@ -446,3 +446,4 @@ def test_shadow_block_on_diff_raises_promotion_error(monkeypatch, tmp_path: Path
             pipeline_version="v2",
             stream_types=("kline",),
         )
+    assert exc_info.value.error_type == "ShadowPromotionError"

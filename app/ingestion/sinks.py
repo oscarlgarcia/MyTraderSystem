@@ -8,7 +8,7 @@ from typing import Iterable, Protocol
 
 from app.ingestion.errors import IngestionError
 from app.ingestion.storage import ParquetWriter
-from app.marketdata.errors import SchemaDriftError
+from app.marketdata.errors import MarketdataIncidentError, SchemaDriftError
 from app.marketdata.models import IngestionEvent
 
 
@@ -43,6 +43,8 @@ class JsonlErrorSink:
             "raw_message": raw_message,
             "context": context or {},
         }
+        if isinstance(error, MarketdataIncidentError):
+            payload["incident"] = error.as_context()
         if isinstance(error, SchemaDriftError):
             payload["schema_drift"] = error.as_context()
         with target_path.open("a", encoding="utf-8") as handle:

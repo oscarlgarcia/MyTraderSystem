@@ -346,6 +346,7 @@ def test_schema_drift_alert_is_emitted_and_payload_is_quarantined(tmp_path: Path
     assert schema_alert["venue"] == "BINANCE"
     assert schema_alert["symbol"] == "BTCUSDT"
     assert schema_alert["stream_type"] == "trade"
+    assert schema_alert["error_type"] == "SchemaDriftError"
     assert schema_alert["drift_mode"] == "blocking"
     assert "unexpected" in schema_alert["unexpected_paths"]
 

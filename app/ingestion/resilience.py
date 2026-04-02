@@ -21,6 +21,7 @@ from app.ingestion.dedup import DedupStateEntry, Deduplicator, EventIdentity
 from app.ingestion.errors import IngestionError, classify_error
 from app.marketdata.gaps import detect_gap
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
+from app.marketdata.errors import IrrecoverableGapError, RecoveryExactnessError, VendorReplayStaleDataError
 from app.marketdata.recovery import (
     RecoveryPolicy,
     RecoveryRequest,
@@ -602,6 +603,7 @@ class ResilientRunner:
         logger.warning(
             "Out-of-order event detected",
             extra={
+                "error_type": "VendorReplayStaleDataError",
                 "venue": partition_key.venue,
                 "symbol": partition_key.symbol,
                 "stream_type": partition_key.stream_type,
@@ -620,10 +622,14 @@ class ResilientRunner:
             self.metrics.late_events_dropped += 1
             self._update_temporal_metrics(partition_key, stream_state)
             return False
-        raise IngestionError(
-            "validation",
-            "permanent",
-            f"out-of-order event detected (late_seconds={late_seconds:.6f})",
+        raise VendorReplayStaleDataError(
+            stream_key=partition_key.label(),
+            venue=partition_key.venue,
+            symbol=partition_key.symbol,
+            stream_type=partition_key.stream_type,
+            previous_event_ts=previous_ts,
+            current_event_ts=ev.event_ts,
+            late_seconds=late_seconds,
         )
 
     def _update_temporal_metrics(
@@ -715,6 +721,7 @@ class ResilientRunner:
         logger.warning(
             "gap detected",
             extra={
+                "error_type": "IrrecoverableGapError" if observation.irreparable else None,
                 "venue": partition_key.venue,
                 "symbol": partition_key.symbol,
                 "stream_type": partition_key.stream_type,
@@ -743,16 +750,23 @@ class ResilientRunner:
             },
         )
         if observation.irreparable:
+            error = IrrecoverableGapError(
+                stream_key=partition_key.label(),
+                venue=partition_key.venue,
+                symbol=partition_key.symbol,
+                stream_type=partition_key.stream_type,
+                gap_detection_mode=observation.mode,
+                gap_seconds=observation.gap_seconds,
+                missing_count=observation.missing_count,
+            )
             logger.error(
                 "gap irreparable",
                 extra={
+                    **error.as_context(),
                     "venue": partition_key.venue,
                     "symbol": partition_key.symbol,
                     "stream_type": partition_key.stream_type,
                     "temporal_partition": partition_key.label(),
-                    "gap_detection_mode": observation.mode,
-                    "gap_missing_count": observation.missing_count,
-                    "gap_seconds": observation.gap_seconds,
                 },
             )
             emit_operational_alert(
@@ -760,13 +774,11 @@ class ResilientRunner:
                 alert_type="gap_irreparable",
                 observed=stream_state.gap_irreparable_total,
                 extra={
+                    **error.as_context(),
                     "venue": partition_key.venue,
                     "symbol": partition_key.symbol,
                     "stream_type": partition_key.stream_type,
                     "temporal_partition": partition_key.label(),
-                    "gap_detection_mode": observation.mode,
-                    "gap_missing_count": observation.missing_count,
-                    "gap_seconds": observation.gap_seconds,
                 },
             )
         self._update_temporal_metrics(partition_key, stream_state)
@@ -787,23 +799,27 @@ class ResilientRunner:
         self.metrics.recovery_exactness_violation_total += 1
         self.metrics.gap_irreparable_total += 1
         logger = logging.getLogger("ingest.resilience")
+        error = RecoveryExactnessError(
+            stream_key=partition_key.label(),
+            venue=partition_key.venue,
+            symbol=partition_key.symbol,
+            stream_type=partition_key.stream_type,
+            requested_rows=requested_rows,
+            received_rows=received_rows,
+            request_start_ts=request.start_ts,
+            request_end_ts=request.end_ts,
+            interval=request.interval,
+            gap_seconds=request.gap_seconds,
+            missing_count=request.missing_count,
+            missing_timestamps=[timestamp.isoformat() for timestamp in verification.missing_timestamps] if verification else (),
+            unexpected_timestamps=[timestamp.isoformat() for timestamp in verification.unexpected_timestamps] if verification else (),
+            duplicate_timestamps=[timestamp.isoformat() for timestamp in verification.duplicate_timestamps] if verification else (),
+        )
         logger.error(
             "recovery exactness violation",
             extra={
-                "venue": partition_key.venue,
-                "symbol": partition_key.symbol,
-                "stream_type": partition_key.stream_type,
+                **error.as_context(),
                 "temporal_partition": partition_key.label(),
-                "recovery_request_start_ts": request.start_ts.isoformat() if request.start_ts else None,
-                "recovery_request_end_ts": request.end_ts.isoformat() if request.end_ts else None,
-                "recovery_request_interval": request.interval,
-                "recovery_window_rows_requested": requested_rows,
-                "recovery_window_rows_received": received_rows,
-                "gap_seconds": request.gap_seconds,
-                "missing_count": request.missing_count,
-                "recovery_missing_timestamps": [timestamp.isoformat() for timestamp in verification.missing_timestamps] if verification else None,
-                "recovery_unexpected_timestamps": [timestamp.isoformat() for timestamp in verification.unexpected_timestamps] if verification else None,
-                "recovery_duplicate_timestamps": [timestamp.isoformat() for timestamp in verification.duplicate_timestamps] if verification else None,
             },
         )
         emit_operational_alert(
@@ -811,20 +827,8 @@ class ResilientRunner:
             alert_type="recovery_exactness_violation",
             observed=stream_state.recovery_exactness_violation_total,
             extra={
-                "venue": partition_key.venue,
-                "symbol": partition_key.symbol,
-                "stream_type": partition_key.stream_type,
+                **error.as_context(),
                 "temporal_partition": partition_key.label(),
-                "recovery_request_start_ts": request.start_ts.isoformat() if request.start_ts else None,
-                "recovery_request_end_ts": request.end_ts.isoformat() if request.end_ts else None,
-                "recovery_request_interval": request.interval,
-                "recovery_window_rows_requested": requested_rows,
-                "recovery_window_rows_received": received_rows,
-                "gap_seconds": request.gap_seconds,
-                "missing_count": request.missing_count,
-                "recovery_missing_timestamps": [timestamp.isoformat() for timestamp in verification.missing_timestamps] if verification else None,
-                "recovery_unexpected_timestamps": [timestamp.isoformat() for timestamp in verification.unexpected_timestamps] if verification else None,
-                "recovery_duplicate_timestamps": [timestamp.isoformat() for timestamp in verification.duplicate_timestamps] if verification else None,
             },
         )
         self._update_temporal_metrics(partition_key, stream_state)

@@ -172,7 +172,7 @@ def test_operational_shadow_diff_blocks_promotion(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(pipeline, "compare_shadow_snapshots", fake_compare)
 
-    with pytest.raises(ShadowPromotionError):
+    with pytest.raises(ShadowPromotionError) as exc_info:
         pipeline.collect_events(
             mode="live",
             cfg=cfg,
@@ -188,6 +188,7 @@ def test_operational_shadow_diff_blocks_promotion(tmp_path: Path, monkeypatch):
             pipeline_version="v2",
             stream_types=("kline",),
         )
+    assert exc_info.value.error_type == "ShadowPromotionError"
 
     alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
     shadow_alert = next(record for record in alerts if record["alert_type"] == "shadow_semantic_diff")
@@ -238,8 +239,9 @@ def test_operational_incomplete_recovery_emits_exactness_violation_and_degrades_
     assert stream_metrics["gap_irreparable"] is True
     alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
     recovery_alert = next(record for record in alerts if record["alert_type"] == "recovery_exactness_violation")
-    assert recovery_alert["recovery_window_rows_requested"] == 13
-    assert recovery_alert["recovery_window_rows_received"] == 2
+    assert recovery_alert["error_type"] == "RecoveryExactnessError"
+    assert recovery_alert["requested_rows"] == 13
+    assert recovery_alert["received_rows"] == 2
 
 
 def test_operational_provider_metadata_drift_alerts_when_authoritative_snapshot_changes(tmp_path: Path):

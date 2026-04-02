@@ -8,6 +8,7 @@ import pytest
 from app.common.dto import MarketEvent
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
+from app.marketdata.errors import VendorReplayStaleDataError
 from app.marketdata.models import BarEvent, TradeEvent
 from app.observability.logger import get_logger
 
@@ -521,6 +522,7 @@ def test_gap_alerts_are_emitted_with_stream_context():
     assert detected["stream_type"] == "trade"
     assert detected["alert_severity"] == "warning"
     assert irreparable["alert_severity"] == "error"
+    assert irreparable["error_type"] == "IrrecoverableGapError"
 
 
 def test_trade_gap_without_exact_recovery_is_marked_irreparable_even_with_snapshot():
@@ -565,6 +567,24 @@ def test_trade_gap_without_exact_recovery_is_marked_irreparable_even_with_snapsh
     assert runner.metrics.gap_irreparable_total == 1
     assert stream_metrics["gap_irreparable"] is True
     assert stream_metrics["last_gap_detection_mode"] == "sequence_gap_detection"
+
+
+def test_out_of_order_fail_policy_raises_typed_vendor_replay_error():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [make_ev(base + timedelta(seconds=10)), make_ev(base)]
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(events),
+        snapshot_fn=None,
+        temporal_policy="fail",
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(VendorReplayStaleDataError) as exc_info:
+        runner.run(lambda _event: None, stop_on_complete=True)
+
+    assert exc_info.value.error_type == "VendorReplayStaleDataError"
+    assert exc_info.value.as_context()["stream_type"] == "trade"
 
 
 def test_bar_recovery_uses_bar_snapshot_without_duplicate_edge():

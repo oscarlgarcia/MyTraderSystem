@@ -20,7 +20,15 @@ from .models import (
 from .normalization import NORMALIZER_VERSION, SUPPORTED_NORMALIZER_VERSIONS, resolve_normalizer_version
 from .raw_sink import JsonlRawSink, NullRawSink, RawRecord, RawSink
 from .gaps import GapObservation, detect_gap
-from .errors import SchemaDriftError
+from .errors import (
+    CheckpointMismatchError,
+    IrrecoverableGapError,
+    MarketdataIncidentError,
+    RecoveryExactnessError,
+    SchemaDriftError,
+    ShadowPromotionError,
+    VendorReplayStaleDataError,
+)
 from .instrument_loader import InstrumentRecord, load_binance_exchange_info_snapshot, load_binance_instrument_records
 from .instruments import (
     DEFAULT_INSTRUMENT_CATALOG,
@@ -102,7 +110,13 @@ __all__ = [
     "JsonlRawSink",
     "GapObservation",
     "detect_gap",
+    "MarketdataIncidentError",
     "SchemaDriftError",
+    "IrrecoverableGapError",
+    "CheckpointMismatchError",
+    "RecoveryExactnessError",
+    "VendorReplayStaleDataError",
+    "ShadowPromotionError",
     "InstrumentRecord",
     "Instrument",
     "InstrumentCatalogDrift",

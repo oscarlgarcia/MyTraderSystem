@@ -396,6 +396,7 @@ class BinanceSource:
         self.stats.rejected_payloads += 1
         venue, symbol, stream_type = _raw_message_context(raw_message)
         metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
+        error_type = getattr(error, "error_type", type(error).__name__)
         metric["messages_invalid_total"] = int(metric["messages_invalid_total"]) + 1
         if isinstance(error, SchemaDriftError):
             metric["schema_drift_total"] = int(metric.get("schema_drift_total", 0)) + 1
@@ -428,6 +429,7 @@ class BinanceSource:
                     "venue": venue,
                     "symbol": symbol,
                     "stream_type": stream_type,
+                    "error_type": error_type,
                     "error_message": error.message,
                 },
             )
@@ -441,6 +443,7 @@ class BinanceSource:
                     "venue": venue,
                     "symbol": symbol,
                     "stream_type": stream_type,
+                    "error_type": error_type,
                     "error_category": error.category,
                     "error_severity": error.severity,
                 },
@@ -454,6 +457,7 @@ class BinanceSource:
                 extra={
                     "error": str(sink_exc),
                     "original_error": str(error),
+                    "error_type": error_type,
                     "error_category": error.category,
                     "error_severity": error.severity,
                 },

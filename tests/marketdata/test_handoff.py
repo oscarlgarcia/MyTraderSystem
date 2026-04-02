@@ -12,6 +12,7 @@ from app.ingestion.dedup import DedupStateEntry
 from app.ingestion.errors import IngestionError
 from app.ingestion.pipeline import collect_events
 from app.ingestion.sources import StaticSource
+from app.marketdata.errors import CheckpointMismatchError
 from app.marketdata.handoff import HandoffSource, HistoricalWindow
 from app.marketdata.models import BarEvent, TradeEvent
 from app.marketdata.temporal_state import CursorState, TemporalPartitionKey
@@ -333,3 +334,47 @@ def test_handoff_post_transition_window_degrades_on_bar_gap_after_clean_edge(tmp
     assert out == []
     assert source.stats.handoff_inconsistent == 1
     assert source.stats.handoff_post_inconsistent == 1
+
+
+def test_handoff_checkpoint_inconsistency_raises_typed_error(tmp_path):
+    cfg = _cfg(tmp_path)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    bootstrap = [_trade(base, 1), _trade(base + timedelta(seconds=1), 2)]
+    live = [_trade(base + timedelta(seconds=3), 4)]
+    source = HandoffSource(
+        live_source=StaticSource(events=live),
+        bootstrap_fn=lambda: bootstrap,
+        strict=True,
+    )
+    source.attach_checkpoint_state(
+        CheckpointState(
+            last_event_ts=base - timedelta(seconds=1),
+            seen_entries=(),
+            stream_cursors={
+                "BINANCE:BTCUSDT:trade": CursorState(
+                    partition=TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="trade"),
+                    last_event_ts=base - timedelta(seconds=1),
+                    cursor_kind="trade_id",
+                    cursor_value="0",
+                    seen_entries=(),
+                )
+            },
+            metadata={},
+        )
+    )
+
+    with pytest.raises(CheckpointMismatchError) as exc_info:
+        collect_events(
+            mode="live",
+            cfg=cfg,
+            logger=get_logger(name="test.handoff.checkpoint_mismatch", level="INFO", stream=io.StringIO()),
+            source=source,
+            sink=RecordingSink(),
+            snapshot_enabled=False,
+            summary_logging=True,
+            duration_s=0,
+            error_policy="fail_fast",
+        )
+
+    assert exc_info.value.error_type == "CheckpointMismatchError"
+    assert exc_info.value.as_context()["checkpoint_cursor_value"] == "0"
