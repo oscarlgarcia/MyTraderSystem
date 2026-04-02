@@ -102,10 +102,12 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - fallback heuristico `(symbol, event_ts, price, size, source)` solo cuando no existe identidad nativa
   - TTL corto y capacidad acotada para limitar memoria
   - el checkpoint persiste una ventana reciente de estas identidades
-- Persistencia Parquet normalized v2: cada particion se escribe con `tmp + rename`. Si una escritura falla, el `data.parquet` previo queda intacto y el writer conserva en memoria solo los eventos no confirmados.
+- Persistencia Parquet normalized v2: el path online ya no relee ni reconstruye la particion completa por lote. Escribe segmentos append-only nuevos y deja la compactacion/merge profundo para un paso offline. Si una escritura falla, solo se pierde el segmento temporal del lote en curso y el writer conserva en memoria solo los eventos no confirmados.
 - Layout normalized v2:
-  - `data/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
-  - `data/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+  - `data/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/segments/segment-*.parquet`
+  - `data/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/segments/segment-*.parquet`
+  - opcionalmente, tras compactacion offline:
+    - `.../date=<yyyy-mm-dd>/data.parquet`
   - cada dataset `v2` incluye `normalizer_version` como columna y como metadata de Parquet; la politica actual es global y fija `v1`
   - `normalized/trades` ya persiste columnas first-class:
     - `trade_id`
@@ -153,6 +155,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `app.main.run_trading_cycle(...)` ejecuta features, strategy, risk, execution y portfolio a partir de eventos ya ingeridos
   - `app.main.run_cycle(...)` queda como wrapper de composicion para compatibilidad
 - Catalogo minimo de instrumentos: `app.marketdata.instruments` resuelve `(venue, symbol)` y anade metadata first-class de instrumento (`base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`) durante la normalizacion. El contrato typed y el parquet `normalized` persisten tambien `instrument_catalog_version` e `instrument_snapshot` para que cada dataset quede explicable con la metadata usada en esa corrida/backfill. Si un simbolo no esta soportado por el catalogo, la normalizacion falla rapido.
+- Compactacion offline: `app.ingestion.compaction.compact_partition(...)` fusiona segmentos de una particion, aplica dedup/proyeccion de lectura y publica `data.parquet` como snapshot compactado.
 - Adapters por feed/venue:
   - `app.marketdata.connectors.binance.BinanceTradeNormalizer`
   - `app.marketdata.connectors.binance.BinanceBarNormalizer`

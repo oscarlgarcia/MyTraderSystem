@@ -1,7 +1,7 @@
 # Especificacion tecnica y funcional
 
 ## Componentes principales
-- **Ingestion**: normaliza `IngestionEvent` tipado desde WS/REST, escribe normalized Parquet v2 en modo live y provee fixtures dry.
+- **Ingestion**: normaliza `IngestionEvent` tipado desde WS/REST, escribe normalized Parquet v2 segmentado en modo live y provee fixtures dry.
 - **Servicio de ingestion**:
   - `app.ingestion.service.run_ingestion_service(...)` ejecuta solo captura/validacion/dedup/persistencia de market data
   - `app.main.run_trading_cycle(...)` consume eventos ya ingeridos y ejecuta el resto del pipeline cuantitativo
@@ -433,8 +433,10 @@
 
 ## Normalized storage v2
 - `app.ingestion.storage` escribe ahora en:
-- `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
-- `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
+- `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/segments/segment-*.parquet`
+- `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/segments/segment-*.parquet`
+- compactacion offline opcional:
+  - `<data_dir>/normalized/.../date=<yyyy-mm-dd>/data.parquet`
 - El schema `v2` a?ade:
   - `venue`
   - `feed_type`
@@ -550,3 +552,6 @@
     - `process_ts`
     - `source_id`
   - `metadata` se conserva como superficie de compatibilidad, no como unico contenedor de identidad.
+- **Compaction**:
+  - `app.ingestion.compaction.compact_partition(...)` fusiona segmentos de una particion y publica `data.parquet`
+  - el hot path online deja de releer/mergear tablas completas por flush; la dedup profunda queda en lectura/compactacion offline

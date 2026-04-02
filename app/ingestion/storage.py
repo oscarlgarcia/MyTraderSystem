@@ -2,7 +2,9 @@
 Buffered Parquet writer for normalized market data.
 
 Normalized v2 layout:
-<data_dir>/normalized/{trades|bars}/env=<env>/venue=<venue>/symbol=<symbol>/date=<YYYY-MM-DD>/data.parquet
+<data_dir>/normalized/{trades|bars}/env=<env>/venue=<venue>/symbol=<symbol>/date=<YYYY-MM-DD>/
+  - segments/segment-*.parquet   (online write path)
+  - data.parquet                 (offline compacted snapshot, optional)
 
 Legacy v1 reader compatibility is kept for files under:
 <data_dir>/<env>/symbol=<symbol>/date=<YYYY-MM-DD>/data.parquet
@@ -15,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List
+from uuid import uuid4
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -37,6 +40,8 @@ FEED_TYPE_BY_SOURCE = {
     "kline": "bars",
 }
 STREAM_TYPE_BY_FEED_TYPE = {value: key for key, value in FEED_TYPE_BY_SOURCE.items()}
+PARTITION_DATA_FILENAME = "data.parquet"
+PARTITION_SEGMENTS_DIRNAME = "segments"
 
 
 def validate_output_path(base_dir: Path, *, require_absolute: bool = False) -> Path:
@@ -374,8 +379,30 @@ def normalized_partition_path(
         / f"venue={str(venue).upper()}"
         / f"symbol={symbol}"
         / f"date={day}"
-        / "data.parquet"
     )
+
+
+def normalized_partition_data_path(
+    base_dir: Path,
+    env: str,
+    *,
+    source: str,
+    symbol: str,
+    day: str,
+    venue: str = "BINANCE",
+) -> Path:
+    return normalized_partition_path(
+        base_dir,
+        env,
+        source=source,
+        symbol=symbol,
+        day=day,
+        venue=venue,
+    ) / PARTITION_DATA_FILENAME
+
+
+def partition_segments_dir(partition_path: Path) -> Path:
+    return partition_path / PARTITION_SEGMENTS_DIRNAME
 
 
 def legacy_partition_path(base_dir: Path, env: str, symbol: str, day: str) -> Path:
@@ -383,9 +410,9 @@ def legacy_partition_path(base_dir: Path, env: str, symbol: str, day: str) -> Pa
 
 
 def list_normalized_parquet_files(base_dir: Path, env: str, *, include_legacy: bool = True) -> list[Path]:
-    files = sorted(base_dir.glob(f"normalized/*/env={env}/venue=*/symbol=*/date=*/data.parquet"))
-    if files or not include_legacy:
-        return files
+    partitions = sorted(base_dir.glob(f"normalized/*/env={env}/venue=*/symbol=*/date=*"))
+    if partitions or not include_legacy:
+        return partitions
     return sorted(base_dir.glob(f"{env}/symbol=*/date=*/data.parquet"))
 
 
@@ -548,6 +575,40 @@ def _to_legacy_table(events: List[IngestionEvent]) -> pa.Table:
     return pa.Table.from_pylist(rows, schema=schema)
 
 
+def _table_schema_metadata(
+    *,
+    schema_version: str,
+    events: list[IngestionEvent],
+    dedup: bool,
+) -> dict[bytes, bytes]:
+    metadata = {
+        b"schema_version": schema_version.encode("utf-8"),
+        b"normalizer_version": NORMALIZER_VERSION.encode("utf-8"),
+        b"dedup_policy": b"true" if dedup else b"false",
+    }
+    catalog_version = next(
+        (value for value in (event_instrument_catalog_version(event) for event in events) if value),
+        None,
+    )
+    instrument_snapshot = next(
+        (value for value in (event_instrument_snapshot(event) for event in events) if value),
+        None,
+    )
+    if catalog_version:
+        metadata[b"instrument_catalog_version"] = catalog_version.encode("utf-8")
+    if instrument_snapshot:
+        metadata[b"instrument_snapshot"] = instrument_snapshot.encode("utf-8")
+    return metadata
+
+
+def _write_segment_atomic(table: pa.Table, partition_dir: Path) -> Path:
+    segments_dir = partition_segments_dir(partition_dir)
+    segments_dir.mkdir(parents=True, exist_ok=True)
+    segment_path = segments_dir / f"segment-{time.time_ns()}-{uuid4().hex[:8]}.parquet"
+    _write_table_atomic(table, segment_path)
+    return segment_path
+
+
 def _write_partition(
     *,
     base_dir: Path,
@@ -562,52 +623,33 @@ def _write_partition(
     if schema_version == "v1":
         out_path = legacy_partition_path(base_dir, env, symbol, day)
         table = _to_legacy_table(events)
-    else:
-        source = STREAM_TYPE_BY_FEED_TYPE.get(feed_type, feed_type)
-        _assert_supported_storage_source(source)
-        out_path = (
-            base_dir
-            / "normalized"
-            / feed_type
-            / f"env={env}"
-            / f"venue={venue}"
-            / f"symbol={symbol}"
-            / f"date={day}"
-            / "data.parquet"
-        )
-        if feed_type == "trades":
-            table = TradeParquetWriter.to_table(events)
-        elif feed_type == "bars":
-            table = BarParquetWriter.to_table(events)
-        else:
-            raise ValueError(
-                f"{source} feed is out of scope for normalized storage; only trade and kline are supported"
-            )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    schema_metadata = {
-        b"schema_version": schema_version.encode("utf-8"),
-        b"normalizer_version": NORMALIZER_VERSION.encode("utf-8"),
-    }
-    catalog_version = next(
-        (value for value in (event_instrument_catalog_version(event) for event in events) if value),
-        None,
-    )
-    instrument_snapshot = next(
-        (value for value in (event_instrument_snapshot(event) for event in events) if value),
-        None,
-    )
-    if catalog_version:
-        schema_metadata[b"instrument_catalog_version"] = catalog_version.encode("utf-8")
-    if instrument_snapshot:
-        schema_metadata[b"instrument_snapshot"] = instrument_snapshot.encode("utf-8")
-    table = table.replace_schema_metadata(schema_metadata)
-    fallback_legacy = legacy_partition_path(base_dir, env, symbol, day)
-    if schema_version == "v1":
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        table = table.replace_schema_metadata(_table_schema_metadata(schema_version=schema_version, events=events, dedup=dedup))
         existing_path = out_path
+        merged = _merge_with_existing(existing_path, table, dedup=dedup, max_dedup_rows=max_dedup_rows)
+        _write_table_atomic(merged, out_path)
+        return
+
+    source = STREAM_TYPE_BY_FEED_TYPE.get(feed_type, feed_type)
+    _assert_supported_storage_source(source)
+    partition_dir = normalized_partition_path(
+        base_dir,
+        env,
+        source=source,
+        symbol=symbol,
+        day=day,
+        venue=venue,
+    )
+    if feed_type == "trades":
+        table = TradeParquetWriter.to_table(events)
+    elif feed_type == "bars":
+        table = BarParquetWriter.to_table(events)
     else:
-        existing_path = out_path if out_path.exists() else fallback_legacy if fallback_legacy.exists() else out_path
-    merged = _merge_with_existing(existing_path, table, dedup=dedup, max_dedup_rows=max_dedup_rows)
-    _write_table_atomic(merged, out_path)
+        raise ValueError(
+            f"{source} feed is out of scope for normalized storage; only trade and kline are supported"
+        )
+    table = table.replace_schema_metadata(_table_schema_metadata(schema_version=schema_version, events=events, dedup=dedup))
+    _write_segment_atomic(table, partition_dir)
 
 
 def _merge_with_existing(out_path: Path, new_table: pa.Table, *, dedup: bool, max_dedup_rows: int) -> pa.Table:
@@ -652,6 +694,17 @@ def _write_table_atomic(table: pa.Table, out_path: Path) -> None:
 
 
 def read_parquet(path: Path) -> pa.Table:
+    path = Path(path)
+    if path.is_dir():
+        return _read_partition_dataset(path)
+    if path.name == PARTITION_DATA_FILENAME and path.parent.exists():
+        return _read_partition_dataset(path.parent)
+    if not path.exists():
+        raise FileNotFoundError(path)
+    return _read_single_parquet(path)
+
+
+def _read_single_parquet(path: Path) -> pa.Table:
     pf = pq.ParquetFile(path)
     table = pf.read()
     metadata = table.schema.metadata or {}
@@ -680,6 +733,33 @@ def read_parquet(path: Path) -> pa.Table:
             }
         )
     return table
+
+
+def _partition_parquet_files(partition_path: Path) -> list[Path]:
+    compacted = partition_path / PARTITION_DATA_FILENAME
+    segments = sorted(partition_segments_dir(partition_path).glob("*.parquet"))
+    files: list[Path] = []
+    if compacted.exists():
+        files.append(compacted)
+    files.extend(segments)
+    return files
+
+
+def _read_partition_dataset(partition_path: Path) -> pa.Table:
+    files = _partition_parquet_files(partition_path)
+    if not files:
+        raise FileNotFoundError(partition_path)
+    tables = [_read_single_parquet(file_path) for file_path in files]
+    target_schema = max(tables, key=lambda table: len(table.column_names)).schema
+    aligned_tables = [
+        table if table.schema.equals(target_schema) else _read_existing_table_for_merge(file_path, target_schema)
+        for file_path, table in zip(files, tables, strict=False)
+    ]
+    merged = aligned_tables[0]
+    dedup = any((table.schema.metadata or {}).get(b"dedup_policy") == b"true" for table in tables)
+    for table in aligned_tables[1:]:
+        merged = _dedup_tables(merged, table) if dedup else _concat_tables_ordered(merged, table)
+    return merged
 
 
 def _is_trade_schema(schema: pa.Schema) -> bool:

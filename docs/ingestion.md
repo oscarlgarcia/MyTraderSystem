@@ -68,6 +68,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `source_id`
 - `ingestion.storage`
   - `ParquetWriter` mantiene compatibilidad v1/v2, pero para `normalized/trades` y `normalized/bars` ya delega en writers tipados.
+  - El write path online `v2` escribe segmentos append-only bajo `segments/` y deja merge/dedup profunda para compactacion offline.
   - `TradeParquetWriter` persiste columnas first-class para trades:
     - `trade_id`
     - `side`
@@ -203,9 +204,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - Descarga klines historicos, normaliza filas a `BarEvent`, escribe raw append-only reutilizando `JsonlRawSink`, ordena y opcionalmente deduplica con `--dedup` antes del sink normalized.
   - El alcance historico soportado queda formalmente limitado a bars (`kline`). Trade historical backfill no esta implementado ni debe asumirse.
 - `ingestion.storage`
-  - `ParquetWriter`: persiste eventos normalized v2 separados por tipo (`trades`, `bars`) y particionados por `env`, `venue`, `symbol`, `date`; puede deduplicar contra datos ya existentes, escribe con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
+  - `ParquetWriter`: persiste eventos normalized v2 separados por tipo (`trades`, `bars`) y particionados por `env`, `venue`, `symbol`, `date`; el hot path escribe segmentos nuevos con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
   - `book` queda fuera de scope en storage normalized hasta que exista un feed real y un schema typed first-class; el writer falla explicitamente si recibe ese tipo.
   - Cada dataset normalized `v2` persiste `normalizer_version` como columna de datos y como metadata de Parquet.
+  - `app.ingestion.compaction`: fusiona segmentos de una particion, aplica dedup offline y publica `data.parquet` como snapshot compactado.
   - Helpers de layout:
     - `normalized_partition_path(...)`
     - `legacy_partition_path(...)`
@@ -338,11 +340,13 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - **Backfill opt-in**: `--dedup` permite inspeccionar lotes con duplicados o sanearlos explicitamente segun el caso operativo.
 - **Parquet dedup opcional**: sigue siendo una barrera final sobre particiones existentes, no el mecanismo principal de deduplicacion.
 - **Persistencia normalized v2 por tipo**: trades y bars ya no comparten particion. El layout actual es:
-  - `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
-  - `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/data.parquet`
-  - Cada `data.parquet` `v2` incluye `schema_version=v2` y `normalizer_version=v1` en metadata, ademas de una columna `normalizer_version` para inspeccion directa del dataset.
+  - `<data_dir>/normalized/trades/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/segments/segment-*.parquet`
+  - `<data_dir>/normalized/bars/env=<env>/venue=<venue>/symbol=<symbol>/date=<yyyy-mm-dd>/segments/segment-*.parquet`
+  - opcionalmente, tras compactacion:
+    - `.../date=<yyyy-mm-dd>/data.parquet`
+  - Cada dataset `v2` incluye `schema_version=v2`, `normalizer_version=v1`, `instrument_catalog_version` e `instrument_snapshot` en metadata, ademas de una columna `normalizer_version` para inspeccion directa del dataset.
   - `book` queda explicitamente fuera de scope hasta que exista feed real + schema typed dedicado; no comparte storage con `trades`/`bars`.
-- **Persistencia atomica por particion**: cada `data.parquet` se reconstruye en un temporal y solo se publica con `replace` cuando la escritura completa termina bien.
+- **Persistencia atomica por segmento**: cada segmento se escribe en un temporal y solo se publica con `replace` cuando la escritura completa termina bien; la compactacion offline aplica la misma regla para `data.parquet`.
 - **Batching de IO en live**: el handler agrupa eventos antes de escribirlos para reducir llamadas al writer; el flush final fuerza la persistencia del lote incompleto.
 - **Backpressure explicito**: el runner ya no usa un pseudo-buffer binario; usa una cola bounded y aplica una politica visible cuando la cola se llena.
 - **Modo fast-path (experimental)**: desactiva deduplicacion live, snapshot REST y trazas; usa batching grande y minimiza logs de cierre para priorizar eventos/s.

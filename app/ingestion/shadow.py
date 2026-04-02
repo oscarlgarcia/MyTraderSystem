@@ -197,7 +197,7 @@ def _shadow_paths(base_dir: Path, *, env: str, pipeline_version: str) -> list[Pa
     if pipeline_version == "v1":
         return sorted(base_dir.glob(f"{env}/symbol=*/date=*/data.parquet"))
     if pipeline_version == "v2":
-        return sorted(base_dir.glob(f"normalized/*/env={env}/venue=*/symbol=*/date=*/data.parquet"))
+        return sorted(base_dir.glob(f"normalized/*/env={env}/venue=*/symbol=*/date=*"))
     return []
 
 

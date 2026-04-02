@@ -16,7 +16,7 @@ from typing import Iterable, List, Optional
 import pyarrow.dataset as ds
 
 from app.config import load_config
-from app.ingestion.storage import list_normalized_parquet_files
+from app.ingestion.storage import PARTITION_DATA_FILENAME, list_normalized_parquet_files, partition_segments_dir
 
 
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -33,11 +33,24 @@ def _list_parquet_files(base_dir: Path, env: str) -> List[Path]:
     return list_normalized_parquet_files(base_dir, env)
 
 
+def _dataset_files(paths: Iterable[Path]) -> List[Path]:
+    files: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            compacted = path / PARTITION_DATA_FILENAME
+            if compacted.exists():
+                files.append(compacted)
+            files.extend(sorted(partition_segments_dir(path).glob("*.parquet")))
+            continue
+        files.append(path)
+    return files
+
+
 def collect_events(base_dir: Path, env: str, symbol: Optional[str] = None, date: Optional[str] = None, limit: int = 20) -> List[dict]:
     files = _list_parquet_files(base_dir, env)
     if not files:
         return []
-    dataset = ds.dataset(files, format="parquet")
+    dataset = ds.dataset(_dataset_files(files), format="parquet")
     filters = []
     if symbol:
         filters.append(ds.field("symbol") == symbol.upper())
@@ -67,7 +80,7 @@ def run(argv: Optional[list[str]] = None) -> int:
         print("No se encontraron archivos Parquet para los filtros indicados.")
         return 1
 
-    dataset = ds.dataset(files, format="parquet")
+    dataset = ds.dataset(_dataset_files(files), format="parquet")
     filt = None
     if args.symbol:
         filt = ds.field("symbol") == args.symbol.upper()

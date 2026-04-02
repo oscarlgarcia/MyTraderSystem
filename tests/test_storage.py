@@ -7,6 +7,7 @@ import pytest
 
 from app.common.dto import MarketEvent
 from app.ingestion.sinks import ParquetEventSink
+from app.ingestion.compaction import compact_partition
 from app.marketdata import NORMALIZER_VERSION
 from app.marketdata.instruments import instrument_catalog_version
 from app.marketdata.models import BarEvent, BookEvent, TradeEvent
@@ -14,6 +15,8 @@ from app.ingestion.storage import (
     ParquetWriter,
     legacy_partition_path,
     normalized_partition_path,
+    normalized_partition_data_path,
+    partition_segments_dir,
     read_parquet,
 )
 
@@ -24,6 +27,10 @@ def make_event(symbol: str, ts: datetime, price: float = 1.0, size: float = 1.0,
 
 def _out_path(tmp_path: Path, *, symbol: str, day: str, source: str = "trade") -> Path:
     return normalized_partition_path(tmp_path, "dev", source=source, symbol=symbol, day=day)
+
+
+def _data_path(tmp_path: Path, *, symbol: str, day: str, source: str = "trade") -> Path:
+    return normalized_partition_data_path(tmp_path, "dev", source=source, symbol=symbol, day=day)
 
 
 def test_flush_writes_partition_and_preserves_order(tmp_path):
@@ -94,6 +101,45 @@ def test_schema_stable_across_writer_instances(tmp_path):
     assert table.num_rows == 2
 
 
+def test_online_v2_writer_appends_segments_without_compacting_existing_partition(tmp_path):
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    writer1 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
+    writer1.add(make_event("BTCUSDT", ts))
+
+    writer2 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
+    writer2.add(make_event("BTCUSDT", ts + timedelta(minutes=1)))
+
+    partition_path = _out_path(tmp_path, symbol="BTCUSDT", day="2024-01-01")
+    segments = sorted(partition_segments_dir(partition_path).glob("*.parquet"))
+
+    assert len(segments) == 2
+    assert not _data_path(tmp_path, symbol="BTCUSDT", day="2024-01-01").exists()
+    assert read_parquet(partition_path).num_rows == 2
+
+
+def test_offline_compaction_merges_segments_into_single_partition_snapshot(tmp_path):
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    writer1 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10, dedup=True)
+    writer1.add(make_event("BTCUSDT", ts))
+    writer1.flush()
+
+    writer2 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10, dedup=True)
+    writer2.add(make_event("BTCUSDT", ts))
+    writer2.add(make_event("BTCUSDT", ts + timedelta(minutes=1)))
+    writer2.flush()
+
+    partition_path = _out_path(tmp_path, symbol="BTCUSDT", day="2024-01-01")
+    assert len(sorted(partition_segments_dir(partition_path).glob("*.parquet"))) == 2
+
+    compacted = compact_partition(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
+
+    assert compacted == _data_path(tmp_path, symbol="BTCUSDT", day="2024-01-01")
+    assert compacted.exists()
+    assert not partition_segments_dir(partition_path).exists()
+    table = read_parquet(partition_path)
+    assert table.num_rows == 2
+
+
 def test_dedup_sorts_after_merge(tmp_path):
     ts = datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
     writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10, dedup=True)
@@ -133,7 +179,7 @@ def test_atomic_write_never_exposes_partial_parquet(monkeypatch, tmp_path):
 
     after = read_parquet(out).to_pylist()
     assert after == before
-    assert not out.with_name("data.parquet.tmp").exists()
+    assert not list(_out_path(tmp_path, symbol="BTCUSDT", day="2024-01-01").rglob("*.tmp"))
 
 
 def test_sink_failure_preserves_previous_valid_file(monkeypatch, tmp_path):
@@ -314,7 +360,7 @@ def test_trade_dataset_persists_first_class_typed_columns(tmp_path):
 
 
 def test_trade_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):
-    path = normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
+    path = normalized_partition_data_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
     path.parent.mkdir(parents=True, exist_ok=True)
     schema = pa.schema(
         [
@@ -451,7 +497,7 @@ def test_bar_dataset_persists_first_class_typed_columns(tmp_path):
 
 
 def test_bar_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):
-    path = normalized_partition_path(tmp_path, "dev", source="kline", symbol="BTCUSDT", day="2024-01-01")
+    path = normalized_partition_data_path(tmp_path, "dev", source="kline", symbol="BTCUSDT", day="2024-01-01")
     path.parent.mkdir(parents=True, exist_ok=True)
     schema = pa.schema(
         [
@@ -561,7 +607,7 @@ def test_normalized_storage_rejects_book_feed_as_out_of_scope(tmp_path):
 
 
 def test_read_parquet_backfills_missing_normalizer_version_for_old_v2_files(tmp_path):
-    path = normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
+    path = normalized_partition_data_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
     path.parent.mkdir(parents=True, exist_ok=True)
     schema = pa.schema(
         [
