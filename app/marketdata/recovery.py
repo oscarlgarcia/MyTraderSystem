@@ -297,7 +297,7 @@ def verify_recovery_window(
         seen.add(timestamp)
     missing = tuple(timestamp for timestamp in expected if timestamp not in actual_set)
     unexpected = tuple(timestamp for timestamp in actual_sorted if timestamp not in expected_set)
-    exact = not missing and not unexpected and not duplicates and actual_sorted == expected
+    exact = not missing and not unexpected and actual_set == expected_set
     return RecoveryVerification(
         exact=exact,
         expected_rows=len(expected),

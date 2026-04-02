@@ -19,7 +19,7 @@
 ### Resiliencia
 - [ ] reconnect con `checkpoint_store` preserva continuidad observable
 - [ ] recovery exacto de bars no duplica borde reciente
-- [ ] el claim `exact` del feed live objetivo sigue sin promocionarse a `exact_verified` hasta pasar la suite dedicada
+- [ ] el feed live marcado `exact_verified` pasa la suite dedicada de cortes, duplicados y cursor mismatch
 - [ ] trades sin recovery exacto se marcan `gap_irreparable`
 - [ ] reinicio tras fallo parcial preserva consistencia final
 

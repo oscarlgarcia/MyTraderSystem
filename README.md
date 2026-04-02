@@ -83,10 +83,10 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - `python -m app --env dev --mode live --ingest-stream-types kline`  
   Selecciona los feeds live a ingerir. La matriz actual de soporte es:
 - `trade`: live bloqueado hasta que exista recovery exacto
-- `kline`: soporta live, handoff y recovery exacto sobre barras cerradas; sigue fuera de `production_mode` hasta que ese claim quede promovido a `exact_verified`
+- `kline`: soporta live, handoff y recovery `exact_verified` sobre barras cerradas
   - `book`: no soporta live
   En cualquier `mode=live`, el arranque rechaza feeds sin `supports_live`. En `--production-mode`, ademas exige `supports_exact_recovery` y `supports_handoff`.
-Con la matriz actual, `mode=live` no productivo queda limitado a `--ingest-stream-types kline`; `--production-mode` sigue rechazando todos los feeds hasta que exista un feed `exact_verified`.
+Con la matriz actual, `kline` es el primer feed live que ya cumple `exact_verified`; el resto siguen bloqueados fuera de `production_mode`.
 - Checkpoint live minimo: las ejecuciones reales de live persisten en `<data_dir>/<env>/state/ingestion-checkpoint.json`:
   - `last_event_ts` global maximo por compatibilidad
   - cursores/watermarks por stream `(venue, symbol, stream_type)`
@@ -293,7 +293,7 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
 - `weak_gap_detection`: heuristico, cuando solo se observa un hueco temporal mayor que el umbral.
   - El recovery ya es especifico por feed:
     - `trade` no intenta rellenarse con snapshots de `kline`; si aparece un gap fuerte sin recovery exacto, se marca `gap_irreparable`.
-- `kline` usa snapshot REST del mismo `venue/symbol/stream_type` y recupera sobre la ventana exacta de `open_ts/source_id`, filtrando el borde con dedup. Ese claim hoy es `exact`, pero todavia no `exact_verified`.
+- `kline` usa snapshot REST del mismo `venue/symbol/stream_type` y recupera sobre la ventana exacta de `open_ts/source_id`, filtrando el borde con dedup. Ese claim ya queda promovido a `exact_verified` por la suite dedicada de cortes, duplicados y cursor mismatch.
   - El handoff historico -> live ya tiene contrato explicito:
     - `HandoffSource` emite primero un bootstrap historico por ventana y luego entrega el stream live.
     - Deduplica el solape de borde con la misma identidad fuerte usada por live/storage.

@@ -81,22 +81,23 @@ def test_collect_events_rejects_live_trade_until_exact_recovery_exists():
         )
 
 
-def test_collect_events_rejects_production_live_kline_without_exact_verified_recovery():
+def test_collect_events_accepts_production_live_kline_with_exact_verified_recovery():
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
 
-    with pytest.raises(ValueError, match="kline does not support exact_verified recovery"):
-        pipeline.collect_events(
-            mode="live",
-            cfg=cfg,
-            max_events=10,
-            duration_s=0,
-            logger=mock.Mock(),
-            snapshot_enabled=False,
-            source=StaticSource(events=[_ev(0, 100)]),
-            sink=DummySink(),
-            stream_types=("kline",),
-            production_mode=True,
-        )
+    out = pipeline.collect_events(
+        mode="live",
+        cfg=cfg,
+        max_events=10,
+        duration_s=0,
+        logger=mock.Mock(),
+        snapshot_enabled=False,
+        source=StaticSource(events=[_ev(0, 100)]),
+        sink=DummySink(),
+        stream_types=("kline",),
+        production_mode=True,
+    )
+
+    assert len(out) == 1
 
 
 @pytest.mark.parametrize("feed_type,support", FEED_SUPPORT_MATRIX.items(), ids=sorted(FEED_SUPPORT_MATRIX))

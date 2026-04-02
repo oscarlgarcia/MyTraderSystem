@@ -24,7 +24,30 @@ EXACT_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {
         ),
     ),
 }
-EXACT_VERIFIED_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {}
+EXACT_VERIFIED_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "kline": (
+        (
+            "tests.marketdata.recovery.test_exact_recovery_suite",
+            "test_exact_verified_kline_recovery_handles_controlled_cuts",
+        ),
+        (
+            "tests.marketdata.recovery.test_exact_recovery_suite",
+            "test_exact_verified_kline_recovery_tolerates_duplicates_during_catchup",
+        ),
+        (
+            "tests.marketdata.recovery.test_exact_recovery_suite",
+            "test_exact_verified_kline_recovery_rejects_partial_snapshot_window",
+        ),
+        (
+            "tests.marketdata.recovery.test_exact_recovery_suite",
+            "test_exact_verified_kline_recovery_falls_back_when_cursor_state_is_mismatched",
+        ),
+        (
+            "tests.ingestion.test_exact_recovery_runtime",
+            "test_reconnect_old_resend_is_deduplicated_after_exact_recovery",
+        ),
+    ),
+}
 
 
 def _production_runtime(feed_type: str) -> dict[str, object]:
