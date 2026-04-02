@@ -37,6 +37,7 @@ from .instruments import (
     InstrumentCatalogDrift,
     InstrumentCatalog,
     PersistedInstrumentCatalogSnapshot,
+    active_instrument_catalog,
     detect_instrument_catalog_drift,
     ensure_default_instruments,
     get_default_instrument_catalog,
@@ -48,6 +49,7 @@ from .instruments import (
     instrument_snapshot,
     persist_instrument_catalog_snapshot,
     resolve_instrument,
+    use_instrument_catalog,
 )
 from .recovery import (
     BarRecoveryPolicy,
@@ -122,6 +124,7 @@ __all__ = [
     "InstrumentCatalogDrift",
     "InstrumentCatalog",
     "PersistedInstrumentCatalogSnapshot",
+    "active_instrument_catalog",
     "DEFAULT_INSTRUMENTS",
     "DEFAULT_INSTRUMENT_CATALOG",
     "load_binance_exchange_info_snapshot",
@@ -137,6 +140,7 @@ __all__ = [
     "instrument_metadata",
     "persist_instrument_catalog_snapshot",
     "resolve_instrument",
+    "use_instrument_catalog",
     "FeedSupport",
     "FEED_SUPPORT_MATRIX",
     "feed_support",

@@ -75,13 +75,22 @@ def test_release_gate_paths_flags():
             "--env",
             "prod",
             "--release-gates",
+            "--release-gates-replay-parity-path",
+            "parity.json",
             "--release-gates-benchmark-path",
             "bench.json",
+            "--release-gates-soak-path",
+            "soak.json",
+            "--release-gates-vendor-contracts-path",
+            "vendor.json",
             "--release-gates-live-drill-path",
             "drill.json",
         ]
     )
     assert args.env == "prod"
     assert args.release_gates is True
+    assert args.release_gates_replay_parity_path == "parity.json"
     assert args.release_gates_benchmark_path == "bench.json"
+    assert args.release_gates_soak_path == "soak.json"
+    assert args.release_gates_vendor_contracts_path == "vendor.json"
     assert args.release_gates_live_drill_path == "drill.json"

@@ -38,6 +38,12 @@ def test_failure_injection_release_gate_fails_with_stale_ws_artifact(tmp_path: P
         },
     )
     _write_json(tmp_path / "benchmark.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "slo": {}})
+    _write_json(
+        tmp_path / "parity.json",
+        {"generated_at": NOW.isoformat(), "pass_ok": True, "order_match": True, "manifest_ok": True, "manifest_missing_files": [], "manifest_mismatches": []},
+    )
+    _write_json(tmp_path / "soak.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "max_gaps": 0, "max_gap_irreparable": 0})
+    _write_json(tmp_path / "vendor.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "command": ["pytest"], "returncode": 0})
 
     report = run_release_gates(
         base_dir=tmp_path,
@@ -46,7 +52,10 @@ def test_failure_injection_release_gate_fails_with_stale_ws_artifact(tmp_path: P
         stream_types=("kline",),
         rest_canary_path=tmp_path / "rest.json",
         ws_canary_path=tmp_path / "ws.json",
+        replay_parity_path=tmp_path / "parity.json",
         benchmark_path=tmp_path / "benchmark.json",
+        soak_path=tmp_path / "soak.json",
+        network_contracts_path=tmp_path / "vendor.json",
         live_drill_path=tmp_path / "live-drill.json",
     )
 
@@ -107,3 +116,54 @@ def test_failure_injection_replay_reader_survives_tail_corruption(tmp_path: Path
     assert len(entries) == 1
     quarantine = tmp_path / "errors" / "replay-corruption-dlq.jsonl"
     assert quarantine.exists()
+
+
+def test_failure_injection_release_gate_fails_with_manifest_mismatch(tmp_path: Path):
+    _write_json(
+        tmp_path / "metadata" / "instruments" / "env=dev" / "venue=BINANCE" / "latest.json",
+        {"metadata_snapshot_mode": "runtime", "drift": {"material": False}},
+    )
+    _write_json(tmp_path / "rest.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "diffs": {}, "comparison_reason": "ok"})
+    _write_json(
+        tmp_path / "ws.json",
+        {
+            "report_generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "continuity": {"reconnects": 1, "duplicates": 0, "gaps": 0, "gap_irreparable": 0},
+            "reconnects_observed": 1,
+            "reconnects_target": 1,
+            "comparison_reason": "ok",
+        },
+    )
+    _write_json(tmp_path / "benchmark.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "slo": {}})
+    _write_json(
+        tmp_path / "parity.json",
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": False,
+            "order_match": True,
+            "manifest_ok": False,
+            "manifest_missing_files": [],
+            "manifest_mismatches": ["events.jsonl:sha256"],
+        },
+    )
+    _write_json(tmp_path / "soak.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "max_gaps": 0, "max_gap_irreparable": 0})
+    _write_json(tmp_path / "vendor.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "command": ["pytest"], "returncode": 0})
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("kline",),
+        rest_canary_path=tmp_path / "rest.json",
+        ws_canary_path=tmp_path / "ws.json",
+        replay_parity_path=tmp_path / "parity.json",
+        benchmark_path=tmp_path / "benchmark.json",
+        soak_path=tmp_path / "soak.json",
+        network_contracts_path=tmp_path / "vendor.json",
+        live_drill_path=tmp_path / "live-drill.json",
+    )
+
+    block = next(item for item in report.blocks if item.name == "replay_parity")
+    assert block.status == "fail"
+    assert any("manifest" in reason for reason in block.reasons)

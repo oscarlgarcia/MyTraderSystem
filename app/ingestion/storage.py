@@ -188,6 +188,18 @@ def event_venue_snapshot_version(event: IngestionEvent) -> str | None:
     return event_metadata(event).get("venue_snapshot_version")
 
 
+def event_metadata_snapshot_mode(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("metadata_snapshot_mode")
+
+
+def event_venue_snapshot_path(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("venue_snapshot_path")
+
+
+def event_instrument_catalog_snapshot_json(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("instrument_catalog_snapshot_json")
+
+
 def event_trade_id(event: IngestionEvent) -> str | None:
     if isinstance(event, TradeEvent):
         return event.trade_id
@@ -691,6 +703,10 @@ def _table_schema_metadata(
         (value for value in (event_instrument_snapshot(event) for event in events) if value),
         None,
     )
+    instrument_catalog_snapshot = next(
+        (value for value in (event_instrument_catalog_snapshot_json(event) for event in events) if value),
+        None,
+    )
     metadata_source = next(
         (value for value in (event_metadata_source(event) for event in events) if value),
         None,
@@ -699,16 +715,30 @@ def _table_schema_metadata(
         (value for value in (event_venue_snapshot_version(event) for event in events) if value),
         None,
     )
+    metadata_snapshot_mode = next(
+        (value for value in (event_metadata_snapshot_mode(event) for event in events) if value),
+        None,
+    )
+    venue_snapshot_path = next(
+        (value for value in (event_venue_snapshot_path(event) for event in events) if value),
+        None,
+    )
     if catalog_version:
         metadata[b"instrument_catalog_version"] = catalog_version.encode("utf-8")
         metadata[b"instrument_catalog_snapshot_hash"] = catalog_version.encode("utf-8")
-        metadata[b"instrument_catalog_snapshot"] = instrument_catalog_snapshot_json().encode("utf-8")
+        metadata[b"instrument_catalog_snapshot"] = (
+            instrument_catalog_snapshot or instrument_catalog_snapshot_json()
+        ).encode("utf-8")
     if instrument_snapshot:
         metadata[b"instrument_snapshot"] = instrument_snapshot.encode("utf-8")
     if metadata_source:
         metadata[b"instrument_metadata_source"] = metadata_source.encode("utf-8")
     if venue_snapshot_version:
         metadata[b"venue_snapshot_version"] = venue_snapshot_version.encode("utf-8")
+    if metadata_snapshot_mode:
+        metadata[b"metadata_snapshot_mode"] = metadata_snapshot_mode.encode("utf-8")
+    if venue_snapshot_path:
+        metadata[b"venue_snapshot_path"] = venue_snapshot_path.encode("utf-8")
     return metadata
 
 

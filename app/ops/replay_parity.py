@@ -5,7 +5,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.ingestion.storage import read_parquet
-from app.marketdata.replay import ReplaySource, read_raw_entries
+from app.marketdata.raw_sink import build_raw_manifest
+from app.marketdata.replay import ReplaySource, list_raw_files, read_raw_entries
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,10 @@ class ReplayParityReport:
     normalized_rows: int
     replay_identity_count: int
     normalized_identity_count: int
+    manifest_ok: bool
+    manifest_checked_files: tuple[str, ...]
+    manifest_missing_files: tuple[str, ...]
+    manifest_mismatches: tuple[str, ...]
     order_match: bool
     pass_ok: bool
 
@@ -74,6 +79,30 @@ def _ordered_unique(values: list[tuple[object, ...]]) -> list[tuple[object, ...]
     return out
 
 
+def _validate_raw_manifests(
+    *,
+    raw_base_dir: Path,
+    env: str,
+    symbol: str,
+    stream_type: str,
+) -> tuple[bool, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    checked: list[str] = []
+    missing: list[str] = []
+    mismatches: list[str] = []
+    for raw_path in list_raw_files(Path(raw_base_dir), env, symbol=symbol, stream_types=(stream_type,)):
+        manifest_path = raw_path.with_suffix(".manifest.json")
+        if not manifest_path.exists():
+            missing.append(str(raw_path))
+            continue
+        checked.append(str(raw_path))
+        expected = json.loads(manifest_path.read_text(encoding="utf-8"))
+        observed = build_raw_manifest(raw_path)
+        for key in ("sha256", "line_count", "run_ids", "first_exchange_ts", "last_exchange_ts"):
+            if expected.get(key) != observed.get(key):
+                mismatches.append(f"{raw_path}:{key}")
+    return (not missing and not mismatches, tuple(checked), tuple(missing), tuple(mismatches))
+
+
 def build_replay_parity_report(
     *,
     raw_base_dir: Path,
@@ -82,6 +111,12 @@ def build_replay_parity_report(
     symbol: str,
     stream_type: str,
 ) -> ReplayParityReport:
+    manifest_ok, checked_files, missing_files, mismatches = _validate_raw_manifests(
+        raw_base_dir=Path(raw_base_dir),
+        env=env,
+        symbol=symbol,
+        stream_type=stream_type,
+    )
     raw_entries = read_raw_entries(Path(raw_base_dir), env, symbol=symbol, stream_types=(stream_type,))
     replayed = list(ReplaySource(base_dir=Path(raw_base_dir), env=env, symbol=symbol, stream_types=(stream_type,)).stream())
     normalized_rows = read_parquet(Path(normalized_path)).to_pylist()
@@ -100,8 +135,12 @@ def build_replay_parity_report(
         normalized_rows=len(normalized_rows),
         replay_identity_count=len(replay_identities),
         normalized_identity_count=len(normalized_identities),
+        manifest_ok=manifest_ok,
+        manifest_checked_files=checked_files,
+        manifest_missing_files=missing_files,
+        manifest_mismatches=mismatches,
         order_match=order_match,
-        pass_ok=(order_match and len(replay_identities) == len(normalized_identities)),
+        pass_ok=(manifest_ok and order_match and len(replay_identities) == len(normalized_identities)),
     )
 
 

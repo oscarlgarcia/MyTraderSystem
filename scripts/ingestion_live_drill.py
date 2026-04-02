@@ -40,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--live-cutover-doc-path",
         default="docs/ops/live_cutover.md",
     )
+    parser.add_argument(
+        "--promotion-runbook-path",
+        default="docs/operations/ingestion_promotion_runbook.md",
+    )
     return parser
 
 
@@ -55,6 +59,7 @@ def main() -> int:
         benchmark_path=Path(args.benchmark_path),
         rollback_checklist_path=Path(args.rollback_checklist_path),
         live_cutover_doc_path=Path(args.live_cutover_doc_path),
+        promotion_runbook_path=Path(args.promotion_runbook_path),
     )
     print(render_live_cutover_summary(report))
     return 0 if report.promote_ready and report.rollback_ready else 1

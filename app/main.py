@@ -276,7 +276,10 @@ def run() -> int:
             output_path=args.release_gates_output,
             rest_canary_path=args.release_gates_rest_canary_path,
             ws_canary_path=args.release_gates_ws_canary_path,
+            replay_parity_path=args.release_gates_replay_parity_path,
             benchmark_path=args.release_gates_benchmark_path,
+            soak_path=args.release_gates_soak_path,
+            network_contracts_path=args.release_gates_vendor_contracts_path,
             live_drill_path=args.release_gates_live_drill_path,
         )
         print(render_release_gate_summary(report))

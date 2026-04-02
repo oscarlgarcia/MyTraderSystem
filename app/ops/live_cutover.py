@@ -67,6 +67,7 @@ def run_live_cutover_drill(
     benchmark_path: Path | None = None,
     rollback_checklist_path: Path | None = None,
     live_cutover_doc_path: Path | None = None,
+    promotion_runbook_path: Path | None = None,
 ) -> LiveCutoverDrillReport:
     release_gate_path = Path(release_gate_path or "docs/validation/ingestion_release_gates.json")
     rest_canary_path = Path(rest_canary_path or "docs/validation/ingestion_canary_report.json")
@@ -76,6 +77,9 @@ def run_live_cutover_drill(
         rollback_checklist_path or "docs/operations/ingestion_rollback_checklist.md"
     )
     live_cutover_doc_path = Path(live_cutover_doc_path or "docs/ops/live_cutover.md")
+    promotion_runbook_path = Path(
+        promotion_runbook_path or "docs/operations/ingestion_promotion_runbook.md"
+    )
 
     deadlines = {
         "promote_decision_max_minutes": 15,
@@ -106,6 +110,12 @@ def run_live_cutover_drill(
             details={"path": str(live_cutover_doc_path)},
         ),
         CutoverChecklistItem(
+            name="promotion_runbook_present",
+            required=True,
+            passed=promotion_runbook_path.exists(),
+            details={"path": str(promotion_runbook_path)},
+        ),
+        CutoverChecklistItem(
             name="decision_deadlines_defined",
             required=True,
             passed=all(value > 0 for value in deadlines.values()),
@@ -117,6 +127,7 @@ def run_live_cutover_drill(
     rollback_ready = (
         rollback_checklist_path.exists()
         and live_cutover_doc_path.exists()
+        and promotion_runbook_path.exists()
         and deadlines["rollback_decision_max_minutes"] > 0
     )
     report = LiveCutoverDrillReport(

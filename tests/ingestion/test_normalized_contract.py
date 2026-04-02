@@ -25,6 +25,8 @@ def test_trade_normalized_schema_preserves_raw_lineage_and_provider_ts(tmp_path:
             "raw_run_id": "run-1",
             "raw_ingestion_seq": "1",
             "historical_feed_kind": "aggregate_trade",
+            "metadata_snapshot_mode": "runtime",
+            "instrument_catalog_snapshot_json": "[]",
         },
     )
     writer.add(event)
@@ -99,15 +101,47 @@ def test_normalized_contract_cli_helper_passes_for_trade_partition(tmp_path: Pat
                 "raw_run_id": "run-2",
                 "raw_ingestion_seq": "1",
                 "historical_feed_kind": "aggregate_trade",
+                "metadata_snapshot_mode": "runtime",
+                "instrument_catalog_snapshot_json": "[]",
             },
         )
     )
     writer.flush()
 
     path = normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
-    report = validate_normalized_contract(path)
+    report = validate_normalized_contract(path, mode="strict", required_historical_feed_kind="aggregate_trade")
 
     assert report.pass_ok is True
     assert report.feed_type == "trade"
     assert not report.missing_columns
     assert not report.missing_metadata_keys
+
+
+def test_normalized_contract_compat_mode_warns_for_legacy_missing_lineage(tmp_path: Path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=10, dedup=True)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    writer.add(
+        TradeEvent(
+            symbol="BTCUSDT",
+            exchange_ts=ts,
+            receive_ts=ts,
+            process_ts=ts,
+            venue="BINANCE",
+            source_id="401",
+            trade_id="401",
+            side="sell",
+            price=99.0,
+            size=2.0,
+                metadata={
+                    "historical_feed_kind": "aggregate_trade",
+                    "normalizer_version": "v1",
+                },
+            )
+        )
+    writer.flush()
+
+    path = normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
+    report = validate_normalized_contract(path, mode="compat", required_historical_feed_kind="aggregate_trade")
+
+    assert report.pass_ok is True
+    assert report.warnings

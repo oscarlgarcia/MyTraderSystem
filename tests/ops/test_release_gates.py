@@ -44,10 +44,13 @@ def _write_metadata_snapshot(base_dir: Path, *, env: str, mode: str = "runtime",
     )
 
 
-def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tuple[Path, Path, Path, Path]:
+def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     rest_path = tmp_path / "rest.json"
     ws_path = tmp_path / "ws.json"
     benchmark_path = tmp_path / "benchmark.json"
+    parity_path = tmp_path / "parity.json"
+    soak_path = tmp_path / "soak.json"
+    vendor_contracts_path = tmp_path / "vendor-contracts.json"
     live_drill_path = tmp_path / "live-drill.json"
     rest_generated_at = (NOW - timedelta(days=2)).isoformat() if stale_rest else NOW.isoformat()
     _write_json(
@@ -84,6 +87,35 @@ def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tup
         },
     )
     _write_json(
+        parity_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "order_match": True,
+            "manifest_ok": True,
+            "manifest_missing_files": [],
+            "manifest_mismatches": [],
+        },
+    )
+    _write_json(
+        soak_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "max_gaps": 0,
+            "max_gap_irreparable": 0,
+        },
+    )
+    _write_json(
+        vendor_contracts_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "command": ["python", "-m", "pytest"],
+            "returncode": 0,
+        },
+    )
+    _write_json(
         live_drill_path,
         {
             "generated_at": NOW.isoformat(),
@@ -93,11 +125,11 @@ def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tup
             "overall_status": "PASS",
         },
     )
-    return rest_path, ws_path, benchmark_path, live_drill_path
+    return rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, live_drill_path
 
 
 def test_release_gates_paper_passes_with_clean_artifacts(tmp_path: Path):
-    rest_path, ws_path, benchmark_path, live_drill_path = _write_release_artifacts(tmp_path)
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, live_drill_path = _write_release_artifacts(tmp_path)
     _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
 
     report = run_release_gates(
@@ -108,7 +140,10 @@ def test_release_gates_paper_passes_with_clean_artifacts(tmp_path: Path):
         output_path=tmp_path / "release-gates.json",
         rest_canary_path=rest_path,
         ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
         benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
         live_drill_path=live_drill_path,
     )
 
@@ -117,12 +152,16 @@ def test_release_gates_paper_passes_with_clean_artifacts(tmp_path: Path):
     blocks = {block.name: block for block in report.blocks}
     assert blocks["instrument_metadata"].status == "pass"
     assert blocks["storage_benchmark"].status == "pass"
+    assert blocks["replay_parity"].status == "pass"
+    assert blocks["paper_soak"].status == "pass"
+    assert blocks["vendor_contracts"].status == "pass"
+    assert blocks["observability_contract"].status == "pass"
     assert blocks["live_drill"].status == "pass"
     assert "Release gates: PASS (paper)" in render_release_gate_summary(report)
 
 
 def test_release_gates_fail_when_required_artifact_is_stale(tmp_path: Path):
-    rest_path, ws_path, benchmark_path, live_drill_path = _write_release_artifacts(tmp_path, stale_rest=True)
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, live_drill_path = _write_release_artifacts(tmp_path, stale_rest=True)
     _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
 
     report = run_release_gates(
@@ -132,7 +171,10 @@ def test_release_gates_fail_when_required_artifact_is_stale(tmp_path: Path):
         stream_types=("kline",),
         rest_canary_path=rest_path,
         ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
         benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
         live_drill_path=live_drill_path,
     )
 
@@ -143,7 +185,7 @@ def test_release_gates_fail_when_required_artifact_is_stale(tmp_path: Path):
 
 
 def test_release_gates_live_requires_runtime_metadata_and_live_drill(tmp_path: Path):
-    rest_path, ws_path, benchmark_path, live_drill_path = _write_release_artifacts(tmp_path)
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, live_drill_path = _write_release_artifacts(tmp_path)
     _write_shadow_comparison(tmp_path / "shadow" / "env=dev" / "comparisons.jsonl", significant=False)
     _write_metadata_snapshot(tmp_path, env="dev", mode="fallback")
 
@@ -154,7 +196,10 @@ def test_release_gates_live_requires_runtime_metadata_and_live_drill(tmp_path: P
         stream_types=("kline",),
         rest_canary_path=rest_path,
         ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
         benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
         live_drill_path=live_drill_path,
     )
 

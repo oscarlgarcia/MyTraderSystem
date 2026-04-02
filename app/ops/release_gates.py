@@ -9,6 +9,7 @@ from typing import Literal
 from app.config import DEFAULT_INGEST_STREAM_TYPES
 from app.ingestion.storage_health import collect_storage_health, storage_health_payload
 from app.marketdata.support_matrix import FeedSupport, feed_support, normalize_feed_types
+from app.ops.observability_contract import build_observability_contract_report
 
 
 GateStatus = Literal["pass", "fail", "warn"]
@@ -65,13 +66,17 @@ def run_release_gates(
     output_path: Path | None = None,
     rest_canary_path: Path | None = None,
     ws_canary_path: Path | None = None,
+    replay_parity_path: Path | None = None,
     benchmark_path: Path | None = None,
+    soak_path: Path | None = None,
+    network_contracts_path: Path | None = None,
     live_drill_path: Path | None = None,
 ) -> ReleaseGateReport:
     normalized_stream_types = normalize_feed_types(stream_types)
     blocks = (
         _support_matrix_block(normalized_stream_types, target=target),
         _exact_recovery_block(normalized_stream_types, target=target),
+        _live_scope_block(normalized_stream_types, target=target),
         _metadata_snapshot_block(base_dir=Path(base_dir), env=env, required=True, target=target),
         _canary_block(
             name="canary_rest",
@@ -98,6 +103,33 @@ def run_release_gates(
             bool_paths=(("pass_ok",),),
             max_age=timedelta(days=7),
         ),
+        _canary_block(
+            name="replay_parity",
+            path=Path(replay_parity_path or "docs/validation/ingestion_replay_parity.json"),
+            required=True,
+            expected_keys=("pass_ok", "order_match", "manifest_ok"),
+            bool_paths=(("pass_ok",), ("order_match",), ("manifest_ok",)),
+            extra_checks=_validate_replay_parity_payload,
+            max_age=timedelta(days=7),
+        ),
+        _canary_block(
+            name="paper_soak",
+            path=Path(soak_path or "docs/validation/ingestion_soak_evidence.json"),
+            required=(target in {"paper", "live"}),
+            expected_keys=("pass_ok", "max_gaps", "max_gap_irreparable"),
+            bool_paths=(("pass_ok",),),
+            extra_checks=_validate_soak_payload,
+            max_age=timedelta(hours=24),
+        ),
+        _canary_block(
+            name="vendor_contracts",
+            path=Path(network_contracts_path or "docs/validation/ingestion_vendor_contracts.json"),
+            required=(target in {"paper", "live"}),
+            expected_keys=("pass_ok", "command", "returncode"),
+            bool_paths=(("pass_ok",),),
+            max_age=timedelta(hours=24),
+        ),
+        _observability_contract_block(required=(target in {"paper", "live"})),
         _canary_block(
             name="live_drill",
             path=Path(live_drill_path or "docs/validation/ingestion_live_drill_report.json"),
@@ -173,6 +205,27 @@ def _exact_recovery_block(stream_types: tuple[str, ...], *, target: ReleaseTarge
         required=required,
         reasons=tuple(reasons or ["exact recovery capability aligned"]),
         details=details,
+    )
+
+
+def _live_scope_block(stream_types: tuple[str, ...], *, target: ReleaseTarget) -> GateBlockReport:
+    if target != "live":
+        return GateBlockReport(
+            name="live_scope",
+            status="pass",
+            required=False,
+            reasons=("live scope not enforced for non-live targets",),
+            details={"allowed_live_stream_types": ["kline"], "requested_stream_types": list(stream_types)},
+        )
+    disallowed = [stream_type for stream_type in stream_types if stream_type != "kline"]
+    status: GateStatus = "pass" if not disallowed else "fail"
+    reasons = ["live scope limited to kline feeds"] if not disallowed else [f"live scope forbids stream types: {', '.join(disallowed)}"]
+    return GateBlockReport(
+        name="live_scope",
+        status=status,
+        required=True,
+        reasons=tuple(reasons),
+        details={"allowed_live_stream_types": ["kline"], "requested_stream_types": list(stream_types)},
     )
 
 
@@ -253,6 +306,24 @@ def _validate_live_drill_payload(payload: dict[str, object]) -> list[str]:
     return reasons
 
 
+def _validate_replay_parity_payload(payload: dict[str, object]) -> list[str]:
+    reasons: list[str] = []
+    if payload.get("manifest_missing_files"):
+        reasons.append("raw manifest files missing")
+    if payload.get("manifest_mismatches"):
+        reasons.append("raw manifest mismatches detected")
+    return reasons
+
+
+def _validate_soak_payload(payload: dict[str, object]) -> list[str]:
+    reasons: list[str] = []
+    if int(payload.get("max_gap_irreparable", 0) or 0) > 0:
+        reasons.append("gap_irreparable observed during soak")
+    if int(payload.get("max_gaps", 0) or 0) > 0:
+        reasons.append("gaps observed during soak")
+    return reasons
+
+
 def _artifact_age(path: Path, payload: dict[str, object]) -> timedelta | None:
     candidates = [
         payload.get("generated_at"),
@@ -309,6 +380,7 @@ def _metadata_snapshot_block(*, base_dir: Path, env: str, required: bool, target
             "metadata_snapshot_mode": mode,
             "venue_snapshot_path": payload.get("venue_snapshot_path"),
             "venue_snapshot_version": payload.get("venue_snapshot_version"),
+            "venue_snapshot_sha256": payload.get("venue_snapshot_sha256"),
             "fallback_reason": payload.get("fallback_reason"),
             "drift": drift_payload,
         },
@@ -367,6 +439,22 @@ def _storage_health_block(*, base_dir: Path, env: str, required: bool) -> GateBl
         required=required,
         reasons=tuple(reasons or ["storage health clean"]),
         details=storage_health_payload(report),
+    )
+
+
+def _observability_contract_block(*, required: bool) -> GateBlockReport:
+    report = build_observability_contract_report()
+    reasons = ["observability contract defined"] if report.pass_ok else ["missing required alert definitions"]
+    return GateBlockReport(
+        name="observability_contract",
+        status="pass" if report.pass_ok else ("fail" if required else "warn"),
+        required=required,
+        reasons=tuple(reasons),
+        details={
+            "required_metrics": list(report.required_metrics),
+            "required_alerts": list(report.required_alerts),
+            "missing_alerts": list(report.missing_alerts),
+        },
     )
 
 

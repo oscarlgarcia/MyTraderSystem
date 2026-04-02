@@ -34,6 +34,11 @@ def main() -> int:
     print(f"- normalized_rows: {report.normalized_rows}")
     print(f"- replay_identity_count: {report.replay_identity_count}")
     print(f"- normalized_identity_count: {report.normalized_identity_count}")
+    print(f"- manifest_ok: {report.manifest_ok}")
+    if report.manifest_missing_files:
+        print(f"- manifest_missing_files: {list(report.manifest_missing_files)}")
+    if report.manifest_mismatches:
+        print(f"- manifest_mismatches: {list(report.manifest_mismatches)}")
     print(f"- order_match: {report.order_match}")
     return 0 if report.pass_ok else 1
 

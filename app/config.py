@@ -147,9 +147,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ruta al artifact del canary WS live.",
     )
     parser.add_argument(
+        "--release-gates-replay-parity-path",
+        default="docs/validation/ingestion_replay_parity.json",
+        help="Ruta al artifact de replay parity raw -> replay -> normalized.",
+    )
+    parser.add_argument(
         "--release-gates-benchmark-path",
         default="docs/validation/ingestion_storage_benchmark.json",
         help="Ruta al artifact del benchmark de storage segmentado.",
+    )
+    parser.add_argument(
+        "--release-gates-soak-path",
+        default="docs/validation/ingestion_soak_evidence.json",
+        help="Ruta al artifact del soak test operativo.",
+    )
+    parser.add_argument(
+        "--release-gates-vendor-contracts-path",
+        default="docs/validation/ingestion_vendor_contracts.json",
+        help="Ruta al artifact de contract tests contra el vendor.",
     )
     parser.add_argument(
         "--release-gates-live-drill-path",

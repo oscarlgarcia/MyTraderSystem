@@ -51,7 +51,10 @@ def test_run_release_gates_exits_before_pipeline(monkeypatch, tmp_path: Path):
         release_gates_output=str(tmp_path / "release-gates.json"),
         release_gates_rest_canary_path=str(tmp_path / "rest.json"),
         release_gates_ws_canary_path=str(tmp_path / "ws.json"),
+        release_gates_replay_parity_path=str(tmp_path / "replay-parity.json"),
         release_gates_benchmark_path=str(tmp_path / "benchmark.json"),
+        release_gates_soak_path=str(tmp_path / "soak.json"),
+        release_gates_vendor_contracts_path=str(tmp_path / "vendor-contracts.json"),
         release_gates_live_drill_path=str(tmp_path / "live-drill.json"),
         ingest_stream_types=("kline",),
     )

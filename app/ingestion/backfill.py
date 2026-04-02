@@ -22,7 +22,7 @@ from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
 from app.marketdata.anomaly_checks import detect_price_jump
-from app.marketdata.instruments import ensure_default_instruments, persist_runtime_instrument_catalog_snapshot
+from app.marketdata.instruments import persist_runtime_instrument_catalog_snapshot, use_instrument_catalog
 from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
 from app.observability.alerts import emit_operational_alert
@@ -385,12 +385,25 @@ def _stamp_event_with_raw_lineage(event: IngestionEvent, record: RawRecord) -> N
         metadata.setdefault("historical_feed_kind", HISTORICAL_TRADE_FEED_KIND)
 
 
+def _stamp_event_with_catalog_state(event: IngestionEvent, catalog_state) -> None:
+    metadata = getattr(event, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    venue = str(getattr(event, "venue", "BINANCE"))
+    metadata.update(
+        {
+            key: value
+            for key, value in catalog_state.instrument_metadata(event.symbol, venue=venue).items()
+            if key not in metadata
+        }
+    )
+
+
 def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_sink: Optional[RawSink] = None) -> int:
     args = parse_args(argv)
     assert_historical_backfill_support(args.feed_type)
     cfg = load_config(args.env)
     symbol = normalize_symbol(args.symbol)
-    ensure_default_instruments([symbol], venue="BINANCE")
     start_ms = to_ms(args.start)
     end_ms = to_ms(args.end)
     interval_ms = _interval_to_ms(args.interval) if args.feed_type == "kline" else None
@@ -477,56 +490,59 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
 
     receive_ts = dt.datetime.now(dt.timezone.utc)
     process_ts = receive_ts
-    if args.feed_type == "kline":
-        assert interval_ms is not None
-        raw_records = [
-            raw_record_from_kline_row(
-                symbol,
-                row,
-                interval=args.interval,
-                receive_ts=receive_ts,
-                process_ts=process_ts,
-                trace_id=trace_id,
-            )
-            for row in rows
-        ]
-        events: List[IngestionEvent] = [
-            normalize_kline_row(
-                symbol,
-                row,
-                interval=args.interval,
-                receive_ts=receive_ts,
-                process_ts=process_ts,
-            )
-            for row in rows
-        ]
-        expected: int | None = ((end_ms - start_ms) // interval_ms) + 1
-        gaps: int | None = _count_bar_gaps([event for event in events if isinstance(event, BarEvent)], interval_ms)
-    else:
-        raw_records = [
-            raw_record_from_trade_row(
-                symbol,
-                row,
-                receive_ts=receive_ts,
-                process_ts=process_ts,
-                trace_id=trace_id,
-            )
-            for row in rows
-        ]
-        events = [
-            normalize_trade_row(
-                symbol,
-                row,
-                receive_ts=receive_ts,
-                process_ts=process_ts,
-            )
-            for row in rows
-        ]
-        expected = len(events)
-        gaps = None
+    with use_instrument_catalog(catalog_state.catalog):
+        if args.feed_type == "kline":
+            assert interval_ms is not None
+            raw_records = [
+                raw_record_from_kline_row(
+                    symbol,
+                    row,
+                    interval=args.interval,
+                    receive_ts=receive_ts,
+                    process_ts=process_ts,
+                    trace_id=trace_id,
+                )
+                for row in rows
+            ]
+            events = [
+                normalize_kline_row(
+                    symbol,
+                    row,
+                    interval=args.interval,
+                    receive_ts=receive_ts,
+                    process_ts=process_ts,
+                )
+                for row in rows
+            ]
+            expected = ((end_ms - start_ms) // interval_ms) + 1
+            gaps = _count_bar_gaps([event for event in events if isinstance(event, BarEvent)], interval_ms)
+        else:
+            raw_records = [
+                raw_record_from_trade_row(
+                    symbol,
+                    row,
+                    receive_ts=receive_ts,
+                    process_ts=process_ts,
+                    trace_id=trace_id,
+                )
+                for row in rows
+            ]
+            events = [
+                normalize_trade_row(
+                    symbol,
+                    row,
+                    receive_ts=receive_ts,
+                    process_ts=process_ts,
+                )
+                for row in rows
+            ]
+            expected = len(events)
+            gaps = None
 
     events.sort(key=_event_sort_key)
     raw_records.sort(key=_raw_sort_key)
+    for event in events:
+        _stamp_event_with_catalog_state(event, catalog_state)
 
     if not args.dry_run:
         raw_sink_impl = raw_sink or JsonlRawSink(base_dir=cfg.data_dir / "raw", env=cfg.env)

@@ -32,7 +32,11 @@ from app.marketdata.anomaly_checks import detect_price_jump, stream_price_key
 from app.marketdata.connectors.binance import BINANCE_FEED_NORMALIZERS, normalize_binance_event, snapshot_payload_from_row
 from app.marketdata.errors import SchemaDriftError
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
-from app.marketdata.instruments import ensure_default_instruments, persist_runtime_instrument_catalog_snapshot
+from app.marketdata.instruments import (
+    PersistedInstrumentCatalogSnapshot,
+    persist_runtime_instrument_catalog_snapshot,
+    use_instrument_catalog,
+)
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
 from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.validators import validate_ingestion_event
@@ -262,12 +266,12 @@ class BinanceSource:
     snapshot_breaker: CircuitBreaker | None = None
     stats: SourceStats = field(default_factory=SourceStats)
     last_prices: dict[str, float] = field(default_factory=dict)
+    catalog_state: PersistedInstrumentCatalogSnapshot | None = None
 
     def __post_init__(self) -> None:
-        ensure_default_instruments(self.cfg.symbols, venue="BINANCE")
         logger = logging.getLogger("ingest.source")
         trace_id = get_trace_id() or f"binance-source-{int(time.time())}"
-        catalog_state = persist_runtime_instrument_catalog_snapshot(
+        self.catalog_state = persist_runtime_instrument_catalog_snapshot(
             base_dir=Path(self.cfg.data_dir),
             env=self.cfg.env,
             venue="BINANCE",
@@ -281,13 +285,13 @@ class BinanceSource:
                 "trace_id": trace_id,
                 "env": self.cfg.env,
                 "venue": "BINANCE",
-                "instrument_catalog_version": catalog_state.instrument_catalog_version,
-                "instrument_catalog_snapshot_path": str(catalog_state.path),
-                "metadata_snapshot_mode": catalog_state.metadata_snapshot_mode,
-                "venue_snapshot_path": str(catalog_state.venue_snapshot_path) if catalog_state.venue_snapshot_path else None,
+                "instrument_catalog_version": self.catalog_state.instrument_catalog_version,
+                "instrument_catalog_snapshot_path": str(self.catalog_state.path),
+                "metadata_snapshot_mode": self.catalog_state.metadata_snapshot_mode,
+                "venue_snapshot_path": str(self.catalog_state.venue_snapshot_path) if self.catalog_state.venue_snapshot_path else None,
             },
         )
-        if catalog_state.drift is not None and catalog_state.drift.has_drift:
+        if self.catalog_state.drift is not None and self.catalog_state.drift.has_drift:
             emit_operational_alert(
                 logger,
                 alert_type="provider_metadata_drift",
@@ -296,18 +300,18 @@ class BinanceSource:
                     "trace_id": trace_id,
                     "env": self.cfg.env,
                     "venue": "BINANCE",
-                    "drift_mode": "material" if catalog_state.drift.material else "informational",
-                    "drift_added_symbols": list(catalog_state.drift.added_symbols),
-                    "drift_removed_symbols": list(catalog_state.drift.removed_symbols),
-                    "drift_changed_symbols": list(catalog_state.drift.changed_symbols),
+                    "drift_mode": "material" if self.catalog_state.drift.material else "informational",
+                    "drift_added_symbols": list(self.catalog_state.drift.added_symbols),
+                    "drift_removed_symbols": list(self.catalog_state.drift.removed_symbols),
+                    "drift_changed_symbols": list(self.catalog_state.drift.changed_symbols),
                     "drift_changed_fields_by_symbol": {
-                        symbol: list(fields) for symbol, fields in catalog_state.drift.changed_fields_by_symbol.items()
+                        symbol: list(fields) for symbol, fields in self.catalog_state.drift.changed_fields_by_symbol.items()
                     },
-                    "instrument_catalog_version": catalog_state.instrument_catalog_version,
-                    "instrument_catalog_snapshot_path": str(catalog_state.path),
-                    "metadata_snapshot_mode": catalog_state.metadata_snapshot_mode,
-                    "venue_snapshot_path": str(catalog_state.venue_snapshot_path) if catalog_state.venue_snapshot_path else None,
-                    "fallback_reason": catalog_state.fallback_reason,
+                    "instrument_catalog_version": self.catalog_state.instrument_catalog_version,
+                    "instrument_catalog_snapshot_path": str(self.catalog_state.path),
+                    "metadata_snapshot_mode": self.catalog_state.metadata_snapshot_mode,
+                    "venue_snapshot_path": str(self.catalog_state.venue_snapshot_path) if self.catalog_state.venue_snapshot_path else None,
+                    "fallback_reason": self.catalog_state.fallback_reason,
                 },
             )
         if isinstance(self.error_sink, NullErrorSink):
@@ -326,6 +330,21 @@ class BinanceSource:
         for symbol in self.cfg.symbols:
             for stream_type in self.stream_types:
                 _ensure_stream_metric(self.stats, venue="BINANCE", symbol=symbol, stream_type=stream_type)
+
+    def _stamp_catalog_metadata(self, event: IngestionEvent) -> None:
+        if self.catalog_state is None:
+            return
+        metadata = getattr(event, "metadata", None)
+        if not isinstance(metadata, dict):
+            return
+        venue = str(getattr(event, "venue", "BINANCE"))
+        metadata.update(
+            {
+                key: value
+                for key, value in self.catalog_state.instrument_metadata(event.symbol, venue=venue).items()
+                if key not in metadata
+            }
+        )
 
     def _write_raw_record(
         self,
@@ -657,12 +676,14 @@ class BinanceSource:
                         # Exact recovery for live klines is only defendable against
                         # closed candles; Binance WS emits in-progress updates too.
                         continue
-                    event = normalize_binance_event(
-                        event_type,
-                        data,
-                        receive_ts=receive_ts,
-                        process_ts=None,
-                    )
+                    with use_instrument_catalog(self.catalog_state.catalog if self.catalog_state is not None else None):
+                        event = normalize_binance_event(
+                            event_type,
+                            data,
+                            receive_ts=receive_ts,
+                            process_ts=None,
+                        )
+                    self._stamp_catalog_metadata(event)
                     validate_ingestion_event(event)
                     metric = _ensure_stream_metric(
                         self.stats,
@@ -783,12 +804,14 @@ class BinanceSource:
                         self.stats.source_events_in += 1
                         payload = snapshot_payload_from_row(stream_type, symbol, row, interval=str(params["interval"]))
                         try:
-                            event = normalize_binance_event(
-                                stream_type,
-                                payload,
-                                receive_ts=receive_ts,
-                                process_ts=None,
-                            )
+                            with use_instrument_catalog(self.catalog_state.catalog if self.catalog_state is not None else None):
+                                event = normalize_binance_event(
+                                    stream_type,
+                                    payload,
+                                    receive_ts=receive_ts,
+                                    process_ts=None,
+                                )
+                            self._stamp_catalog_metadata(event)
                             validate_ingestion_event(event)
                             metric = _ensure_stream_metric(self.stats, venue=getattr(event, "venue", "BINANCE"), symbol=event.symbol, stream_type=stream_type)
                             metric["messages_in_total"] = int(metric["messages_in_total"]) + 1

@@ -7,11 +7,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
 
 from app.common.dto import normalize_symbol
 from app.marketdata.instrument_loader import (
@@ -228,7 +230,34 @@ class PersistedInstrumentCatalogSnapshot:
     metadata_snapshot_mode: str = "bundled"
     venue_snapshot_path: Path | None = None
     venue_snapshot_version: str | None = None
+    venue_snapshot_sha256: str | None = None
     fallback_reason: str | None = None
+    catalog: InstrumentCatalog | None = None
+
+    def instrument_metadata(self, symbol: str, *, venue: str = "BINANCE") -> dict[str, str]:
+        resolved_catalog = self.catalog or active_instrument_catalog()
+        metadata = instrument_metadata(symbol, venue=venue, catalog=resolved_catalog)
+        metadata["metadata_snapshot_mode"] = self.metadata_snapshot_mode
+        metadata["instrument_catalog_snapshot_json"] = json.dumps(
+            self.instrument_catalog_snapshot,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if self.venue_snapshot_path is not None:
+            metadata["venue_snapshot_path"] = str(self.venue_snapshot_path)
+        if self.venue_snapshot_version is not None:
+            metadata["venue_snapshot_version"] = self.venue_snapshot_version
+        if self.venue_snapshot_sha256 is not None:
+            metadata["venue_snapshot_sha256"] = self.venue_snapshot_sha256
+        if self.fallback_reason not in (None, ""):
+            metadata["fallback_reason"] = str(self.fallback_reason)
+        return metadata
+
+
+_ACTIVE_INSTRUMENT_CATALOG: ContextVar[InstrumentCatalog | None] = ContextVar(
+    "ACTIVE_INSTRUMENT_CATALOG",
+    default=None,
+)
 
 
 def _snapshot_key(entry: dict[str, str | int]) -> tuple[str, str]:
@@ -244,8 +273,22 @@ def _sanitize_run_label(value: str) -> str:
     return normalized or "catalog"
 
 
+def active_instrument_catalog(*, fallback: InstrumentCatalog | None = None) -> InstrumentCatalog:
+    return fallback or _ACTIVE_INSTRUMENT_CATALOG.get() or DEFAULT_INSTRUMENT_CATALOG
+
+
+@contextmanager
+def use_instrument_catalog(catalog: InstrumentCatalog | None) -> Iterator[InstrumentCatalog]:
+    resolved_catalog = active_instrument_catalog(fallback=catalog)
+    token = _ACTIVE_INSTRUMENT_CATALOG.set(resolved_catalog)
+    try:
+        yield resolved_catalog
+    finally:
+        _ACTIVE_INSTRUMENT_CATALOG.reset(token)
+
+
 def instrument_catalog_snapshot(*, catalog: InstrumentCatalog | None = None) -> tuple[dict[str, str | int], ...]:
-    return (catalog or DEFAULT_INSTRUMENT_CATALOG).snapshot()
+    return active_instrument_catalog(fallback=catalog).snapshot()
 
 
 def instrument_catalog_snapshot_json(*, catalog: InstrumentCatalog | None = None) -> str:
@@ -306,6 +349,12 @@ def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
     tmp_path.replace(path)
 
 
+def _sha256_for_path(path: Path | None) -> str | None:
+    if path is None or not Path(path).exists():
+        return None
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def _catalog_from_records(records: Iterable[InstrumentRecord]) -> InstrumentCatalog:
     catalog = InstrumentCatalog()
     for record in records:
@@ -325,7 +374,7 @@ def persist_instrument_catalog_snapshot(
     venue_snapshot_version: str | None = None,
     fallback_reason: str | None = None,
 ) -> PersistedInstrumentCatalogSnapshot:
-    resolved_catalog = catalog or DEFAULT_INSTRUMENT_CATALOG
+    resolved_catalog = active_instrument_catalog(fallback=catalog)
     snapshot = resolved_catalog.snapshot()
     version = resolved_catalog.version()
     persisted_at = datetime.now(timezone.utc).isoformat()
@@ -349,6 +398,7 @@ def persist_instrument_catalog_snapshot(
         "metadata_snapshot_mode": metadata_snapshot_mode,
         "venue_snapshot_path": str(venue_snapshot_path) if venue_snapshot_path is not None else None,
         "venue_snapshot_version": venue_snapshot_version,
+        "venue_snapshot_sha256": _sha256_for_path(venue_snapshot_path),
         "fallback_reason": fallback_reason,
         "drift": None
         if drift is None
@@ -378,7 +428,9 @@ def persist_instrument_catalog_snapshot(
         metadata_snapshot_mode=metadata_snapshot_mode,
         venue_snapshot_path=venue_snapshot_path,
         venue_snapshot_version=venue_snapshot_version,
+        venue_snapshot_sha256=_sha256_for_path(venue_snapshot_path),
         fallback_reason=fallback_reason,
+        catalog=resolved_catalog,
     )
 
 
@@ -414,8 +466,6 @@ def persist_runtime_instrument_catalog_snapshot(
             missing = sorted(requested - resolved)
             if missing:
                 raise KeyError(f"missing authoritative Binance instrument metadata for symbols: {missing}")
-        for record in records:
-            DEFAULT_INSTRUMENT_CATALOG.register_authoritative_record(record)
         catalog = _catalog_from_records(records)
         venue_snapshot_version = records[0].venue_snapshot_version if records else catalog.version()
         return persist_instrument_catalog_snapshot(
@@ -479,19 +529,19 @@ def ensure_default_instruments(symbols: Iterable[str], *, venue: str = "BINANCE"
 
 
 def resolve_instrument(symbol: str, *, venue: str = "BINANCE", catalog: InstrumentCatalog | None = None) -> Instrument:
-    return (catalog or DEFAULT_INSTRUMENT_CATALOG).resolve(venue, symbol)
+    return active_instrument_catalog(fallback=catalog).resolve(venue, symbol)
 
 
 def instrument_catalog_version(*, catalog: InstrumentCatalog | None = None) -> str:
-    return (catalog or DEFAULT_INSTRUMENT_CATALOG).version()
+    return active_instrument_catalog(fallback=catalog).version()
 
 
 def instrument_snapshot(symbol: str, *, venue: str = "BINANCE", catalog: InstrumentCatalog | None = None) -> dict[str, str | int]:
-    return (catalog or DEFAULT_INSTRUMENT_CATALOG).instrument_snapshot(venue, symbol)
+    return active_instrument_catalog(fallback=catalog).instrument_snapshot(venue, symbol)
 
 
 def instrument_metadata(symbol: str, *, venue: str = "BINANCE", catalog: InstrumentCatalog | None = None) -> dict[str, str]:
-    resolved_catalog = catalog or DEFAULT_INSTRUMENT_CATALOG
+    resolved_catalog = active_instrument_catalog(fallback=catalog)
     snapshot = instrument_snapshot(symbol, venue=venue, catalog=resolved_catalog)
     metadata = resolve_instrument(symbol, venue=venue, catalog=resolved_catalog).as_metadata()
     metadata["instrument_catalog_version"] = resolved_catalog.version()

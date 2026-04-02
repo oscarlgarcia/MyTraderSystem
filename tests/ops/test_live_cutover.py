@@ -21,6 +21,7 @@ def test_live_cutover_drill_writes_evidence_and_completed_checklist(tmp_path: Pa
     benchmark_path = tmp_path / "benchmark.json"
     rollback_path = tmp_path / "rollback.md"
     live_cutover_doc_path = tmp_path / "live_cutover.md"
+    promotion_runbook_path = tmp_path / "promotion_runbook.md"
 
     _write_json(release_gate_path, {"overall_status": "PASS", "pass_ok": True})
     _write_json(rest_canary_path, {"pass_ok": True, "comparison_reason": "semantic_match"})
@@ -28,6 +29,7 @@ def test_live_cutover_drill_writes_evidence_and_completed_checklist(tmp_path: Pa
     _write_json(benchmark_path, {"pass_ok": True, "slo": {"min_rows_per_second": 1.0}})
     rollback_path.write_text("# rollback\n", encoding="utf-8")
     live_cutover_doc_path.write_text("# cutover\n", encoding="utf-8")
+    promotion_runbook_path.write_text("# promotion\n", encoding="utf-8")
 
     report = run_live_cutover_drill(
         base_dir=tmp_path,
@@ -39,6 +41,7 @@ def test_live_cutover_drill_writes_evidence_and_completed_checklist(tmp_path: Pa
         benchmark_path=benchmark_path,
         rollback_checklist_path=rollback_path,
         live_cutover_doc_path=live_cutover_doc_path,
+        promotion_runbook_path=promotion_runbook_path,
     )
 
     assert report.drill_executed is True
@@ -57,6 +60,7 @@ def test_live_cutover_drill_fails_when_required_artifact_is_red(tmp_path: Path):
     benchmark_path = tmp_path / "benchmark.json"
     rollback_path = tmp_path / "rollback.md"
     live_cutover_doc_path = tmp_path / "live_cutover.md"
+    promotion_runbook_path = tmp_path / "promotion_runbook.md"
 
     _write_json(release_gate_path, {"overall_status": "FAIL", "pass_ok": False})
     _write_json(rest_canary_path, {"pass_ok": True, "comparison_reason": "semantic_match"})
@@ -64,6 +68,7 @@ def test_live_cutover_drill_fails_when_required_artifact_is_red(tmp_path: Path):
     _write_json(benchmark_path, {"pass_ok": True, "slo": {"min_rows_per_second": 1.0}})
     rollback_path.write_text("# rollback\n", encoding="utf-8")
     live_cutover_doc_path.write_text("# cutover\n", encoding="utf-8")
+    promotion_runbook_path.write_text("# promotion\n", encoding="utf-8")
 
     report = run_live_cutover_drill(
         base_dir=tmp_path,
@@ -74,6 +79,7 @@ def test_live_cutover_drill_fails_when_required_artifact_is_red(tmp_path: Path):
         benchmark_path=benchmark_path,
         rollback_checklist_path=rollback_path,
         live_cutover_doc_path=live_cutover_doc_path,
+        promotion_runbook_path=promotion_runbook_path,
     )
 
     assert report.drill_executed is True
@@ -94,3 +100,4 @@ def test_live_cutover_script_help_runs():
     assert result.returncode == 0
     assert "--release-gates-path" in result.stdout
     assert "--live-cutover-doc-path" in result.stdout
+    assert "--promotion-runbook-path" in result.stdout
