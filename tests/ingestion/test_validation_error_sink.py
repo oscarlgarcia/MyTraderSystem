@@ -5,6 +5,7 @@ from unittest import mock
 from app.ingestion import pipeline
 from app.ingestion.sinks import ErrorSink
 from app.ingestion.sources import BinanceSource
+from app.marketdata.errors import SchemaDriftError
 from app.observability.logger import get_logger
 
 
@@ -207,6 +208,32 @@ def test_unknown_event_type_does_not_kill_stream():
     assert len(events) == 1
     assert len(error_sink.records) == 1
     assert error_sink.records[0][1].category == "parse"
+
+
+def test_schema_drift_payload_goes_to_quarantine_sink_context():
+    cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+    error_sink = RecordingErrorSink()
+    source = BinanceSource(
+        cfg,
+        ws_stream=lambda *_args, **_kwargs: iter(
+            [
+                _raw_message({"s": "BTCUSDT", "E": 1710000000000, "p": "100", "q": "1", "unexpected": {"x": 1}}),
+                _raw_message({"s": "BTCUSDT", "E": 1710000000000, "p": "100", "q": "1", "t": 9}),
+            ]
+        ),
+        error_sink=error_sink,
+    )
+    sink = RecordingSink()
+
+    events = pipeline.collect_events(mode="live", cfg=cfg, duration_s=0, source=source, sink=sink)
+
+    assert len(events) == 1
+    assert len(error_sink.records) == 1
+    _raw, error, context = error_sink.records[0]
+    assert isinstance(error, SchemaDriftError)
+    assert context["stage"] == "stream"
+    assert context["quarantine_reason"] == "schema_drift"
+    assert "schema-drift-quarantine.jsonl" in context["quarantine_path"]
 
 
 def test_error_sink_failure_is_contained():

@@ -4,10 +4,14 @@ Binance feed-specific normalizers and payload helpers.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.common.dto import MarketEvent, normalize_symbol
+from app.marketdata.errors import SchemaDriftError
 from app.marketdata.instruments import instrument_metadata
 from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
 from app.marketdata.normalization import stamp_normalizer_version
@@ -33,6 +37,146 @@ def _quote_volume_from_snapshot_row(row: list[Any]) -> str:
     if len(row) > 7 and row[7] not in ("", None):
         return str(row[7])
     return str(row[5])
+
+
+def _schema_node_kind(value: Any) -> str:
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, str):
+        return "str"
+    return type(value).__name__.lower()
+
+
+def _flatten_payload_shape(payload: Any, *, prefix: str = "") -> dict[str, str]:
+    shape: dict[str, str] = {}
+    if isinstance(payload, dict):
+        if prefix:
+            shape[prefix] = "object"
+        for key, value in sorted(payload.items()):
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            shape.update(_flatten_payload_shape(value, prefix=child_prefix))
+        return shape
+    if isinstance(payload, list):
+        shape[prefix] = "array"
+        return shape
+    shape[prefix] = _schema_node_kind(payload)
+    return shape
+
+
+def _shape_hash(shape: dict[str, str]) -> str:
+    canonical = json.dumps(sorted(shape.items()), separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass(frozen=True, slots=True)
+class _SchemaSpec:
+    event_type: str
+    required_paths: dict[str, str]
+    optional_paths: dict[str, str]
+
+    @property
+    def allowed_paths(self) -> dict[str, str]:
+        return {
+            **self.required_paths,
+            **self.optional_paths,
+        }
+
+    @property
+    def expected_shape_hash(self) -> str:
+        return _shape_hash(self.allowed_paths)
+
+
+BINANCE_SCHEMA_SPECS: dict[str, _SchemaSpec] = {
+    "trade": _SchemaSpec(
+        event_type="trade",
+        required_paths={
+            "E": "int",
+            "p": "str",
+            "q": "str",
+            "s": "str",
+        },
+        optional_paths={
+            "a": "int",
+            "b": "int",
+            "e": "str",
+            "m": "bool",
+            "M": "bool",
+            "t": "int",
+            "T": "int",
+        },
+    ),
+    "kline": _SchemaSpec(
+        event_type="kline",
+        required_paths={
+            "E": "int",
+            "k": "object",
+            "k.T": "int",
+            "k.c": "str",
+            "k.h": "str",
+            "k.l": "str",
+            "k.o": "str",
+            "k.q": "str",
+            "k.t": "int",
+            "s": "str",
+        },
+        optional_paths={
+            "e": "str",
+            "k.B": "str",
+            "k.f": "int",
+            "k.i": "str",
+            "k.L": "int",
+            "k.n": "int",
+            "k.Q": "str",
+            "k.s": "str",
+            "k.V": "str",
+            "k.v": "str",
+            "k.x": "bool",
+        },
+    ),
+}
+
+
+def assert_binance_payload_schema(event_type: str, payload: dict[str, Any]) -> None:
+    spec = BINANCE_SCHEMA_SPECS.get(event_type)
+    if spec is None:
+        return
+    actual_shape = _flatten_payload_shape(payload)
+    allowed_paths = spec.allowed_paths
+    missing_required_paths = sorted(
+        path for path in spec.required_paths if path not in actual_shape
+    )
+    observed_required_paths = [
+        path for path in spec.required_paths if path in actual_shape
+    ]
+    unexpected_paths = sorted(
+        path for path in actual_shape if path not in allowed_paths
+    )
+    kind_mismatches = sorted(
+        path
+        for path, actual_kind in actual_shape.items()
+        if path in allowed_paths and allowed_paths[path] != actual_kind
+    )
+    if kind_mismatches or (unexpected_paths and observed_required_paths):
+        raise SchemaDriftError(
+            vendor="BINANCE",
+            stream_type=event_type,
+            shape_hash=_shape_hash(actual_shape),
+            expected_shape_hash=spec.expected_shape_hash,
+            unexpected_paths=unexpected_paths,
+            missing_required_paths=missing_required_paths,
+            kind_mismatches=kind_mismatches,
+            drift_mode="blocking",
+        )
 
 
 class BinanceFeedNormalizer(Protocol):
@@ -197,6 +341,7 @@ def normalize_binance_event(
     normalizer = BINANCE_FEED_NORMALIZERS.get(event_type)
     if normalizer is None:
         raise KeyError(f"Unknown event type: {event_type}")
+    assert_binance_payload_schema(event_type, payload)
     return normalizer.normalize_typed(
         payload,
         venue=venue,

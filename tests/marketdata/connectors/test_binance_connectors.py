@@ -1,13 +1,17 @@
 from datetime import datetime, timezone
 from unittest import mock
 
+import pytest
+
 from app.marketdata.connectors.binance import (
     BinanceBarNormalizer,
     BinanceTradeNormalizer,
+    assert_binance_payload_schema,
     build_binance_stream,
     normalize_binance_event,
     snapshot_payload_from_row,
 )
+from app.marketdata.errors import SchemaDriftError
 from app.marketdata.connectors.binance_sources import BinanceBarSource, BinanceTradeSource
 from app.marketdata.models import BarEvent, TradeEvent
 
@@ -82,6 +86,44 @@ def test_binance_bar_normalizer_sets_provider_ts_when_feed_exposes_distinct_even
 
     assert event.exchange_ts == datetime(2024, 1, 1, 0, 0, 50, tzinfo=timezone.utc)
     assert event.provider_ts == datetime(2024, 1, 1, 0, 0, 55, tzinfo=timezone.utc)
+
+
+def test_trade_schema_drift_raises_typed_error_for_unexpected_shape():
+    with pytest.raises(SchemaDriftError, match="schema drift detected"):
+        assert_binance_payload_schema(
+            "trade",
+            {
+                "s": "BTCUSDT",
+                "E": 1704067200000,
+                "p": "100",
+                "q": "1",
+                "t": 9,
+                "unexpected": {"nested": "field"},
+            },
+        )
+
+
+def test_kline_schema_drift_raises_typed_error_for_unexpected_nested_field():
+    with pytest.raises(SchemaDriftError, match="schema drift detected"):
+        assert_binance_payload_schema(
+            "kline",
+            {
+                "e": "kline",
+                "E": 1704067255000,
+                "s": "BTCUSDT",
+                "k": {
+                    "t": 1704067200000,
+                    "T": 1704067250000,
+                    "o": "100",
+                    "h": "101",
+                    "l": "99",
+                    "c": "100.5",
+                    "q": "10",
+                    "i": "1m",
+                    "schema": {"version": 2},
+                },
+            },
+        )
 
 
 def test_normalize_binance_event_dispatches_by_feed():

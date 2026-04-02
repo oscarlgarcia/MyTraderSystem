@@ -29,6 +29,7 @@ from app.ingestion.client import (
 from app.ingestion.errors import IngestionError, classify_connector_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
 from app.marketdata.connectors.binance import BINANCE_FEED_NORMALIZERS, normalize_binance_event, snapshot_payload_from_row
+from app.marketdata.errors import SchemaDriftError
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
 from app.marketdata.instruments import ensure_default_instruments, persist_instrument_catalog_snapshot
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
@@ -94,6 +95,7 @@ def _ensure_stream_metric(
             "messages_in_total": 0,
             "messages_invalid_total": 0,
             "invalid_timestamp_total": 0,
+            "schema_drift_total": 0,
             "duplicates_total": 0,
             "gaps_total": 0,
             "gap_irreparable_total": 0,
@@ -121,6 +123,15 @@ def _raw_message_context(raw_message: object) -> tuple[str, str, str]:
     venue = "BINANCE"
     symbol = "UNKNOWN"
     stream_type = "unknown"
+    if isinstance(raw_message, dict):
+        symbol = str(raw_message.get("s", symbol)).upper()
+        if "k" in raw_message:
+            stream_type = "kline"
+        elif "p" in raw_message and "q" in raw_message:
+            stream_type = "trade"
+        elif raw_message.get("e"):
+            stream_type = str(raw_message["e"])
+        return venue, symbol, stream_type
     try:
         payload, data, stream_name, event_type = parse_message_parts(str(raw_message))
         del payload, stream_name
@@ -142,6 +153,10 @@ def _is_timestamp_validation_error(message: str) -> bool:
         or "close_ts" in lowered
         or "open_ts" in lowered
     )
+
+
+def _schema_drift_quarantine_path(cfg: AppConfig) -> Path:
+    return Path(cfg.data_dir) / "errors" / "schema-drift-quarantine.jsonl"
 
 
 def heartbeat_policy_for_streams(stream_types: Iterable[str]) -> HeartbeatPolicy:
@@ -287,7 +302,8 @@ class BinanceSource:
             )
         if isinstance(self.error_sink, NullErrorSink):
             self.error_sink = JsonlErrorSink(
-                Path(self.cfg.data_dir) / "errors" / "ingestion-dlq.jsonl"
+                Path(self.cfg.data_dir) / "errors" / "ingestion-dlq.jsonl",
+                schema_drift_path=_schema_drift_quarantine_path(self.cfg),
             )
         if self.heartbeat_policy is None:
             self.heartbeat_policy = heartbeat_policy_for_streams(self.stream_types)
@@ -381,6 +397,27 @@ class BinanceSource:
         venue, symbol, stream_type = _raw_message_context(raw_message)
         metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
         metric["messages_invalid_total"] = int(metric["messages_invalid_total"]) + 1
+        if isinstance(error, SchemaDriftError):
+            metric["schema_drift_total"] = int(metric.get("schema_drift_total", 0)) + 1
+            drift_context = error.as_context()
+            context = {
+                **context,
+                **drift_context,
+                "quarantine_reason": "schema_drift",
+                "quarantine_path": str(_schema_drift_quarantine_path(self.cfg)),
+            }
+            emit_operational_alert(
+                logging.getLogger("ingest.source"),
+                alert_type="schema_drift_detected",
+                observed=int(metric["schema_drift_total"]),
+                extra={
+                    "venue": venue,
+                    "symbol": symbol,
+                    "stream_type": stream_type,
+                    **drift_context,
+                    "quarantine_path": context["quarantine_path"],
+                },
+            )
         if error.category == "validation" and _is_timestamp_validation_error(error.message):
             metric["invalid_timestamp_total"] = int(metric["invalid_timestamp_total"]) + 1
             emit_operational_alert(
@@ -592,6 +629,13 @@ class BinanceSource:
                     )
                     self.stats.events_valid += 1
                     yield event
+                except SchemaDriftError as exc:
+                    self._record_rejected(
+                        item,
+                        exc,
+                        context={"stage": "stream", "url": url},
+                    )
+                    continue
                 except (json.JSONDecodeError, KeyError) as exc:
                     self._record_rejected(
                         item,
@@ -706,6 +750,13 @@ class BinanceSource:
                             events.append(event)
                             self.stats.events_valid += 1
                             self.stats.snapshot_rows += 1
+                        except SchemaDriftError as exc:
+                            self._record_rejected(
+                                payload,
+                                exc,
+                                context={"stage": "snapshot", "symbol": symbol, "stream_type": stream_type},
+                            )
+                            continue
                         except ValueError as exc:
                             self._record_rejected(
                                 payload,

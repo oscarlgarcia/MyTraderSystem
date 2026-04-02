@@ -298,6 +298,46 @@ def test_invalid_timestamp_alert_is_emitted_for_future_payload():
     assert invalid_alert["stream_type"] == "trade"
 
 
+def test_schema_drift_alert_is_emitted_and_payload_is_quarantined(tmp_path: Path):
+    cfg = mock.Mock(
+        env="dev",
+        ws_base="wss://stream.binance.com:9443",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        log_level="INFO",
+    )
+    buffer = io.StringIO()
+    get_logger(name="ingest.source", level="INFO", stream=buffer)
+
+    def fake_ws_stream(url: str, end_time=None):
+        del url, end_time
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","unexpected":{"x":1}}}'
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067201000,"p":"100","q":"1","t":9}}'
+
+    source = BinanceSource(cfg, ws_stream=fake_ws_stream)
+    events = list(source.stream())
+
+    assert len(events) == 1
+    metric = source.stats.stream_metrics["BINANCE:BTCUSDT:trade"]
+    assert metric["schema_drift_total"] == 1
+
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    schema_alert = next(record for record in alerts if record["alert_type"] == "schema_drift_detected")
+    assert schema_alert["venue"] == "BINANCE"
+    assert schema_alert["symbol"] == "BTCUSDT"
+    assert schema_alert["stream_type"] == "trade"
+    assert schema_alert["drift_mode"] == "blocking"
+    assert "unexpected" in schema_alert["unexpected_paths"]
+
+    quarantine_path = tmp_path / "errors" / "schema-drift-quarantine.jsonl"
+    assert quarantine_path.exists()
+    records = [json.loads(line) for line in quarantine_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(records) == 1
+    assert records[0]["error_type"] == "SchemaDriftError"
+
+
+
 def test_snapshot_optional_on_source():
     cfg = mock.Mock(env="dev", ws_base="wss://x", rest_base="https://x", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
     events = [_ev(0, 100), _ev(10, 101)]

@@ -14,6 +14,7 @@ AlertType = Literal[
     "snapshot_retry_exhausted",
     "recovery_exactness_violation",
     "invalid_timestamp_detected",
+    "schema_drift_detected",
     "provider_metadata_drift",
     "shadow_semantic_diff",
     "dlq_spike",
@@ -63,6 +64,11 @@ ALERT_SPECS: dict[AlertType, AlertSpec] = {
         severity="warning",
         threshold=1,
         recommended_action="Inspect timestamp skew and payload sanity before trusting the affected stream.",
+    ),
+    "schema_drift_detected": AlertSpec(
+        severity="error",
+        threshold=1,
+        recommended_action="Quarantine the affected payloads and inspect vendor schema drift before resuming trust in the stream.",
     ),
     "provider_metadata_drift": AlertSpec(
         severity="warning",
