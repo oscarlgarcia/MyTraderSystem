@@ -119,9 +119,13 @@ class BinanceBarNormalizer:
     ) -> BarEvent:
         validate_kline_payload(payload)
         kline = payload["k"]
+        provider_ts = None
+        if payload.get("E") is not None and kline.get("T") is not None and int(payload["E"]) != int(kline["T"]):
+            provider_ts = _ts_from_ms(int(payload["E"]))
         event = BarEvent(
             symbol=normalize_symbol(str(payload["s"])),
             exchange_ts=BinanceBarNormalizer.exchange_ts_from_payload(payload),
+            provider_ts=provider_ts,
             receive_ts=receive_ts,
             process_ts=_process_ts(process_ts),
             venue=venue,

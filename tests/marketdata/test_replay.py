@@ -163,6 +163,43 @@ def test_replay_preserves_process_ts_when_present_in_raw(tmp_path):
     assert out[0].process_ts == process_ts
 
 
+def test_replay_preserves_provider_ts_when_present_in_raw(tmp_path):
+    sink = JsonlRawSink(tmp_path / "raw", env="test")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    provider_ts = base + timedelta(milliseconds=500)
+    sink.write(
+        RawRecord(
+            payload={
+                "s": "BTCUSDT",
+                "E": int(provider_ts.timestamp() * 1000),
+                "k": {
+                    "t": int(base.timestamp() * 1000),
+                    "T": int((base + timedelta(minutes=1)).timestamp() * 1000),
+                    "o": "100",
+                    "h": "101",
+                    "l": "99",
+                    "c": "100.5",
+                    "q": "10",
+                    "i": "1m",
+                },
+            },
+            venue="BINANCE",
+            stream_type="kline",
+            symbol="BTCUSDT",
+            exchange_ts=base + timedelta(minutes=1),
+            provider_ts=provider_ts,
+            receive_ts=base + timedelta(minutes=1, seconds=1),
+            process_ts=base + timedelta(minutes=1, seconds=2),
+            source_id="1704067200000",
+        )
+    )
+
+    out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("kline",)).stream())
+
+    assert len(out) == 1
+    assert out[0].provider_ts == provider_ts
+
+
 def test_replay_keeps_legacy_fallback_order_without_ingestion_seq(tmp_path):
     path = (
         tmp_path
@@ -240,6 +277,52 @@ def test_replay_legacy_rows_fallback_process_ts_to_receive_ts(tmp_path):
     assert len(out) == 1
     assert out[0].receive_ts == base + timedelta(seconds=2)
     assert out[0].process_ts == base + timedelta(seconds=2)
+
+
+def test_replay_legacy_rows_leave_provider_ts_absent_when_not_persisted(tmp_path):
+    path = (
+        tmp_path
+        / "raw"
+        / "env=test"
+        / "venue=BINANCE"
+        / "stream_type=kline"
+        / "symbol=BTCUSDT"
+        / "date=2024-01-01"
+        / "events.jsonl"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    row = {
+        "payload": {
+            "s": "BTCUSDT",
+            "E": int((base + timedelta(seconds=55)).timestamp() * 1000),
+            "k": {
+                "t": int(base.timestamp() * 1000),
+                "T": int((base + timedelta(seconds=50)).timestamp() * 1000),
+                "o": "100",
+                "h": "101",
+                "l": "99",
+                "c": "100.5",
+                "q": "10",
+                "i": "1m",
+            },
+        },
+        "venue": "BINANCE",
+        "stream_type": "kline",
+        "symbol": "BTCUSDT",
+        "exchange_ts": (base + timedelta(seconds=50)).isoformat(),
+        "receive_ts": (base + timedelta(seconds=56)).isoformat(),
+        "trace_id": "legacy-provider-absent",
+        "source_id": "1704067200000",
+    }
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(row))
+        handle.write("\n")
+
+    out = list(ReplaySource(base_dir=tmp_path / "raw", env="test", symbol="BTCUSDT", stream_types=("kline",)).stream())
+
+    assert len(out) == 1
+    assert out[0].provider_ts is None
 
 
 def test_replay_detects_partial_order_metadata_for_legacy_rows(tmp_path):

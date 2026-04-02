@@ -41,6 +41,7 @@ BarVolumeKind: TypeAlias = Literal["base", "quote", "contracts"]
 class BaseMarketEvent:
     symbol: str
     exchange_ts: datetime
+    provider_ts: datetime | None = None
     receive_ts: datetime | None = None
     process_ts: datetime | None = None
     venue: str = "BINANCE"
@@ -53,6 +54,7 @@ class BaseMarketEvent:
     def __post_init__(self) -> None:
         self.symbol = normalize_symbol(self.symbol)
         ensure_aware_utc(self.exchange_ts)
+        _validate_optional_ts(self.provider_ts, "provider_ts")
         _validate_optional_ts(self.receive_ts, "receive_ts")
         _validate_optional_ts(self.process_ts, "process_ts")
         self.venue = str(self.venue).upper()
@@ -199,6 +201,7 @@ def legacy_market_event_to_trade(
     return TradeEvent(
         symbol=event.symbol,
         exchange_ts=event.event_ts,
+        provider_ts=_metadata_ts(metadata, "provider_ts"),
         receive_ts=receive_ts or _metadata_ts(metadata, "receive_ts"),
         process_ts=process_ts or _metadata_ts(metadata, "process_ts"),
         venue=metadata.get("venue", venue),
@@ -227,6 +230,7 @@ def legacy_market_event_to_bar(
     return BarEvent(
         symbol=event.symbol,
         exchange_ts=event.event_ts,
+        provider_ts=_metadata_ts(metadata, "provider_ts"),
         receive_ts=receive_ts or _metadata_ts(metadata, "receive_ts"),
         process_ts=process_ts or _metadata_ts(metadata, "process_ts"),
         venue=metadata.get("venue", venue),
@@ -247,6 +251,8 @@ def typed_event_to_legacy(event: CanonicalMarketEvent) -> MarketEvent:
     if isinstance(event, TradeEvent):
         metadata = dict(event.metadata)
         metadata.setdefault("venue", event.venue)
+        if event.provider_ts is not None:
+            metadata.setdefault("provider_ts", event.provider_ts.isoformat())
         if event.receive_ts is not None:
             metadata.setdefault("receive_ts", event.receive_ts.isoformat())
         if event.process_ts is not None:
@@ -269,6 +275,8 @@ def typed_event_to_legacy(event: CanonicalMarketEvent) -> MarketEvent:
         metadata = dict(event.metadata)
         metadata.setdefault("venue", event.venue)
         metadata.setdefault("interval", event.interval)
+        if event.provider_ts is not None:
+            metadata.setdefault("provider_ts", event.provider_ts.isoformat())
         if event.receive_ts is not None:
             metadata.setdefault("receive_ts", event.receive_ts.isoformat())
         if event.process_ts is not None:
@@ -291,6 +299,8 @@ def typed_event_to_legacy(event: CanonicalMarketEvent) -> MarketEvent:
         )
     metadata = dict(event.metadata)
     metadata.setdefault("venue", event.venue)
+    if event.provider_ts is not None:
+        metadata.setdefault("provider_ts", event.provider_ts.isoformat())
     if event.receive_ts is not None:
         metadata.setdefault("receive_ts", event.receive_ts.isoformat())
     if event.process_ts is not None:

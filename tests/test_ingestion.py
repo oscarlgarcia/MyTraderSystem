@@ -75,6 +75,7 @@ def test_parse_typed_trade_message_captures_exchange_receive_and_process_timesta
     ev = parse_typed_message(json_dumps(msg), receive_ts=receive_ts, process_ts=process_ts)
 
     assert ev.exchange_ts == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    assert ev.provider_ts is None
     assert ev.receive_ts == receive_ts
     assert ev.process_ts == process_ts
     assert ev.exchange_ts <= ev.receive_ts <= ev.process_ts
@@ -105,6 +106,7 @@ def test_parse_typed_kline_message_maps_exchange_ts_from_close_time():
     ev = parse_typed_message(json_dumps(msg), receive_ts=receive_ts, process_ts=process_ts)
 
     assert ev.exchange_ts == datetime(2024, 1, 1, 0, 0, 50, tzinfo=timezone.utc)
+    assert ev.provider_ts == datetime(2024, 1, 1, 0, 0, 55, tzinfo=timezone.utc)
     assert ev.open_ts == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
     assert ev.close_ts == datetime(2024, 1, 1, 0, 0, 50, tzinfo=timezone.utc)
     assert ev.exchange_ts <= ev.receive_ts <= ev.process_ts
@@ -180,6 +182,7 @@ def test_normalize_trade_typed_sets_process_ts_when_not_provided():
     ev = normalize_trade_typed(payload)
 
     assert ev.exchange_ts.tzinfo is not None
+    assert ev.provider_ts is None
     assert ev.process_ts is not None
     assert ev.metadata["base_asset"] == "BTC"
     assert ev.metadata["quote_asset"] == "USDT"
@@ -205,6 +208,7 @@ def test_normalize_kline_typed_sets_receive_ts_when_provided():
     ev = normalize_kline_typed(payload, receive_ts=receive_ts)
 
     assert ev.receive_ts == receive_ts
+    assert ev.provider_ts is None
     assert ev.metadata["base_asset"] == "BTC"
     assert ev.metadata["quote_asset"] == "USDT"
 

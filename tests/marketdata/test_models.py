@@ -152,11 +152,13 @@ def test_legacy_market_event_to_bar_adapter():
 
 
 def test_typed_event_to_legacy_trade_roundtrip():
+    provider_ts = datetime(2024, 1, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
     receive_ts = datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc)
     process_ts = datetime(2024, 1, 1, 0, 0, 2, tzinfo=timezone.utc)
     trade = TradeEvent(
         symbol="BTCUSDT",
         exchange_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        provider_ts=provider_ts,
         receive_ts=receive_ts,
         process_ts=process_ts,
         venue="BINANCE",
@@ -170,21 +172,25 @@ def test_typed_event_to_legacy_trade_roundtrip():
     assert legacy.source == "trade"
     assert legacy.price == 100.0
     assert legacy.metadata["trade_id"] == "abc"
+    assert legacy.metadata["provider_ts"] == provider_ts.isoformat()
     assert legacy.metadata["receive_ts"] == receive_ts.isoformat()
     assert legacy.metadata["process_ts"] == process_ts.isoformat()
 
     roundtrip = legacy_market_event_to_trade(legacy)
     assert roundtrip.exchange_ts == trade.exchange_ts
+    assert roundtrip.provider_ts == provider_ts
     assert roundtrip.receive_ts == receive_ts
     assert roundtrip.process_ts == process_ts
 
 
 def test_typed_event_to_legacy_bar_roundtrip():
+    provider_ts = datetime(2024, 1, 1, 0, 0, 55, tzinfo=timezone.utc)
     receive_ts = datetime(2024, 1, 1, 0, 1, 1, tzinfo=timezone.utc)
     process_ts = datetime(2024, 1, 1, 0, 1, 2, tzinfo=timezone.utc)
     bar = BarEvent(
         symbol="BTCUSDT",
         exchange_ts=datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc),
+        provider_ts=provider_ts,
         receive_ts=receive_ts,
         process_ts=process_ts,
         venue="BINANCE",
@@ -204,11 +210,13 @@ def test_typed_event_to_legacy_bar_roundtrip():
     assert legacy.size == 12.0
     assert legacy.metadata["interval"] == "1m"
     assert legacy.metadata["volume_kind"] == "quote"
+    assert legacy.metadata["provider_ts"] == provider_ts.isoformat()
     assert legacy.metadata["receive_ts"] == receive_ts.isoformat()
     assert legacy.metadata["process_ts"] == process_ts.isoformat()
 
     roundtrip = legacy_market_event_to_bar(legacy)
     assert roundtrip.exchange_ts == bar.exchange_ts
+    assert roundtrip.provider_ts == provider_ts
     assert roundtrip.receive_ts == receive_ts
     assert roundtrip.process_ts == process_ts
     assert roundtrip.volume_kind == "quote"

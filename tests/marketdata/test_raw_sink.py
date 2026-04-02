@@ -24,6 +24,7 @@ def test_jsonl_raw_sink_writes_append_only_layout(tmp_path):
         stream_type="trade",
         symbol="btcusdt",
         exchange_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        provider_ts=datetime(2024, 1, 1, 0, 0, 0, 500000, tzinfo=timezone.utc),
         receive_ts=datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
         process_ts=datetime(2024, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
         trace_id="trace-1",
@@ -44,6 +45,7 @@ def test_jsonl_raw_sink_writes_append_only_layout(tmp_path):
     rows = _read_jsonl(path)
     assert rows[0]["payload"] == {"foo": "bar"}
     assert rows[0]["trace_id"] == "trace-1"
+    assert rows[0]["provider_ts"] == "2024-01-01T00:00:00.500000+00:00"
     assert rows[0]["process_ts"] == "2024-01-01T00:00:02+00:00"
     assert rows[0]["run_id"] == sink.run_id
     assert rows[0]["ingestion_seq"] == 1
@@ -158,6 +160,7 @@ def test_valid_stream_message_is_persisted_to_raw_landing(tmp_path):
     assert rows[0]["stream_type"] == "trade"
     assert rows[0]["trace_id"] == "trace-raw-1"
     assert rows[0]["process_ts"] == events[0].process_ts.isoformat()
+    assert rows[0]["provider_ts"] is None
     assert rows[0]["run_id"] == raw_sink.run_id
     assert rows[0]["ingestion_seq"] == 1
     assert rows[0]["payload"]["data"]["t"] == 7
@@ -212,4 +215,42 @@ def test_sink_failure_preserves_raw_record(tmp_path):
     rows = _read_jsonl(path)
     assert len(rows) == 1
     assert rows[0]["run_id"] == raw_sink.run_id
+    assert rows[0]["provider_ts"] is None
     assert rows[0]["payload"]["data"]["t"] == 8
+
+
+def test_valid_kline_stream_message_persists_provider_ts_when_feed_exposes_it(tmp_path):
+    cfg = mock.Mock(
+        env="test",
+        ws_base="wss://x",
+        rest_base="https://x",
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        log_level="INFO",
+    )
+    raw_sink = JsonlRawSink(tmp_path / "raw", env="test")
+    source = BinanceSource(
+        cfg,
+        ws_stream=lambda *_args, **_kwargs: iter(
+            [
+                '{"stream":"btcusdt@kline_1m","data":{"e":"kline","E":1704067255000,"s":"BTCUSDT","k":{"t":1704067200000,"T":1704067250000,"o":"100","h":"101","l":"99","c":"100.5","q":"10","i":"1m"}}}'
+            ]
+        ),
+        raw_sink=raw_sink,
+    )
+
+    events = list(source.stream(end_time=1.0))
+
+    assert len(events) == 1
+    path = raw_sink.path_for(
+        RawRecord(
+            payload={},
+            venue="BINANCE",
+            stream_type="kline",
+            symbol="BTCUSDT",
+            exchange_ts=datetime(2024, 1, 1, 0, 0, 50, tzinfo=timezone.utc),
+            receive_ts=events[0].receive_ts,
+        )
+    )
+    rows = _read_jsonl(path)
+    assert rows[0]["provider_ts"] == "2024-01-01T00:00:55+00:00"

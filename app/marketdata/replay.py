@@ -84,6 +84,7 @@ def _record_from_dict(payload: dict) -> RawRecord:
         stream_type=payload["stream_type"],
         symbol=payload["symbol"],
         exchange_ts=_parse_ts(payload["exchange_ts"]),
+        provider_ts=_parse_ts(payload["provider_ts"]) if payload.get("provider_ts") not in (None, "") else None,
         receive_ts=_parse_ts(payload["receive_ts"]),
         process_ts=_parse_ts(payload["process_ts"]) if payload.get("process_ts") not in (None, "") else None,
         run_id=payload.get("run_id"),
@@ -177,6 +178,7 @@ def normalize_replay_record(record: RawRecord, *, normalizer_version: str = NORM
     else:
         raise KeyError(f"unsupported replay stream_type: {record.stream_type}")
     if isinstance(event, BaseMarketEvent):
+        event.provider_ts = record.provider_ts
         stamp_normalizer_version(event.metadata, version=normalizer_version)
     elif isinstance(event, MarketEvent):
         stamp_normalizer_version(event.metadata, version=normalizer_version)

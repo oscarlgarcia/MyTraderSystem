@@ -36,6 +36,7 @@ def test_binance_trade_normalizer_returns_trade_event():
     assert "instrument_snapshot" in event.metadata
     assert event.metadata["metadata_source"] == "venue_snapshot"
     assert "venue_snapshot_version" in event.metadata
+    assert event.provider_ts is None
 
 
 def test_binance_bar_snapshot_payload_builder_and_normalizer():
@@ -57,6 +58,30 @@ def test_binance_bar_snapshot_payload_builder_and_normalizer():
     assert "instrument_catalog_version" in event.metadata
     assert "\"symbol\":\"BTCUSDT\"" in event.metadata["instrument_snapshot"]
     assert event.metadata["metadata_source"] == "venue_snapshot"
+    assert event.provider_ts is None
+
+
+def test_binance_bar_normalizer_sets_provider_ts_when_feed_exposes_distinct_event_time():
+    event = BinanceBarNormalizer.normalize_typed(
+        {
+            "e": "kline",
+            "E": 1704067255000,
+            "s": "BTCUSDT",
+            "k": {
+                "t": 1704067200000,
+                "T": 1704067250000,
+                "o": "100",
+                "h": "101",
+                "l": "99",
+                "c": "100.5",
+                "q": "10",
+                "i": "1m",
+            },
+        }
+    )
+
+    assert event.exchange_ts == datetime(2024, 1, 1, 0, 0, 50, tzinfo=timezone.utc)
+    assert event.provider_ts == datetime(2024, 1, 1, 0, 0, 55, tzinfo=timezone.utc)
 
 
 def test_normalize_binance_event_dispatches_by_feed():

@@ -317,6 +317,7 @@ class BinanceSource:
             stream_type=stream_type,
             symbol=symbol,
             exchange_ts=event.event_ts,
+            provider_ts=getattr(event, "provider_ts", None),
             receive_ts=receive_ts,
             process_ts=getattr(event, "process_ts", None),
             trace_id=get_trace_id(),

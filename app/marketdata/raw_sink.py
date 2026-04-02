@@ -23,6 +23,7 @@ class RawRecord:
     symbol: str
     exchange_ts: datetime
     receive_ts: datetime
+    provider_ts: datetime | None = None
     process_ts: datetime | None = None
     run_id: str | None = None
     ingestion_seq: int | None = None
@@ -34,6 +35,8 @@ class RawRecord:
         self.stream_type = str(self.stream_type).lower()
         self.symbol = normalize_symbol(self.symbol)
         ensure_aware_utc(self.exchange_ts)
+        if self.provider_ts is not None:
+            ensure_aware_utc(self.provider_ts)
         ensure_aware_utc(self.receive_ts)
         if self.process_ts is not None:
             ensure_aware_utc(self.process_ts)
@@ -69,6 +72,7 @@ class RawRecord:
             "stream_type": self.stream_type,
             "symbol": self.symbol,
             "exchange_ts": self.exchange_ts.isoformat(),
+            "provider_ts": self.provider_ts.isoformat() if self.provider_ts is not None else None,
             "receive_ts": self.receive_ts.isoformat(),
             "process_ts": self.process_ts.isoformat() if self.process_ts is not None else None,
             "run_id": self.run_id,
