@@ -1,6 +1,6 @@
 import io
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -11,6 +11,7 @@ from app import main
 from app.ingestion.circuit_breaker import CircuitBreaker
 from app.ingestion import pipeline
 from app.ingestion.errors import IngestionError
+from app.ingestion.resilience import ResilientRunner
 from app.ingestion.shadow import ShadowComparison, ShadowPartitionSnapshot, ShadowPromotionError, ShadowSnapshot
 from app.ingestion.sources import StaticSource
 from app.marketdata.connectors.binance_sources import BinanceBarSource
@@ -48,6 +49,24 @@ def _bar_event() -> BarEvent:
         interval="1m",
         open_ts=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
         close_ts=datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc),
+    )
+
+
+def _bar_at(ts: datetime) -> BarEvent:
+    return BarEvent(
+        symbol="BTCUSDT",
+        exchange_ts=ts,
+        receive_ts=ts,
+        process_ts=ts,
+        venue="BINANCE",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=10.0,
+        interval="1m",
+        open_ts=ts - timedelta(minutes=1),
+        close_ts=ts,
     )
 
 
@@ -188,3 +207,33 @@ def test_operational_production_gating_blocks_unsupported_live_trade(tmp_path: P
 
     with pytest.raises(ValueError, match="trade does not support live ingestion"):
         main._validate_operational_security(cfg, mode="live", runtime=runtime)
+
+
+def test_operational_incomplete_recovery_emits_exactness_violation_and_degrades_stream(tmp_path: Path):
+    del tmp_path
+    base = datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    buffer = io.StringIO()
+    get_logger(name="ingest.resilience", level="INFO", stream=buffer)
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter([
+            _bar_at(base),
+            _bar_at(base + timedelta(minutes=12)),
+        ]),
+        snapshot_fn=lambda *, request=None: [
+            _bar_at(base + timedelta(minutes=1)),
+            _bar_at(base + timedelta(minutes=12)),
+        ],
+        lag_threshold_seconds=2,
+        sleeper=lambda _seconds: None,
+    )
+
+    runner.run(lambda _event: None, stop_on_complete=True)
+
+    stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:kline"]
+    assert runner.metrics.recovery_exactness_violation_total == 1
+    assert stream_metrics["gap_irreparable"] is True
+    alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
+    recovery_alert = next(record for record in alerts if record["alert_type"] == "recovery_exactness_violation")
+    assert recovery_alert["recovery_window_rows_requested"] == 13
+    assert recovery_alert["recovery_window_rows_received"] == 2

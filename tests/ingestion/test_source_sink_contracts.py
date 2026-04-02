@@ -500,6 +500,46 @@ def test_snapshot_request_uses_recovery_window_params_instead_of_fixed_limit(
     assert captured["params"]["limit"] == expected_limit
     assert captured["params"]["startTime"] == 1704067200000
     assert captured["params"]["endTime"] == 1704067200000 + (gap_minutes * 60 * 1000)
+    metric = source.stats.stream_metrics["BINANCE:BTCUSDT:kline"]
+    assert metric["recovery_window_rows_requested"] == expected_limit
+    assert metric["recovery_window_rows_received"] == 1
+
+
+def test_snapshot_request_records_exactness_violation_when_vendor_returns_short_window():
+    cfg = mock.Mock(
+        env="dev",
+        ws_base="wss://stream.binance.com:9443",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+        data_dir=".",
+        log_level="INFO",
+    )
+
+    def fake_http_get(url: str, **kwargs):
+        request = httpx.Request("GET", url, params=kwargs["params"])
+        return httpx.Response(
+            200,
+            request=request,
+            json=[[1704067200000, "100", "101", "99", "100.5", "5", 1704067259999]],
+        )
+
+    source = BinanceSource(cfg, http_get=fake_http_get, stream_types=("kline",))
+    request = RecoveryRequest(
+        partition=TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline"),
+        start_ts=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        end_ts=datetime(2024, 1, 1, 0, 12, tzinfo=timezone.utc),
+        interval="1m",
+        limit=13,
+        reason="weak_gap_detection",
+    )
+
+    events = list(source.snapshot(request=request))
+
+    assert len(events) == 1
+    metric = source.stats.stream_metrics["BINANCE:BTCUSDT:kline"]
+    assert metric["recovery_window_rows_requested"] == 13
+    assert metric["recovery_window_rows_received"] == 1
+    assert metric["recovery_exactness_violation_total"] == 1
 
 
 def test_sink_failure_alert_is_emitted_when_normalized_sink_fails():

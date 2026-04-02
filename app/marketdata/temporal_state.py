@@ -37,6 +37,9 @@ class TemporalStreamState:
     normalized_write_latency: float = 0.0
     exchange_receive_skew_seconds: float = 0.0
     receive_process_skew_seconds: float = 0.0
+    recovery_window_rows_requested: int = 0
+    recovery_window_rows_received: int = 0
+    recovery_exactness_violation_total: int = 0
     gap_detected: bool = False
     gap_irreparable: bool = False
     gaps_total: int = 0
@@ -93,6 +96,9 @@ class TemporalStateStore:
                 "normalized_write_latency": state.normalized_write_latency,
                 "exchange_receive_skew_seconds": state.exchange_receive_skew_seconds,
                 "receive_process_skew_seconds": state.receive_process_skew_seconds,
+                "recovery_window_rows_requested": state.recovery_window_rows_requested,
+                "recovery_window_rows_received": state.recovery_window_rows_received,
+                "recovery_exactness_violation_total": state.recovery_exactness_violation_total,
                 "last_event_ts": state.last_event_ts.isoformat() if state.last_event_ts else None,
                 "cursor_kind": state.cursor_kind,
                 "cursor_value": state.cursor_value,

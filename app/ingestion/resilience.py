@@ -78,6 +78,9 @@ class ResilienceMetrics:
     max_latency_seconds: float = 0.0
     exchange_receive_skew_seconds: float = 0.0
     receive_process_skew_seconds: float = 0.0
+    recovery_window_rows_requested: int = 0
+    recovery_window_rows_received: int = 0
+    recovery_exactness_violation_total: int = 0
     temporal_streams: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
@@ -434,9 +437,31 @@ class ResilientRunner:
             },
         )
         self.metrics.snapshot_runs += 1
+        requested_rows = max(0, int(request.limit)) if request is not None and request.limit is not None else 0
+        if requested_rows:
+            self.metrics.recovery_window_rows_requested += requested_rows
+            stream_state = self.temporal_state.states.setdefault(partition_key, TemporalStreamState())
+            stream_state.recovery_window_rows_requested += requested_rows
+            self._update_temporal_metrics(partition_key, stream_state)
         recovered_rows = 0
+        recovered_events: list[IngestionEvent] = []
         try:
-            for ev in recovery_policy.recover(self.snapshot_fn, partition=partition_key, request=request):
+            recovered_events = list(recovery_policy.recover(self.snapshot_fn, partition=partition_key, request=request))
+            if request is not None and request.limit is not None:
+                self.metrics.recovery_window_rows_received += len(recovered_events)
+                stream_state = self.temporal_state.states.setdefault(partition_key, TemporalStreamState())
+                stream_state.recovery_window_rows_received += len(recovered_events)
+                if len(recovered_events) < request.limit:
+                    self._record_recovery_exactness_violation(
+                        partition_key,
+                        stream_state,
+                        requested_rows=request.limit,
+                        received_rows=len(recovered_events),
+                        request=request,
+                    )
+                else:
+                    self._update_temporal_metrics(partition_key, stream_state)
+            for ev in recovered_events:
                 event_partition_key, stream_state = self.temporal_state.state_for_event(ev)
                 self.metrics.snapshot_rows += 1
                 self.metrics.events_in += 1
@@ -479,6 +504,8 @@ class ResilientRunner:
                 "stream_type": partition_key.stream_type,
                 "recovery_policy": recovery_policy.name,
                 "recovered_rows": recovered_rows,
+                "recovery_window_rows_requested": requested_rows or None,
+                "recovery_window_rows_received": len(recovered_events) if request is not None and request.limit is not None else None,
                 "snapshot_duplicates_skipped": self.metrics.snapshot_duplicates_skipped,
             },
         )
@@ -552,6 +579,9 @@ class ResilientRunner:
             "normalized_write_latency": stream_state.normalized_write_latency,
             "exchange_receive_skew_seconds": stream_state.exchange_receive_skew_seconds,
             "receive_process_skew_seconds": stream_state.receive_process_skew_seconds,
+            "recovery_window_rows_requested": stream_state.recovery_window_rows_requested,
+            "recovery_window_rows_received": stream_state.recovery_window_rows_received,
+            "recovery_exactness_violation_total": stream_state.recovery_exactness_violation_total,
             "last_event_ts": stream_state.last_event_ts.isoformat() if stream_state.last_event_ts else None,
             "cursor_kind": stream_state.cursor_kind,
             "cursor_value": stream_state.cursor_value,
@@ -657,4 +687,55 @@ class ResilientRunner:
                     "gap_seconds": observation.gap_seconds,
                 },
             )
+        self._update_temporal_metrics(partition_key, stream_state)
+
+    def _record_recovery_exactness_violation(
+        self,
+        partition_key: TemporalPartitionKey,
+        stream_state: TemporalStreamState,
+        *,
+        requested_rows: int,
+        received_rows: int,
+        request: RecoveryRequest,
+    ) -> None:
+        stream_state.recovery_exactness_violation_total += 1
+        stream_state.gap_irreparable = True
+        stream_state.gap_irreparable_total += 1
+        self.metrics.recovery_exactness_violation_total += 1
+        self.metrics.gap_irreparable_total += 1
+        logger = logging.getLogger("ingest.resilience")
+        logger.error(
+            "recovery exactness violation",
+            extra={
+                "venue": partition_key.venue,
+                "symbol": partition_key.symbol,
+                "stream_type": partition_key.stream_type,
+                "temporal_partition": partition_key.label(),
+                "recovery_request_start_ts": request.start_ts.isoformat() if request.start_ts else None,
+                "recovery_request_end_ts": request.end_ts.isoformat() if request.end_ts else None,
+                "recovery_request_interval": request.interval,
+                "recovery_window_rows_requested": requested_rows,
+                "recovery_window_rows_received": received_rows,
+                "gap_seconds": request.gap_seconds,
+                "missing_count": request.missing_count,
+            },
+        )
+        emit_operational_alert(
+            logger,
+            alert_type="recovery_exactness_violation",
+            observed=stream_state.recovery_exactness_violation_total,
+            extra={
+                "venue": partition_key.venue,
+                "symbol": partition_key.symbol,
+                "stream_type": partition_key.stream_type,
+                "temporal_partition": partition_key.label(),
+                "recovery_request_start_ts": request.start_ts.isoformat() if request.start_ts else None,
+                "recovery_request_end_ts": request.end_ts.isoformat() if request.end_ts else None,
+                "recovery_request_interval": request.interval,
+                "recovery_window_rows_requested": requested_rows,
+                "recovery_window_rows_received": received_rows,
+                "gap_seconds": request.gap_seconds,
+                "missing_count": request.missing_count,
+            },
+        )
         self._update_temporal_metrics(partition_key, stream_state)

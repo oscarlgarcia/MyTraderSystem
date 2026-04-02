@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import io
 import pytest
 
 from app.marketdata.gaps import GapObservation
@@ -10,6 +11,7 @@ from app.marketdata.recovery import build_recovery_request, supports_live_recove
 from app.marketdata.models import BarEvent, TradeEvent
 from app.marketdata.support_matrix import FEED_SUPPORT_MATRIX
 from app.marketdata.temporal_state import TemporalPartitionKey
+from app.observability.logger import get_logger
 
 
 def _bar(symbol: str, ts: datetime) -> BarEvent:
@@ -173,6 +175,8 @@ def test_large_gap_partial_snapshot_does_not_imply_exact_recovery():
         _bar("BTCUSDT", base + timedelta(minutes=12)),
     ]
     handled: list[datetime] = []
+    buffer = io.StringIO()
+    get_logger(name="ingest.resilience", level="INFO", stream=buffer)
 
     def snapshot_fn(*, request=None):
         assert request is not None
@@ -195,4 +199,14 @@ def test_large_gap_partial_snapshot_does_not_imply_exact_recovery():
         base + timedelta(minutes=1),
         base + timedelta(minutes=12),
     ]
+    assert runner.metrics.recovery_window_rows_requested == 13
+    assert runner.metrics.recovery_window_rows_received == 2
+    assert runner.metrics.recovery_exactness_violation_total == 1
+    stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:kline"]
+    assert stream_metrics["gap_irreparable"] is True
+    assert stream_metrics["recovery_window_rows_requested"] == 13
+    assert stream_metrics["recovery_window_rows_received"] == 2
+    assert stream_metrics["recovery_exactness_violation_total"] == 1
+    alerts = [line for line in buffer.getvalue().splitlines() if "recovery_exactness_violation" in line]
+    assert alerts
     assert FEED_SUPPORT_MATRIX["kline"].supports_exact_recovery is False

@@ -102,6 +102,9 @@ def _ensure_stream_metric(
             "normalized_write_latency": 0.0,
             "exchange_receive_skew_seconds": 0.0,
             "receive_process_skew_seconds": 0.0,
+            "recovery_window_rows_requested": 0,
+            "recovery_window_rows_received": 0,
+            "recovery_exactness_violation_total": 0,
         },
     )
     return metric
@@ -625,8 +628,21 @@ class BinanceSource:
                     url = f"{self.cfg.rest_base.rstrip('/')}/api/v3/klines"
                     params = self._snapshot_params(symbol=symbol, request=request)
                     resp = self._snapshot_get(symbol=symbol, url=url, params=params)
+                    metric = _ensure_stream_metric(
+                        self.stats,
+                        venue="BINANCE",
+                        symbol=symbol,
+                        stream_type=stream_type,
+                    )
+                    if request is not None and request.limit is not None:
+                        metric["recovery_window_rows_requested"] = int(metric["recovery_window_rows_requested"]) + int(request.limit)
                     receive_ts = datetime.now(timezone.utc)
-                    for row in resp.json():
+                    rows = resp.json()
+                    if request is not None and request.limit is not None:
+                        metric["recovery_window_rows_received"] = int(metric["recovery_window_rows_received"]) + len(rows)
+                        if len(rows) < int(request.limit):
+                            metric["recovery_exactness_violation_total"] = int(metric["recovery_exactness_violation_total"]) + 1
+                    for row in rows:
                         self.stats.source_events_in += 1
                         payload = snapshot_payload_from_row(stream_type, symbol, row, interval=str(params["interval"]))
                         try:
@@ -637,12 +653,7 @@ class BinanceSource:
                                 process_ts=None,
                             )
                             validate_ingestion_event(event)
-                            metric = _ensure_stream_metric(
-                                self.stats,
-                                venue=getattr(event, "venue", "BINANCE"),
-                                symbol=event.symbol,
-                                stream_type=stream_type,
-                            )
+                            metric = _ensure_stream_metric(self.stats, venue=getattr(event, "venue", "BINANCE"), symbol=event.symbol, stream_type=stream_type)
                             metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
                             self._record_temporal_quality(event)
                             self._write_raw_record(

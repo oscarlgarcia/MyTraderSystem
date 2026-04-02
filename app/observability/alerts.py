@@ -12,6 +12,7 @@ AlertType = Literal[
     "gap_irreparable",
     "heartbeat_missed",
     "snapshot_retry_exhausted",
+    "recovery_exactness_violation",
     "invalid_timestamp_detected",
     "shadow_semantic_diff",
     "dlq_spike",
@@ -51,6 +52,11 @@ ALERT_SPECS: dict[AlertType, AlertSpec] = {
         severity="error",
         threshold=1,
         recommended_action="Treat snapshot recovery as degraded until the REST endpoint and breaker recover.",
+    ),
+    "recovery_exactness_violation": AlertSpec(
+        severity="error",
+        threshold=1,
+        recommended_action="Treat the affected stream as degraded because recovery did not return the full requested window.",
     ),
     "invalid_timestamp_detected": AlertSpec(
         severity="warning",
