@@ -28,6 +28,9 @@ from .instruments import (
     ensure_default_instruments,
     get_default_instrument_catalog,
     infer_spot_assets,
+    instrument_catalog_version,
+    instrument_metadata,
+    instrument_snapshot,
     resolve_instrument,
 )
 from .recovery import (
@@ -98,6 +101,9 @@ __all__ = [
     "infer_spot_assets",
     "get_default_instrument_catalog",
     "ensure_default_instruments",
+    "instrument_catalog_version",
+    "instrument_snapshot",
+    "instrument_metadata",
     "resolve_instrument",
     "FeedSupport",
     "FEED_SUPPORT_MATRIX",

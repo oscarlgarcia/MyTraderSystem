@@ -8,6 +8,7 @@ import pytest
 from app.common.dto import MarketEvent
 from app.ingestion.sinks import ParquetEventSink
 from app.marketdata import NORMALIZER_VERSION
+from app.marketdata.instruments import instrument_catalog_version
 from app.marketdata.models import BarEvent, BookEvent, TradeEvent
 from app.ingestion.storage import (
     ParquetWriter,
@@ -269,6 +270,8 @@ def test_v2_dataset_includes_normalizer_version_metadata_and_column(tmp_path):
     assert "normalizer_version" in table.column_names
     assert table.column("normalizer_version").to_pylist() == [NORMALIZER_VERSION]
     assert table.schema.metadata[b"normalizer_version"] == NORMALIZER_VERSION.encode("utf-8")
+    assert table.schema.metadata[b"instrument_catalog_version"] == instrument_catalog_version().encode("utf-8")
+    assert b"instrument_snapshot" in table.schema.metadata
 
 
 def test_trade_dataset_persists_first_class_typed_columns(tmp_path):
@@ -305,6 +308,9 @@ def test_trade_dataset_persists_first_class_typed_columns(tmp_path):
     assert table.column("exchange_ts").to_pylist() == [exchange_ts]
     assert table.column("receive_ts").to_pylist() == [receive_ts]
     assert table.column("process_ts").to_pylist() == [process_ts]
+    assert table.schema.metadata[b"instrument_catalog_version"] == instrument_catalog_version().encode("utf-8")
+    assert b"instrument_snapshot" in table.schema.metadata
+    assert dict(table.column("metadata").to_pylist()[0])["instrument_catalog_version"] == instrument_catalog_version()
 
 
 def test_trade_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):
@@ -439,6 +445,9 @@ def test_bar_dataset_persists_first_class_typed_columns(tmp_path):
     assert table.column("receive_ts").to_pylist() == [receive_ts]
     assert table.column("process_ts").to_pylist() == [process_ts]
     assert table.column("source_id").to_pylist() == ["bar-1"]
+    assert table.schema.metadata[b"instrument_catalog_version"] == instrument_catalog_version().encode("utf-8")
+    assert b"instrument_snapshot" in table.schema.metadata
+    assert dict(table.column("metadata").to_pylist()[0])["instrument_catalog_version"] == instrument_catalog_version()
 
 
 def test_bar_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):

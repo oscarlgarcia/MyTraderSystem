@@ -15,6 +15,7 @@
   - `app.marketdata.instruments.InstrumentCatalog`
   - resolucion por `(venue, symbol)` para `base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`
   - los normalizadores typed consultan este catalogo y fallan si el simbolo no esta soportado
+  - cada evento typed y cada parquet `normalized` persisten `instrument_catalog_version` e `instrument_snapshot`
 - **Adapters Binance por feed**:
   - `app.marketdata.connectors.binance.BinanceTradeNormalizer`
   - `app.marketdata.connectors.binance.BinanceBarNormalizer`

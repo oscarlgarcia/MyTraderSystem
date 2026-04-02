@@ -29,6 +29,7 @@ from app.marketdata.models import (
     ensure_legacy_market_event,
     is_supported_marketdata_source,
 )
+from app.marketdata.instruments import instrument_metadata
 from app.marketdata.normalization import NORMALIZER_VERSION, resolve_normalizer_version
 
 FEED_TYPE_BY_SOURCE = {
@@ -92,7 +93,20 @@ def _optional_ts(value: object | None) -> datetime | None:
 
 
 def event_metadata(event: IngestionEvent) -> dict[str, str]:
-    return _metadata_mapping(getattr(event, "metadata", None))
+    metadata = _metadata_mapping(getattr(event, "metadata", None))
+    if "instrument_catalog_version" not in metadata and is_supported_marketdata_source(getattr(event, "source", "")):
+        try:
+            venue = getattr(event, "venue", metadata.get("venue", "BINANCE"))
+            metadata.update(
+                {
+                    key: value
+                    for key, value in instrument_metadata(event.symbol, venue=str(venue)).items()
+                    if key not in metadata
+                }
+            )
+        except KeyError:
+            pass
+    return metadata
 
 
 def event_venue(event: IngestionEvent) -> str:
@@ -128,6 +142,14 @@ def event_source_id(event: IngestionEvent) -> str | None:
         return event.source_id
     metadata = event_metadata(event)
     return metadata.get("source_id")
+
+
+def event_instrument_catalog_version(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("instrument_catalog_version")
+
+
+def event_instrument_snapshot(event: IngestionEvent) -> str | None:
+    return event_metadata(event).get("instrument_snapshot")
 
 
 def event_trade_id(event: IngestionEvent) -> str | None:
@@ -562,12 +584,23 @@ def _write_partition(
                 f"{source} feed is out of scope for normalized storage; only trade and kline are supported"
             )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    table = table.replace_schema_metadata(
-        {
-            b"schema_version": schema_version.encode("utf-8"),
-            b"normalizer_version": NORMALIZER_VERSION.encode("utf-8"),
-        }
+    schema_metadata = {
+        b"schema_version": schema_version.encode("utf-8"),
+        b"normalizer_version": NORMALIZER_VERSION.encode("utf-8"),
+    }
+    catalog_version = next(
+        (value for value in (event_instrument_catalog_version(event) for event in events) if value),
+        None,
     )
+    instrument_snapshot = next(
+        (value for value in (event_instrument_snapshot(event) for event in events) if value),
+        None,
+    )
+    if catalog_version:
+        schema_metadata[b"instrument_catalog_version"] = catalog_version.encode("utf-8")
+    if instrument_snapshot:
+        schema_metadata[b"instrument_snapshot"] = instrument_snapshot.encode("utf-8")
+    table = table.replace_schema_metadata(schema_metadata)
     fallback_legacy = legacy_partition_path(base_dir, env, symbol, day)
     if schema_version == "v1":
         existing_path = out_path

@@ -32,6 +32,8 @@ def test_binance_trade_normalizer_returns_trade_event():
 
     assert isinstance(event, TradeEvent)
     assert event.trade_id == "7"
+    assert "instrument_catalog_version" in event.metadata
+    assert "instrument_snapshot" in event.metadata
 
 
 def test_binance_bar_snapshot_payload_builder_and_normalizer():
@@ -50,6 +52,8 @@ def test_binance_bar_snapshot_payload_builder_and_normalizer():
     assert event.volume_kind == "quote"
     assert event.metadata["volume_kind"] == "quote"
     assert event.metadata["volume_semantics"] == "quote_asset_volume"
+    assert "instrument_catalog_version" in event.metadata
+    assert "\"symbol\":\"BTCUSDT\"" in event.metadata["instrument_snapshot"]
 
 
 def test_normalize_binance_event_dispatches_by_feed():

@@ -4,6 +4,8 @@ Minimal static instrument catalog for supported market data feeds.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Iterable
@@ -78,6 +80,19 @@ class Instrument:
             "size_precision": str(self.size_precision),
         }
 
+    def as_dict(self) -> dict[str, str | int]:
+        return {
+            "venue": self.venue,
+            "symbol": self.symbol,
+            "base_asset": self.base_asset,
+            "quote_asset": self.quote_asset,
+            "contract_type": self.contract_type,
+            "tick_size": self.tick_size,
+            "step_size": self.step_size,
+            "price_precision": self.price_precision,
+            "size_precision": self.size_precision,
+        }
+
 
 class InstrumentCatalog:
     def __init__(self, instruments: Iterable[Instrument] | None = None) -> None:
@@ -128,6 +143,19 @@ class InstrumentCatalog:
     def has(self, venue: str, symbol: str) -> bool:
         return (_normalize_venue(venue), normalize_symbol(symbol)) in self._by_key
 
+    def snapshot(self) -> tuple[dict[str, str | int], ...]:
+        return tuple(
+            instrument.as_dict()
+            for _, instrument in sorted(self._by_key.items(), key=lambda item: item[0])
+        )
+
+    def version(self) -> str:
+        encoded = json.dumps(self.snapshot(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()[:16]
+
+    def instrument_snapshot(self, venue: str, symbol: str) -> dict[str, str | int]:
+        return self.resolve(venue, symbol).as_dict()
+
 
 DEFAULT_INSTRUMENTS: tuple[Instrument, ...] = (
     Instrument(
@@ -169,3 +197,20 @@ def ensure_default_instruments(symbols: Iterable[str], *, venue: str = "BINANCE"
 
 def resolve_instrument(symbol: str, *, venue: str = "BINANCE", catalog: InstrumentCatalog | None = None) -> Instrument:
     return (catalog or DEFAULT_INSTRUMENT_CATALOG).resolve(venue, symbol)
+
+
+def instrument_catalog_version(*, catalog: InstrumentCatalog | None = None) -> str:
+    return (catalog or DEFAULT_INSTRUMENT_CATALOG).version()
+
+
+def instrument_snapshot(symbol: str, *, venue: str = "BINANCE", catalog: InstrumentCatalog | None = None) -> dict[str, str | int]:
+    return (catalog or DEFAULT_INSTRUMENT_CATALOG).instrument_snapshot(venue, symbol)
+
+
+def instrument_metadata(symbol: str, *, venue: str = "BINANCE", catalog: InstrumentCatalog | None = None) -> dict[str, str]:
+    resolved_catalog = catalog or DEFAULT_INSTRUMENT_CATALOG
+    snapshot = instrument_snapshot(symbol, venue=venue, catalog=resolved_catalog)
+    metadata = resolve_instrument(symbol, venue=venue, catalog=resolved_catalog).as_metadata()
+    metadata["instrument_catalog_version"] = resolved_catalog.version()
+    metadata["instrument_snapshot"] = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    return metadata

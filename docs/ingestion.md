@@ -35,6 +35,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `price_precision`
     - `size_precision`
   - Los normalizadores consultan este catalogo; un simbolo no soportado falla rapido durante la normalizacion.
+  - La metadata typed y el almacenamiento `normalized` persisten:
+    - `instrument_catalog_version`
+    - `instrument_snapshot`
+    para hacer reproducible la interpretacion del dataset.
 - `marketdata.validators`
   - Centraliza validacion explicita por tipo:
     - `validate_trade_payload`, `validate_kline_payload`

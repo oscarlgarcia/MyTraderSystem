@@ -152,7 +152,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   - `app.ingestion.service.run_ingestion_service(...)` ejecuta solo ingestion
   - `app.main.run_trading_cycle(...)` ejecuta features, strategy, risk, execution y portfolio a partir de eventos ya ingeridos
   - `app.main.run_cycle(...)` queda como wrapper de composicion para compatibilidad
-- Catalogo minimo de instrumentos: `app.marketdata.instruments` resuelve `(venue, symbol)` y anade metadata first-class de instrumento (`base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`) durante la normalizacion. Si un simbolo no esta soportado por el catalogo, la normalizacion falla rapido.
+- Catalogo minimo de instrumentos: `app.marketdata.instruments` resuelve `(venue, symbol)` y anade metadata first-class de instrumento (`base_asset`, `quote_asset`, `contract_type`, `tick_size`, `step_size`, `price_precision`, `size_precision`) durante la normalizacion. El contrato typed y el parquet `normalized` persisten tambien `instrument_catalog_version` e `instrument_snapshot` para que cada dataset quede explicable con la metadata usada en esa corrida/backfill. Si un simbolo no esta soportado por el catalogo, la normalizacion falla rapido.
 - Adapters por feed/venue:
   - `app.marketdata.connectors.binance.BinanceTradeNormalizer`
   - `app.marketdata.connectors.binance.BinanceBarNormalizer`

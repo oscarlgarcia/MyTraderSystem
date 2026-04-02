@@ -2,6 +2,9 @@ from app.marketdata.instruments import (
     InstrumentCatalog,
     ensure_default_instruments,
     infer_spot_assets,
+    instrument_catalog_version,
+    instrument_metadata,
+    instrument_snapshot,
     resolve_instrument,
 )
 
@@ -37,3 +40,21 @@ def test_catalog_raises_for_unknown_symbol_without_quote_match():
         assert "unsupported instrument" in str(exc)
     else:
         raise AssertionError("expected KeyError for unsupported instrument")
+
+
+def test_catalog_version_changes_when_catalog_changes():
+    catalog = InstrumentCatalog()
+    catalog.register_static_spot_symbol("BTCUSDT", venue="BINANCE")
+    version_before = catalog.version()
+
+    catalog.register_static_spot_symbol("ETHUSDT", venue="BINANCE")
+
+    assert catalog.version() != version_before
+
+
+def test_instrument_metadata_includes_catalog_version_and_snapshot():
+    metadata = instrument_metadata("BTCUSDT", venue="BINANCE")
+
+    assert metadata["instrument_catalog_version"] == instrument_catalog_version()
+    assert "\"symbol\":\"BTCUSDT\"" in metadata["instrument_snapshot"]
+    assert instrument_snapshot("BTCUSDT", venue="BINANCE")["quote_asset"] == "USDT"

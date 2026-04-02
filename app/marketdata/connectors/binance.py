@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from app.common.dto import MarketEvent, normalize_symbol
-from app.marketdata.instruments import resolve_instrument
+from app.marketdata.instruments import instrument_metadata
 from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
 from app.marketdata.normalization import stamp_normalizer_version
 from app.marketdata.validators import validate_ingestion_event, validate_kline_payload, validate_trade_payload
@@ -23,7 +23,7 @@ def _process_ts(process_ts: datetime | None = None) -> datetime:
 
 
 def _instrument_metadata(symbol: str, venue: str) -> dict[str, str]:
-    return resolve_instrument(symbol, venue=venue).as_metadata()
+    return instrument_metadata(symbol, venue=venue)
 
 
 def _quote_volume_from_snapshot_row(row: list[Any]) -> str:
