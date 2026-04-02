@@ -140,8 +140,8 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
   Ingesta puntual con ResilientRunner y flush a Parquet.
 - `python -m app.ingestion.inspect --env dev --limit 10`  
   Lista rapidamente filas de Parquet (filtros opcionales por simbolo/fecha).
-- `python -m app.ingestion.backfill ... --dry-run`  
-  Descarga klines, calcula expected/gaps sin escribir disco. El alcance historico soportado hoy es bars-only (`kline`).
+- `python -m app.ingestion.backfill ... --dry-run`
+  Descarga klines, calcula expected/gaps sin escribir disco. El alcance historico soportado queda fijado de forma definitiva en bars-only (`kline`) por `docs/adr/ADR-0001-historical-market-data-scope.md`.
 - `python -m app.ingestion.backfill ... --dedup`  
   Deduplica por la misma clave de ingest live, escribe raw append-only en `data/raw/...` y normalized typed en Parquet para el rango indicado.
 - `python -m app.ingestion.backfill ...` (sin `--dry-run` ni `--dedup`)  
@@ -257,6 +257,7 @@ events = collect_events("live", cfg, duration_s=0, source=source, sink=sink)
 - Escribe raw + Parquet: `make backfill-dev-write START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
 - Campos clave: `INTERVAL` (soportados: 1m,3m,5m,15m,30m,1h), `BATCH` (<=1000).
 - Alcance soportado: solo bars (`kline`). Historical backfill de `trade` no esta implementado ni soportado.
+- Decision arquitectonica vigente: `docs/adr/ADR-0001-historical-market-data-scope.md` fija bars-only como contrato historico oficial hasta nueva ADR con implementacion real.
 
 Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.
 
