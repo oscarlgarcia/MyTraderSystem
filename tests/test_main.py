@@ -1,6 +1,7 @@
 import json
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 import pytest
 from app import main
@@ -40,6 +41,40 @@ def test_run_returns_zero(monkeypatch):
     assert payload["message"] == "pipeline ok"
     assert payload["trace_id"]
     assert payload["env"] == "dev"
+
+
+def test_run_release_gates_exits_before_pipeline(monkeypatch, tmp_path: Path):
+    args = SimpleNamespace(
+        env="dev",
+        release_gates=True,
+        release_gates_target="paper",
+        release_gates_output=str(tmp_path / "release-gates.json"),
+        release_gates_rest_canary_path=str(tmp_path / "rest.json"),
+        release_gates_ws_canary_path=str(tmp_path / "ws.json"),
+        ingest_stream_types=("kline",),
+    )
+    cfg = load_config("dev")
+    cfg = type(cfg)(
+        env=cfg.env,
+        data_dir=tmp_path.resolve(),
+        log_level=cfg.log_level,
+        ws_base=cfg.ws_base,
+        rest_base=cfg.rest_base,
+        symbols=cfg.symbols,
+    )
+
+    class _Report:
+        pass_ok = True
+        target = "paper"
+        overall_status = "PASS"
+        blocks = ()
+
+    monkeypatch.setattr(main, "parse_args", lambda: args)
+    monkeypatch.setattr(main, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(main, "run_release_gates", lambda **kwargs: _Report())
+    monkeypatch.setattr(main, "run_cycle", lambda **kwargs: (_ for _ in ()).throw(AssertionError("run_cycle should not execute")))
+
+    assert main.run() == 0
 
 
 def test_run_respects_app_env(monkeypatch):

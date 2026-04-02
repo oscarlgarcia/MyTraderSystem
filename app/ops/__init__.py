@@ -2,4 +2,4 @@
 Operations and control plane utilities (CLI, config management, runbooks).
 """
 
-__all__ = []
+__all__ = ["release_gates"]

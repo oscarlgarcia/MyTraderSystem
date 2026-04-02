@@ -22,6 +22,7 @@ from app.ingestion.storage import validate_output_path
 from app.ingestion.storage_health import assert_storage_health_for_runtime
 from app.features.pipeline import run_feature_pipeline
 from app.features.engine import FeatureEngine
+from app.ops.release_gates import render_release_gate_summary, run_release_gates
 from app.strategy.basic import generate_signals
 from app.risk.rules import apply_risk
 from app.execution.paper import paper_execute
@@ -254,6 +255,18 @@ def run() -> int:
     """Bootstrap principal; devuelve 0 en éxito."""
     args = parse_args()
     config = load_config(args.env)
+    if getattr(args, "release_gates", False):
+        report = run_release_gates(
+            base_dir=config.data_dir,
+            env=config.env,
+            target=args.release_gates_target,
+            stream_types=getattr(args, "ingest_stream_types", DEFAULT_INGEST_STREAM_TYPES),
+            output_path=args.release_gates_output,
+            rest_canary_path=args.release_gates_rest_canary_path,
+            ws_canary_path=args.release_gates_ws_canary_path,
+        )
+        print(render_release_gate_summary(report))
+        return 0 if report.pass_ok else 1
     runtime = _resolve_runtime_options(args)
     _validate_operational_security(config, mode=args.mode, runtime=runtime)
     trace_id = str(uuid4())

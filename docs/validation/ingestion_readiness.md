@@ -9,6 +9,7 @@
 - [ ] `python scripts/ingestion_canary.py --mode rest-baseline --refresh-baseline` devuelve `0`
 - [ ] `python scripts/ingestion_canary.py --mode ws-live --symbol BTCUSDT --max-events 2 --duration-seconds 130` devuelve `0`
 - [ ] `python scripts/ingestion_storage_benchmark.py` devuelve `0`
+- [ ] `python -m app.main --release-gates --release-gates-target paper` devuelve `0`
 - [ ] existe ADR aprobada para el alcance historico: `docs/adr/ADR-0001-historical-market-data-scope.md`
 - [ ] el alcance historico soportado esta declarado explicitamente y alineado con la ADR: bars-only (`kline`); trade historical no se promete
 - [ ] cada run/backfill persiste `metadata/instruments/.../runs/<trace_id>.json` y no hay alertas `provider_metadata_drift` sin revisar
@@ -38,6 +39,7 @@
 - [ ] `ingestion_ws_canary_report.json` existe
 - [ ] `ingestion_canary_baseline.json` existe
 - [ ] `ingestion_storage_benchmark.json` existe
+- [ ] `ingestion_release_gates.json` existe
 - [ ] `comparisons.jsonl` existe si hubo `shadow_mode`
 - [ ] `comparison_reason = semantic_match`
 - [ ] `diffs.row_count = 0`
@@ -56,6 +58,7 @@
 - `docs/validation/ingestion_canary_report.json`
 - `docs/validation/ingestion_ws_canary_report.json`
 - `docs/validation/ingestion_storage_benchmark.json`
+- `docs/validation/ingestion_release_gates.json`
 - commit validado
 - fecha de ejecucion
 - logs JSON del run si hubo fallo

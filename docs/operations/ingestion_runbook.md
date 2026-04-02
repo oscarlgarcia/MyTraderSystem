@@ -18,6 +18,9 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - `docker compose exec app poetry run python scripts/ingestion_canary.py --mode ws-live --symbol BTCUSDT --max-events 2 --duration-seconds 130`
 - Benchmark de storage segmentado:
   - `docker compose exec app poetry run python scripts/ingestion_storage_benchmark.py`
+- Release gating consolidado:
+  - `docker compose exec app poetry run python -m app.main --release-gates --release-gates-target paper`
+  - `docker compose exec app poetry run python -m app.main --release-gates --release-gates-target live`
 - Compactacion offline:
   - `docker compose exec app poetry run python scripts/ingestion_compact.py --env dev --dry-run`
   - `docker compose exec app poetry run python scripts/ingestion_compact.py --env dev --batch-limit 10 --retain-compacted-segments 1`
@@ -27,6 +30,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `docs/validation/ingestion_canary_report.json`
 - `docs/validation/ingestion_ws_canary_report.json`
 - `docs/validation/ingestion_storage_benchmark.json`
+- `docs/validation/ingestion_release_gates.json`
 - `<data_dir>/shadow/env=<env>/comparisons.jsonl`
 - `<data_dir>/normalized/.../data.parquet`
 - `<data_dir>/normalized/.../retained-segments/`
@@ -65,29 +69,34 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 5. Ejecutar `python scripts/ingestion_canary.py --mode ws-live --symbol BTCUSDT --max-events 2 --duration-seconds 130`.
 6. Ejecutar `python scripts/ingestion_compact.py --env dev --dry-run`.
 7. Ejecutar `python scripts/ingestion_storage_benchmark.py`.
-8. Verificar que no hay `FAILED` y que todos los scripts devuelven exit code `0`.
-9. Revisar `docs/validation/ingestion_soak_evidence.json`:
+8. Ejecutar `python -m app.main --release-gates --release-gates-target paper`.
+9. Verificar que no hay `FAILED` y que todos los scripts devuelven exit code `0`.
+10. Revisar `docs/validation/ingestion_soak_evidence.json`:
    - `pass_ok = true`
    - `max_gaps = 0`
    - `max_gap_irreparable = 0`
-10. Revisar `docs/validation/ingestion_canary_report.json`:
+11. Revisar `docs/validation/ingestion_canary_report.json`:
    - `pass_ok = true`
    - `diffs.events_persisted = 0`
    - `diffs.duplicates = 0`
    - `diffs.gaps = 0`
-11. Revisar `docs/validation/ingestion_ws_canary_report.json`:
+12. Revisar `docs/validation/ingestion_ws_canary_report.json`:
    - `pass_ok = true`
    - `reconnects_observed >= reconnects_target`
    - existe `continuity`
    - existen `gaps`, `duplicates` y `reconnects` en el reporte
-12. Revisar `docs/validation/ingestion_storage_benchmark.json`:
+13. Revisar `docs/validation/ingestion_storage_benchmark.json`:
    - `pass_ok = true`
    - existe `slo`
    - los cuatro casos (`synthetic_case`, `replay_case`, `concurrent_compaction_case`, `shadow_scoped_case`) quedan medidos
-13. Revisar el reporte de compactacion:
+14. Revisar `docs/validation/ingestion_release_gates.json`:
+   - `overall_status = PASS`
+   - existe `blocks`
+   - cada bloque deja `status`, `required`, `reasons`
+15. Revisar el reporte de compactacion:
    - `failed_partitions = 0`
    - `planned_partitions` consistente con el estado de `segments/`
-14. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
+16. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
    - se publica `data.parquet`
    - el path activo `segments/` queda vacio o eliminado
    - `retained-segments/` solo existe si se pidio retencion

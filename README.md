@@ -374,12 +374,14 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
   - `python scripts/ingestion_canary.py --mode rest-baseline --refresh-baseline`
   - `python scripts/ingestion_canary.py --mode ws-live --symbol BTCUSDT --max-events 2 --duration-seconds 130`
   - `python scripts/ingestion_storage_benchmark.py`
+  - `python -m app.main --release-gates --release-gates-target paper`
   - generan:
     - `docs/validation/ingestion_soak_evidence.json`
     - `docs/validation/ingestion_canary_baseline.json`
     - `docs/validation/ingestion_canary_report.json`
     - `docs/validation/ingestion_ws_canary_report.json`
     - `docs/validation/ingestion_storage_benchmark.json`
+    - `docs/validation/ingestion_release_gates.json`
 Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Seguridad operativa minima

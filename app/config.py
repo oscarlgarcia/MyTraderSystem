@@ -121,6 +121,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Activa validaciones operativas estrictas: sin fallback, sin fast-path y con data_dir seguro.",
     )
     parser.add_argument(
+        "--release-gates",
+        action="store_true",
+        help="Ejecuta el comando operativo de release gating de ingestion y termina sin correr trading.",
+    )
+    parser.add_argument(
+        "--release-gates-target",
+        choices=["paper", "live"],
+        default="paper",
+        help="Objetivo del gating operativo: paper o live.",
+    )
+    parser.add_argument(
+        "--release-gates-output",
+        default="docs/validation/ingestion_release_gates.json",
+        help="Ruta del reporte JSON de release gates.",
+    )
+    parser.add_argument(
+        "--release-gates-rest-canary-path",
+        default="docs/validation/ingestion_canary_report.json",
+        help="Ruta al artifact del canary REST baseline.",
+    )
+    parser.add_argument(
+        "--release-gates-ws-canary-path",
+        default="docs/validation/ingestion_ws_canary_report.json",
+        help="Ruta al artifact del canary WS live.",
+    )
+    parser.add_argument(
         "--mode",
         choices=["dry", "live"],
         default="dry",
