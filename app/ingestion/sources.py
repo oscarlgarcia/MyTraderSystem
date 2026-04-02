@@ -59,6 +59,8 @@ class SourceStats:
     handoff_bootstrap_rows: int = 0
     handoff_overlap_dropped: int = 0
     handoff_inconsistent: int = 0
+    handoff_post_validation_rows: int = 0
+    handoff_post_inconsistent: int = 0
     stream_metrics: dict[str, dict[str, object]] = field(default_factory=dict)
 
 

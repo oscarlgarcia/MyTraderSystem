@@ -13,7 +13,7 @@ from app.ingestion.checkpoints import CheckpointState
 from app.ingestion.client import _key
 from app.ingestion.errors import IngestionError
 from app.ingestion.sources import Source, SourceStats
-from app.marketdata.models import IngestionEvent
+from app.marketdata.models import BarEvent, IngestionEvent
 from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.temporal_state import CursorState, cursor_from_event, temporal_partition_key
 
@@ -52,11 +52,18 @@ class HandoffSource:
     window: HistoricalWindow | None = None
     strict: bool = True
     validation_rows: int = 3
+    post_validation_rows: int = 3
     stats: SourceStats = field(default_factory=SourceStats)
     checkpoint_state: CheckpointState | None = None
 
     def __post_init__(self) -> None:
-        for name in ("handoff_bootstrap_rows", "handoff_overlap_dropped", "handoff_inconsistent"):
+        for name in (
+            "handoff_bootstrap_rows",
+            "handoff_overlap_dropped",
+            "handoff_inconsistent",
+            "handoff_post_validation_rows",
+            "handoff_post_inconsistent",
+        ):
             if not hasattr(self.stats, name):
                 setattr(self.stats, name, 0)
 
@@ -69,6 +76,7 @@ class HandoffSource:
         emitted_bootstrap: dict[str, IngestionEvent] = {}
         bootstrap_tails: dict[str, list[IngestionEvent]] = {}
         live_heads: dict[str, list[IngestionEvent]] = {}
+        post_transition_windows: dict[str, list[IngestionEvent]] = {}
         seen_bootstrap_keys = set()
         checkpoint_keys = self._checkpoint_seen_keys()
 
@@ -146,6 +154,13 @@ class HandoffSource:
                     },
                 )
                 reconciled_partitions.add(partition)
+            if partition in reconciled_partitions:
+                self._validate_post_transition_window(
+                    partition=partition,
+                    bootstrap_tail=bootstrap_tails.get(partition, []),
+                    post_transition_window=post_transition_windows.setdefault(partition, []),
+                    live_event=event,
+                )
             self.stats.source_events_in += 1
             self.stats.events_valid += 1
             self._record_stream_metric(event, "messages_in_total", 1)
@@ -248,12 +263,77 @@ class HandoffSource:
                 f"for {bootstrap_kind} ({bootstrap_cursor} -> {live_cursor})"
             )
 
-    def _mark_handoff_inconsistent(self, message: str) -> None:
+    def _validate_post_transition_window(
+        self,
+        *,
+        partition: str,
+        bootstrap_tail: list[IngestionEvent],
+        post_transition_window: list[IngestionEvent],
+        live_event: IngestionEvent,
+    ) -> None:
+        limit = max(1, self.post_validation_rows)
+        previous_event = post_transition_window[-1] if post_transition_window else (bootstrap_tail[-1] if bootstrap_tail else None)
+        if previous_event is not None:
+            self.stats.handoff_post_validation_rows += 1
+            self._assert_post_transition_continuity(
+                partition=partition,
+                previous_event=previous_event,
+                current_event=live_event,
+            )
+        post_transition_window.append(live_event)
+        if len(post_transition_window) > limit:
+            del post_transition_window[0]
+
+    def _assert_post_transition_continuity(
+        self,
+        *,
+        partition: str,
+        previous_event: IngestionEvent,
+        current_event: IngestionEvent,
+    ) -> None:
+        if current_event.event_ts < previous_event.event_ts:
+            self._mark_handoff_inconsistent(
+                "handoff post-transition window regressed in time "
+                f"for {partition} ({current_event.event_ts.isoformat()} < {previous_event.event_ts.isoformat()})",
+                post_window=True,
+            )
+            return
+        previous_kind, previous_cursor = cursor_from_event(previous_event)
+        current_kind, current_cursor = cursor_from_event(current_event)
+        if (
+            previous_kind is not None
+            and previous_kind == current_kind
+            and previous_cursor is not None
+            and current_cursor is not None
+            and _cursor_gap(previous_cursor, current_cursor) > 0
+        ):
+            self._mark_handoff_inconsistent(
+                "handoff post-transition window detected cursor gap "
+                f"for {previous_kind} ({previous_cursor} -> {current_cursor})",
+                post_window=True,
+            )
+            return
+        if isinstance(previous_event, BarEvent) and isinstance(current_event, BarEvent):
+            expected_interval_seconds = _bar_interval_seconds(previous_event)
+            if expected_interval_seconds is not None:
+                gap_seconds = (current_event.event_ts - previous_event.event_ts).total_seconds()
+                tolerance = expected_interval_seconds * 0.5
+                if gap_seconds > expected_interval_seconds + tolerance:
+                    self._mark_handoff_inconsistent(
+                        "handoff post-transition window detected bar gap "
+                        f"for interval {previous_event.interval} ({gap_seconds:.3f}s > {expected_interval_seconds:.3f}s)",
+                        post_window=True,
+                    )
+
+    def _mark_handoff_inconsistent(self, message: str, *, post_window: bool = False) -> None:
         self.stats.handoff_inconsistent += 1
+        if post_window:
+            self.stats.handoff_post_inconsistent += 1
         logging.getLogger("ingest.handoff").error(
             "handoff inconsistent",
             extra={
                 "error": message,
+                "handoff_post_window": post_window,
             },
         )
         if self.strict:
@@ -309,3 +389,26 @@ def _overlap_count(
         return 0
     bootstrap_keys = {_key(event) for event in bootstrap_tail}
     return sum(1 for event in live_head if _key(event) in bootstrap_keys)
+
+
+def _bar_interval_seconds(event: BarEvent) -> float | None:
+    interval = str(event.interval).strip().lower()
+    if not interval:
+        return None
+    units = {
+        "s": 1.0,
+        "m": 60.0,
+        "h": 3600.0,
+        "d": 86400.0,
+    }
+    unit = interval[-1]
+    magnitude = interval[:-1]
+    if unit not in units:
+        return None
+    try:
+        value = int(magnitude)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value * units[unit]

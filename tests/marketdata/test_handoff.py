@@ -13,7 +13,7 @@ from app.ingestion.errors import IngestionError
 from app.ingestion.pipeline import collect_events
 from app.ingestion.sources import StaticSource
 from app.marketdata.handoff import HandoffSource, HistoricalWindow
-from app.marketdata.models import TradeEvent
+from app.marketdata.models import BarEvent, TradeEvent
 from app.marketdata.temporal_state import CursorState, TemporalPartitionKey
 from app.observability.logger import get_logger
 
@@ -55,6 +55,26 @@ def _trade_with_id(ts: datetime, trade_id: str) -> TradeEvent:
         price=100.0,
         size=1.0,
         trade_id=trade_id,
+    )
+
+
+def _bar(ts: datetime, open_ts: datetime, bar_id: str, *, interval: str = "1m") -> BarEvent:
+    return BarEvent(
+        symbol="BTCUSDT",
+        exchange_ts=ts,
+        receive_ts=ts,
+        process_ts=ts,
+        venue="BINANCE",
+        source_id=bar_id,
+        metadata={"source_id": bar_id},
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=10.0,
+        interval=interval,
+        open_ts=open_ts,
+        close_ts=ts,
     )
 
 
@@ -241,3 +261,75 @@ def test_handoff_uses_checkpoint_to_skip_bootstrap_overlap(tmp_path):
     )
 
     assert [event.trade_id for event in out] == ["3", "4"]
+
+
+def test_handoff_post_transition_window_detects_cursor_gap_after_clean_edge(tmp_path):
+    cfg = _cfg(tmp_path)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    bootstrap = [_trade(base, 1), _trade(base + timedelta(seconds=1), 2)]
+    live = [
+        _trade(base + timedelta(seconds=1), 2),
+        _trade(base + timedelta(seconds=2), 3),
+        _trade(base + timedelta(seconds=4), 5),
+    ]
+    source = HandoffSource(
+        live_source=StaticSource(events=live),
+        bootstrap_fn=lambda: bootstrap,
+        strict=True,
+        validation_rows=2,
+        post_validation_rows=3,
+    )
+
+    with pytest.raises(IngestionError, match="post-transition window detected cursor gap"):
+        collect_events(
+            mode="live",
+            cfg=cfg,
+            logger=get_logger(name="test.handoff.post.cursor_gap", level="INFO", stream=io.StringIO()),
+            source=source,
+            sink=RecordingSink(),
+            snapshot_enabled=False,
+            summary_logging=True,
+            duration_s=0,
+            error_policy="fail_fast",
+        )
+
+    assert source.stats.handoff_inconsistent == 1
+    assert source.stats.handoff_post_inconsistent == 1
+    assert source.stats.handoff_post_validation_rows >= 2
+
+
+def test_handoff_post_transition_window_degrades_on_bar_gap_after_clean_edge(tmp_path):
+    cfg = _cfg(tmp_path)
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    bootstrap = [
+        _bar(base + timedelta(minutes=1), base, "1"),
+        _bar(base + timedelta(minutes=2), base + timedelta(minutes=1), "2"),
+    ]
+    live = [
+        _bar(base + timedelta(minutes=2), base + timedelta(minutes=1), "2"),
+        _bar(base + timedelta(minutes=3), base + timedelta(minutes=2), "3"),
+        _bar(base + timedelta(minutes=5), base + timedelta(minutes=4), "5"),
+    ]
+    source = HandoffSource(
+        live_source=StaticSource(events=live),
+        bootstrap_fn=lambda: bootstrap,
+        strict=True,
+        validation_rows=2,
+        post_validation_rows=3,
+    )
+
+    out = collect_events(
+        mode="live",
+        cfg=cfg,
+        logger=get_logger(name="test.handoff.post.bar_gap", level="INFO", stream=io.StringIO()),
+        source=source,
+        sink=RecordingSink(),
+        snapshot_enabled=False,
+        summary_logging=True,
+        duration_s=0,
+        error_policy="degraded",
+    )
+
+    assert out == []
+    assert source.stats.handoff_inconsistent == 1
+    assert source.stats.handoff_post_inconsistent == 1
