@@ -23,7 +23,7 @@ from app.ingestion.sources import BinanceSource, StaticSource, source_snapshot_f
 from app.ingestion.storage import ParquetWriter
 from app.marketdata.raw_sink import JsonlRawSink, NullRawSink
 from app.observability.logger import clear_trace_id  # noqa: F401  # exported for tests
-from app.observability.logger import get_logger, set_trace_id
+from app.observability.logger import get_logger, get_trace_id, set_trace_id
 
 
 @dataclass
@@ -102,8 +102,29 @@ def run(argv: Optional[list[str]] = None) -> int:
     )
     if checkpoint_store is not None:
         try:
-            runner.restore_checkpoint(checkpoint_store.load())
+            checkpoint_state = checkpoint_store.load()
+            logger.info(
+                "checkpoint applied",
+                extra={
+                    "checkpoint_path": str(checkpoint_store.path),
+                    "stream_keys": sorted(checkpoint_state.stream_cursors) if checkpoint_state is not None else [],
+                    "checkpoint_last_event_ts": checkpoint_state.last_event_ts.isoformat() if checkpoint_state and checkpoint_state.last_event_ts else None,
+                },
+            )
+            checkpoint_store.record_checkpoint_event(
+                event_type="checkpoint_applied",
+                trace_id=get_trace_id(),
+                state=checkpoint_state,
+                extra={"mode": "runner"},
+            )
+            runner.restore_checkpoint(checkpoint_state)
         except ValueError as exc:
+            checkpoint_store.record_checkpoint_event(
+                event_type="checkpoint_load_failed",
+                trace_id=get_trace_id(),
+                state=None,
+                extra={"mode": "runner", "error": str(exc)},
+            )
             logger.warning(
                 "checkpoint recovery using empty state",
                 extra={"checkpoint_path": str(checkpoint_store.path), "error": str(exc)},
@@ -118,17 +139,39 @@ def run(argv: Optional[list[str]] = None) -> int:
     finally:
         sink.close()
         if checkpoint_store is not None and completed_successfully:
-            checkpoint_store.save(
-                runner.export_checkpoint(
-                    metadata={
-                        "env": cfg.env,
-                        "mode": "runner",
-                        "saved_at": datetime.now(timezone.utc).isoformat(),
-                        "events_written": stats.events_written,
-                        "reconnects": runner.metrics.reconnects,
+            checkpoint_to_save = runner.export_checkpoint(
+                metadata={
+                    "env": cfg.env,
+                    "mode": "runner",
+                    "saved_at": datetime.now(timezone.utc).isoformat(),
+                    "events_written": stats.events_written,
+                    "reconnects": runner.metrics.reconnects,
+                }
+            )
+            checkpoint_store.save(checkpoint_to_save)
+            logger.info(
+                "checkpoint saved",
+                extra={
+                    "checkpoint_path": str(checkpoint_store.path),
+                    "stream_keys": sorted(checkpoint_to_save.stream_cursors),
+                    "checkpoint_last_event_ts": checkpoint_to_save.last_event_ts.isoformat() if checkpoint_to_save.last_event_ts else None,
+                    "recovery_audit_events_total": len(runner.recovery_audit_events),
+                },
+            )
+            checkpoint_store.record_checkpoint_event(
+                event_type="checkpoint_saved",
+                trace_id=get_trace_id(),
+                state=checkpoint_to_save,
+                extra={"mode": "runner"},
+            )
+            for recovery_event in runner.recovery_audit_events:
+                checkpoint_store.append_audit_event(
+                    {
+                        **recovery_event,
+                        "event_type": "recovery_cursor_audit",
+                        "checkpoint_path": str(checkpoint_store.path),
                     }
                 )
-            )
         stats.reconnects = runner.metrics.reconnects
         stats.last_lag_seconds = runner.metrics.last_lag_seconds
         elapsed = time.time() - stats.start_time

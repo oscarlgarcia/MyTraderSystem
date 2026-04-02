@@ -597,3 +597,33 @@ def test_bar_recovery_uses_bar_snapshot_without_duplicate_edge():
     assert runner.metrics.snapshot_runs == 1
     assert runner.metrics.snapshot_rows == 2
     assert runner.metrics.snapshot_duplicates_skipped == 1
+
+
+def test_resync_records_recovery_cursor_audit_metadata():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    first = make_bar("BTCUSDT", base)
+    first.source_id = "1"
+    second = make_bar("BTCUSDT", base + timedelta(seconds=12))
+    second.source_id = "3"
+    recovered = make_bar("BTCUSDT", base + timedelta(seconds=5))
+    recovered.source_id = "2"
+    duplicate_edge = make_bar("BTCUSDT", base + timedelta(seconds=12))
+    duplicate_edge.source_id = "3"
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter([first, second]),
+        snapshot_fn=lambda: [recovered, duplicate_edge],
+        lag_threshold_seconds=2,
+        sleeper=lambda _: None,
+    )
+    runner.run(lambda _event: None, stop_on_complete=True)
+
+    assert runner.metrics.recovery_audit_events_total == 1
+    assert len(runner.recovery_audit_events) == 1
+    audit = runner.recovery_audit_events[0]
+    assert audit["stream_key"] == "BINANCE:BTCUSDT:kline"
+    assert audit["recovery_request_start_ts"] == base.isoformat()
+    assert audit["recovery_request_end_ts"] == (base + timedelta(seconds=12)).isoformat()
+    assert audit["cursor_before_value"] == "1"
+    assert audit["cursor_after_value"] == "3"
+    assert audit["recovered_rows_delivered"] == 2

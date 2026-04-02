@@ -40,6 +40,13 @@ class TemporalStreamState:
     recovery_window_rows_requested: int = 0
     recovery_window_rows_received: int = 0
     recovery_exactness_violation_total: int = 0
+    last_recovery_request_start_ts: datetime | None = None
+    last_recovery_request_end_ts: datetime | None = None
+    last_recovery_cursor_before_kind: str | None = None
+    last_recovery_cursor_before_value: str | None = None
+    last_recovery_cursor_after_kind: str | None = None
+    last_recovery_cursor_after_value: str | None = None
+    last_recovery_rows_delivered: int = 0
     gap_detected: bool = False
     gap_irreparable: bool = False
     gaps_total: int = 0
@@ -99,6 +106,13 @@ class TemporalStateStore:
                 "recovery_window_rows_requested": state.recovery_window_rows_requested,
                 "recovery_window_rows_received": state.recovery_window_rows_received,
                 "recovery_exactness_violation_total": state.recovery_exactness_violation_total,
+                "last_recovery_request_start_ts": state.last_recovery_request_start_ts.isoformat() if state.last_recovery_request_start_ts else None,
+                "last_recovery_request_end_ts": state.last_recovery_request_end_ts.isoformat() if state.last_recovery_request_end_ts else None,
+                "last_recovery_cursor_before_kind": state.last_recovery_cursor_before_kind,
+                "last_recovery_cursor_before_value": state.last_recovery_cursor_before_value,
+                "last_recovery_cursor_after_kind": state.last_recovery_cursor_after_kind,
+                "last_recovery_cursor_after_value": state.last_recovery_cursor_after_value,
+                "last_recovery_rows_delivered": state.last_recovery_rows_delivered,
                 "last_event_ts": state.last_event_ts.isoformat() if state.last_event_ts else None,
                 "cursor_kind": state.cursor_kind,
                 "cursor_value": state.cursor_value,

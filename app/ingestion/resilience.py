@@ -30,6 +30,7 @@ from app.marketdata.temporal_state import (
     cursor_from_event,
 )
 from app.observability.alerts import emit_operational_alert
+from app.observability.logger import get_trace_id
 
 
 SnapshotFn = Callable[..., Iterable[IngestionEvent]]
@@ -81,6 +82,8 @@ class ResilienceMetrics:
     recovery_window_rows_requested: int = 0
     recovery_window_rows_received: int = 0
     recovery_exactness_violation_total: int = 0
+    checkpoint_restores: int = 0
+    recovery_audit_events_total: int = 0
     temporal_streams: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
@@ -106,6 +109,7 @@ class ResilientRunner:
     temporal_state: TemporalStateStore = field(default_factory=TemporalStateStore)
     checkpoint_last_event_ts: Optional[datetime] = None
     stream_seen_entries: dict[TemporalPartitionKey, OrderedDict[EventIdentity, float]] = field(default_factory=dict)
+    recovery_audit_events: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def last_event_ts(self) -> Optional[datetime]:
@@ -114,6 +118,7 @@ class ResilientRunner:
     def restore_checkpoint(self, state: CheckpointState | None) -> None:
         if state is None:
             return
+        self.metrics.checkpoint_restores += 1
         self.checkpoint_last_event_ts = state.last_event_ts
         if state.stream_cursors:
             self.temporal_state.restore_cursor_states(state.stream_cursors)
@@ -423,9 +428,19 @@ class ResilientRunner:
         if not recovery_policy.can_recover(self.snapshot_fn):
             return
         logger = logging.getLogger("ingest.resilience")
+        stream_state = self.temporal_state.states.setdefault(partition_key, TemporalStreamState())
+        cursor_before_kind = stream_state.cursor_kind
+        cursor_before_value = stream_state.cursor_value
+        last_event_ts_before = stream_state.last_event_ts.isoformat() if stream_state.last_event_ts else None
+        if request is not None:
+            stream_state.last_recovery_request_start_ts = request.start_ts
+            stream_state.last_recovery_request_end_ts = request.end_ts
+            stream_state.last_recovery_cursor_before_kind = cursor_before_kind
+            stream_state.last_recovery_cursor_before_value = cursor_before_value
         logger.info(
             "recovery started",
             extra={
+                "stream_key": partition_key.label(),
                 "venue": partition_key.venue,
                 "symbol": partition_key.symbol,
                 "stream_type": partition_key.stream_type,
@@ -440,7 +455,6 @@ class ResilientRunner:
         requested_rows = max(0, int(request.limit)) if request is not None and request.limit is not None else 0
         if requested_rows:
             self.metrics.recovery_window_rows_requested += requested_rows
-            stream_state = self.temporal_state.states.setdefault(partition_key, TemporalStreamState())
             stream_state.recovery_window_rows_requested += requested_rows
             self._update_temporal_metrics(partition_key, stream_state)
         recovered_rows = 0
@@ -449,7 +463,6 @@ class ResilientRunner:
             recovered_events = list(recovery_policy.recover(self.snapshot_fn, partition=partition_key, request=request))
             if request is not None and request.limit is not None:
                 self.metrics.recovery_window_rows_received += len(recovered_events)
-                stream_state = self.temporal_state.states.setdefault(partition_key, TemporalStreamState())
                 stream_state.recovery_window_rows_received += len(recovered_events)
                 if len(recovered_events) < request.limit:
                     self._record_recovery_exactness_violation(
@@ -489,6 +502,7 @@ class ResilientRunner:
             logger.error(
                 "recovery failed",
                 extra={
+                    "stream_key": partition_key.label(),
                     "venue": partition_key.venue,
                     "symbol": partition_key.symbol,
                     "stream_type": partition_key.stream_type,
@@ -496,14 +510,46 @@ class ResilientRunner:
                 },
             )
             raise
+        stream_state.last_recovery_cursor_after_kind = stream_state.cursor_kind
+        stream_state.last_recovery_cursor_after_value = stream_state.cursor_value
+        stream_state.last_recovery_rows_delivered = recovered_rows
+        recovery_audit_event = {
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "trace_id": get_trace_id(),
+            "stream_key": partition_key.label(),
+            "recovery_policy": recovery_policy.name,
+            "checkpoint_last_event_ts": self.checkpoint_last_event_ts.isoformat() if self.checkpoint_last_event_ts else None,
+            "last_event_ts_before": last_event_ts_before,
+            "last_event_ts_after": stream_state.last_event_ts.isoformat() if stream_state.last_event_ts else None,
+            "cursor_before_kind": cursor_before_kind,
+            "cursor_before_value": cursor_before_value,
+            "cursor_after_kind": stream_state.cursor_kind,
+            "cursor_after_value": stream_state.cursor_value,
+            "recovery_request_start_ts": request.start_ts.isoformat() if request and request.start_ts else None,
+            "recovery_request_end_ts": request.end_ts.isoformat() if request and request.end_ts else None,
+            "recovery_request_interval": request.interval if request else None,
+            "recovery_window_rows_requested": requested_rows,
+            "recovery_window_rows_received": len(recovered_events),
+            "recovered_rows_delivered": recovered_rows,
+            "recovery_exactness_violated": bool(
+                request is not None and request.limit is not None and len(recovered_events) < request.limit
+            ),
+        }
+        self.recovery_audit_events.append(recovery_audit_event)
+        self.metrics.recovery_audit_events_total += 1
         logger.info(
             "recovery completed",
             extra={
+                "stream_key": partition_key.label(),
                 "venue": partition_key.venue,
                 "symbol": partition_key.symbol,
                 "stream_type": partition_key.stream_type,
                 "recovery_policy": recovery_policy.name,
                 "recovered_rows": recovered_rows,
+                "cursor_before_kind": cursor_before_kind,
+                "cursor_before_value": cursor_before_value,
+                "cursor_after_kind": stream_state.cursor_kind,
+                "cursor_after_value": stream_state.cursor_value,
                 "recovery_window_rows_requested": requested_rows or None,
                 "recovery_window_rows_received": len(recovered_events) if request is not None and request.limit is not None else None,
                 "snapshot_duplicates_skipped": self.metrics.snapshot_duplicates_skipped,
@@ -566,6 +612,7 @@ class ResilientRunner:
         stream_state: TemporalStreamState,
     ) -> None:
         self.metrics.temporal_streams[partition_key.label()] = {
+            "stream_key": partition_key.label(),
             "venue": partition_key.venue,
             "symbol": partition_key.symbol,
             "stream_type": partition_key.stream_type,
@@ -582,6 +629,21 @@ class ResilientRunner:
             "recovery_window_rows_requested": stream_state.recovery_window_rows_requested,
             "recovery_window_rows_received": stream_state.recovery_window_rows_received,
             "recovery_exactness_violation_total": stream_state.recovery_exactness_violation_total,
+            "last_recovery_request_start_ts": (
+                stream_state.last_recovery_request_start_ts.isoformat()
+                if stream_state.last_recovery_request_start_ts
+                else None
+            ),
+            "last_recovery_request_end_ts": (
+                stream_state.last_recovery_request_end_ts.isoformat()
+                if stream_state.last_recovery_request_end_ts
+                else None
+            ),
+            "last_recovery_cursor_before_kind": stream_state.last_recovery_cursor_before_kind,
+            "last_recovery_cursor_before_value": stream_state.last_recovery_cursor_before_value,
+            "last_recovery_cursor_after_kind": stream_state.last_recovery_cursor_after_kind,
+            "last_recovery_cursor_after_value": stream_state.last_recovery_cursor_after_value,
+            "last_recovery_rows_delivered": stream_state.last_recovery_rows_delivered,
             "last_event_ts": stream_state.last_event_ts.isoformat() if stream_state.last_event_ts else None,
             "cursor_kind": stream_state.cursor_kind,
             "cursor_value": stream_state.cursor_value,

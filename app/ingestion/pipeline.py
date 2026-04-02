@@ -32,6 +32,7 @@ from app.marketdata.models import IngestionEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, NullRawSink
 from app.marketdata.support_matrix import validate_live_feed_support
 from app.observability.alerts import emit_operational_alert
+from app.observability.logger import get_trace_id
 
 
 STREAM_COUNTER_FIELDS = {
@@ -562,7 +563,27 @@ def collect_events(
     if checkpoint_store_impl is not None:
         try:
             checkpoint_state = checkpoint_store_impl.load()
+            logger.info(
+                "checkpoint applied",
+                extra={
+                    "checkpoint_path": str(checkpoint_store_impl.path),
+                    "stream_keys": sorted(checkpoint_state.stream_cursors) if checkpoint_state is not None else [],
+                    "checkpoint_last_event_ts": checkpoint_state.last_event_ts.isoformat() if checkpoint_state and checkpoint_state.last_event_ts else None,
+                },
+            )
+            checkpoint_store_impl.record_checkpoint_event(
+                event_type="checkpoint_applied",
+                trace_id=get_trace_id(),
+                state=checkpoint_state,
+                extra={"mode": "live"},
+            )
         except ValueError as exc:
+            checkpoint_store_impl.record_checkpoint_event(
+                event_type="checkpoint_load_failed",
+                trace_id=get_trace_id(),
+                state=None,
+                extra={"mode": "live", "error": str(exc)},
+            )
             logger.warning(
                 "checkpoint recovery using empty state",
                 extra={
@@ -638,19 +659,41 @@ def collect_events(
             handler.close()
             sink_impl.close()
         if checkpoint_store_impl is not None:
-            checkpoint_store_impl.save(
-                runner.export_checkpoint(
-                    metadata={
-                        "env": cfg.env,
-                        "mode": "live",
-                        "saved_at": datetime.now(timezone.utc).isoformat(),
-                        "events_in": runner.metrics.events_in,
-                        "events_out": len(handler.events),
-                        "duplicates_dropped": runner.metrics.dedup_skipped + stats["duplicates_dropped"],
-                        "reconnects": runner.metrics.reconnects,
+            checkpoint_to_save = runner.export_checkpoint(
+                metadata={
+                    "env": cfg.env,
+                    "mode": "live",
+                    "saved_at": datetime.now(timezone.utc).isoformat(),
+                    "events_in": runner.metrics.events_in,
+                    "events_out": len(handler.events),
+                    "duplicates_dropped": runner.metrics.dedup_skipped + stats["duplicates_dropped"],
+                    "reconnects": runner.metrics.reconnects,
+                }
+            )
+            checkpoint_store_impl.save(checkpoint_to_save)
+            logger.info(
+                "checkpoint saved",
+                extra={
+                    "checkpoint_path": str(checkpoint_store_impl.path),
+                    "stream_keys": sorted(checkpoint_to_save.stream_cursors),
+                    "checkpoint_last_event_ts": checkpoint_to_save.last_event_ts.isoformat() if checkpoint_to_save.last_event_ts else None,
+                    "recovery_audit_events_total": len(runner.recovery_audit_events),
+                },
+            )
+            checkpoint_store_impl.record_checkpoint_event(
+                event_type="checkpoint_saved",
+                trace_id=get_trace_id(),
+                state=checkpoint_to_save,
+                extra={"mode": "live"},
+            )
+            for recovery_event in runner.recovery_audit_events:
+                checkpoint_store_impl.append_audit_event(
+                    {
+                        **recovery_event,
+                        "event_type": "recovery_cursor_audit",
+                        "checkpoint_path": str(checkpoint_store_impl.path),
                     }
                 )
-            )
         _emit_runtime_warnings(
             logger,
             runner,

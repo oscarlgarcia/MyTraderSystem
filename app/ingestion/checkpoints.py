@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,10 @@ CheckpointKey = EventIdentity
 class CheckpointStore:
     def __init__(self, path: Path):
         self.path = Path(path)
+
+    @property
+    def audit_path(self) -> Path:
+        return self.path.with_name(f"{self.path.stem}-audit.jsonl")
 
     def load(self) -> CheckpointState | None:
         if not self.path.exists():
@@ -100,6 +104,61 @@ class CheckpointStore:
         tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         tmp_path.replace(self.path)
+
+    def append_audit_event(self, payload: dict[str, Any]) -> None:
+        self.audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.audit_path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+            handle.write("\n")
+
+    def record_checkpoint_event(
+        self,
+        *,
+        event_type: str,
+        trace_id: str | None,
+        state: CheckpointState | None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        cursor_summaries = checkpoint_cursor_summaries(state)
+        base_payload = {
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "event_type": event_type,
+            "trace_id": trace_id,
+            "checkpoint_path": str(self.path),
+            "stream_key": "*",
+            "checkpoint_found": state is not None,
+            "checkpoint_last_event_ts": state.last_event_ts.isoformat() if state and state.last_event_ts else None,
+            "checkpoint_cursor_count": len(cursor_summaries),
+            "checkpoint_stream_keys": sorted(cursor_summaries),
+            "checkpoint_metadata": dict(state.metadata) if state is not None else {},
+        }
+        if extra:
+            base_payload.update(extra)
+        self.append_audit_event(base_payload)
+        for stream_key, cursor_summary in cursor_summaries.items():
+            stream_payload = dict(base_payload)
+            stream_payload.update(
+                {
+                    "event_type": f"{event_type}_stream",
+                    "stream_key": stream_key,
+                    **cursor_summary,
+                }
+            )
+            self.append_audit_event(stream_payload)
+
+
+def checkpoint_cursor_summaries(state: CheckpointState | None) -> dict[str, dict[str, Any]]:
+    if state is None:
+        return {}
+    payload: dict[str, dict[str, Any]] = {}
+    for label, cursor_state in state.stream_cursors.items():
+        payload[str(label)] = {
+            "cursor_kind": cursor_state.cursor_kind,
+            "cursor_value": cursor_state.cursor_value,
+            "cursor_last_event_ts": cursor_state.last_event_ts.isoformat() if cursor_state.last_event_ts else None,
+            "cursor_seen_entry_count": len(cursor_state.seen_entries),
+        }
+    return payload
 
 
 def _serialize_entry(entry: DedupStateEntry) -> dict[str, Any]:

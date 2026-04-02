@@ -1,6 +1,6 @@
 import io
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -10,7 +10,7 @@ from app.ingestion.dedup import DedupStateEntry
 from app.marketdata.temporal_state import CursorState, TemporalPartitionKey
 from app.ingestion.pipeline import collect_events
 from app.ingestion.sources import StaticSource
-from app.observability.logger import get_logger
+from app.observability.logger import clear_trace_id, get_logger, set_trace_id
 
 
 def _ev(ts_offset: int, price: float) -> MarketEvent:
@@ -120,6 +120,41 @@ def test_checkpoint_roundtrip_restores_stream_cursor_state(tmp_path):
     assert loaded.last_event_ts == state.last_event_ts
     assert loaded.stream_cursors == state.stream_cursors
     assert loaded.seen_entries == state.stream_cursors[partition.label()].seen_entries
+
+
+def test_checkpoint_store_records_audit_events_with_stream_cursor_context(tmp_path):
+    store = CheckpointStore(tmp_path / "state" / "checkpoint.json")
+    partition = TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="trade")
+    state = CheckpointState(
+        last_event_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        stream_cursors={
+            partition.label(): CursorState(
+                partition=partition,
+                last_event_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                cursor_kind="trade_id",
+                cursor_value="42",
+                seen_entries=(),
+            )
+        },
+        metadata={"mode": "live"},
+    )
+
+    store.record_checkpoint_event(
+        event_type="checkpoint_applied",
+        trace_id="trace-checkpoint-audit",
+        state=state,
+        extra={"mode": "live"},
+    )
+
+    rows = [json.loads(line) for line in store.audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert rows[0]["event_type"] == "checkpoint_applied"
+    assert rows[0]["trace_id"] == "trace-checkpoint-audit"
+    assert rows[0]["stream_key"] == "*"
+    assert rows[0]["checkpoint_cursor_count"] == 1
+    assert rows[1]["event_type"] == "checkpoint_applied_stream"
+    assert rows[1]["stream_key"] == "BINANCE:BTCUSDT:trade"
+    assert rows[1]["cursor_kind"] == "trade_id"
+    assert rows[1]["cursor_value"] == "42"
 
 
 def test_restart_does_not_reprocess_recent_duplicates(tmp_path):
@@ -241,3 +276,108 @@ def test_corrupt_stream_checkpoint_payload_triggers_safe_recovery(tmp_path):
     records = _json_lines(buffer)
     warning = next(record for record in records if record["message"] == "checkpoint recovery using empty state")
     assert "Invalid cursor state seen_entries payload" in warning["error"]
+
+
+def test_restart_audit_persists_checkpoint_applied_and_recovery_range(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = CheckpointStore(tmp_path / "state" / "checkpoint.json")
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    first_event = MarketEvent(
+        symbol="BTCUSDT",
+        event_ts=base,
+        price=100.0,
+        size=1.0,
+        source="kline",
+        metadata={"source_id": "1"},
+    )
+    set_trace_id("trace-restart-audit")
+    try:
+        collect_events(
+            mode="live",
+            cfg=cfg,
+            max_events=10,
+            duration_s=0,
+            logger=get_logger(name="test.ingest.checkpoint.audit", level="INFO", stream=io.StringIO()),
+            dedup_enabled=True,
+            snapshot_enabled=False,
+            source=StaticSource(events=[first_event]),
+            sink=DummySink(),
+            checkpoint_store=store,
+            stream_types=("kline",),
+        )
+
+        second_events = [
+            MarketEvent(
+                symbol="BTCUSDT",
+                event_ts=base,
+                price=100.0,
+                size=1.0,
+                source="kline",
+                metadata={"source_id": "1"},
+            ),
+            MarketEvent(
+                symbol="BTCUSDT",
+                event_ts=base + timedelta(seconds=12),
+                price=101.0,
+                size=1.0,
+                source="kline",
+                metadata={"source_id": "3"},
+            ),
+        ]
+        snapshot_events = [
+            MarketEvent(
+                symbol="BTCUSDT",
+                event_ts=base + timedelta(seconds=5),
+                price=100.5,
+                size=1.0,
+                source="kline",
+                metadata={"source_id": "2"},
+            ),
+            MarketEvent(
+                symbol="BTCUSDT",
+                event_ts=base + timedelta(seconds=12),
+                price=101.0,
+                size=1.0,
+                source="kline",
+                metadata={"source_id": "3"},
+            ),
+        ]
+        collect_events(
+            mode="live",
+            cfg=cfg,
+            max_events=10,
+            duration_s=0,
+            logger=get_logger(name="test.ingest.checkpoint.audit.second", level="INFO", stream=io.StringIO()),
+            dedup_enabled=True,
+            snapshot_enabled=True,
+            source=StaticSource(events=second_events, snapshot_events=snapshot_events),
+            sink=DummySink(),
+            checkpoint_store=store,
+            stream_types=("kline",),
+        )
+    finally:
+        clear_trace_id()
+
+    rows = [json.loads(line) for line in store.audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    applied = next(
+        row
+        for row in rows
+        if row["event_type"] == "checkpoint_applied"
+        and row["trace_id"] == "trace-restart-audit"
+        and row["checkpoint_found"] is True
+    )
+    recovery = next(row for row in rows if row["event_type"] == "recovery_cursor_audit")
+    saved_stream = next(
+        row
+        for row in reversed(rows)
+        if row["event_type"] == "checkpoint_saved_stream" and row["stream_key"] == "BINANCE:BTCUSDT:kline"
+    )
+
+    assert applied["checkpoint_found"] is True
+    assert applied["checkpoint_last_event_ts"] == base.isoformat()
+    assert recovery["stream_key"] == "BINANCE:BTCUSDT:kline"
+    assert recovery["trace_id"] == "trace-restart-audit"
+    assert recovery["recovery_request_start_ts"] == base.isoformat()
+    assert recovery["recovery_request_end_ts"] == (base + timedelta(seconds=12)).isoformat()
+    assert recovery["recovery_window_rows_received"] == 2
+    assert saved_stream["cursor_value"] == "3"
