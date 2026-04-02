@@ -168,6 +168,9 @@ Con la matriz actual, `kline` es el primer feed live que ya cumple `exact_verifi
 - CLI operativa de compactacion:
   - `python scripts/ingestion_compact.py --env dev --dry-run`
   - `python scripts/ingestion_compact.py --env dev --batch-limit 10 --retain-compacted-segments 1`
+- CLI operativa de quarantine / DLQ:
+  - `python -m app.ops.quarantine_cli --base-dir . list --symbol BTCUSDT --stream-type kline`
+  - `python -m app.ops.quarantine_cli --base-dir . replay --env dev --record-id ingestion-dlq.jsonl:1 --write-normalized --report-path docs/validation/quarantine_replay_report.json`
 - Benchmark reproducible de storage segmentado:
   - `python scripts/ingestion_storage_benchmark.py`
   - mide:

@@ -24,6 +24,9 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - Compactacion offline:
   - `docker compose exec app poetry run python scripts/ingestion_compact.py --env dev --dry-run`
   - `docker compose exec app poetry run python scripts/ingestion_compact.py --env dev --batch-limit 10 --retain-compacted-segments 1`
+- Quarantine / DLQ:
+  - `docker compose exec app poetry run python -m app.ops.quarantine_cli --base-dir . list --symbol BTCUSDT --stream-type kline`
+  - `docker compose exec app poetry run python -m app.ops.quarantine_cli --base-dir . replay --env dev --record-id ingestion-dlq.jsonl:1 --write-normalized --report-path docs/validation/quarantine_replay_report.json`
 
 ## Artefactos de evidencia
 - `docs/validation/ingestion_soak_evidence.json`
@@ -31,6 +34,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `docs/validation/ingestion_ws_canary_report.json`
 - `docs/validation/ingestion_storage_benchmark.json`
 - `docs/validation/ingestion_release_gates.json`
+- `docs/validation/quarantine_replay_report.json`
 - `<data_dir>/shadow/env=<env>/comparisons.jsonl`
 - `<data_dir>/normalized/.../data.parquet`
 - `<data_dir>/normalized/.../retained-segments/`
@@ -101,6 +105,10 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
    - el path activo `segments/` queda vacio o eliminado
    - `retained-segments/` solo existe si se pidio retencion
    - no queda `compaction-failures.jsonl` nuevo
+17. Si existe `schema-drift-quarantine.jsonl` o `ingestion-dlq.jsonl`, inspeccionar antes de promover:
+   - `python -m app.ops.quarantine_cli --base-dir . list --limit 20`
+   - si se corrige un payload, reinyectarlo con `replay`
+   - verificar en el reporte si `normalized_modified = true`
 
 ## Interpretacion operativa
 - Si falla `test_end_to_end_live_mock_with_reconnect_checkpoint_and_sink_flush`
