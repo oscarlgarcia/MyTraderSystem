@@ -26,6 +26,15 @@ def _instrument_metadata(symbol: str, venue: str) -> dict[str, str]:
     return resolve_instrument(symbol, venue=venue).as_metadata()
 
 
+def _quote_volume_from_snapshot_row(row: list[Any]) -> str:
+    # Full Binance REST klines expose quote asset volume at row[7]. Older
+    # fixtures in the test suite only carry seven columns, so keep row[5] as a
+    # compatibility fallback for those synthetic rows.
+    if len(row) > 7 and row[7] not in ("", None):
+        return str(row[7])
+    return str(row[5])
+
+
 class BinanceFeedNormalizer(Protocol):
     event_type: str
     stream_type: str
@@ -117,12 +126,19 @@ class BinanceBarNormalizer:
             process_ts=_process_ts(process_ts),
             venue=venue,
             source_id=str(kline.get("t")) if kline.get("t") is not None else None,
-            metadata=stamp_normalizer_version(_instrument_metadata(str(payload["s"]), venue)),
+            metadata=stamp_normalizer_version(
+                {
+                    **_instrument_metadata(str(payload["s"]), venue),
+                    "volume_kind": "quote",
+                    "volume_semantics": "quote_asset_volume",
+                }
+            ),
             open=float(kline.get("o", kline["c"])),
             high=float(kline.get("h", kline["c"])),
             low=float(kline.get("l", kline["c"])),
             close=float(kline["c"]),
             volume=float(kline["q"]),
+            volume_kind="quote",
             interval=interval or str(kline.get("i", "1m")),
             open_ts=_ts_from_ms(int(kline["t"])) if kline.get("t") is not None else None,
             close_ts=_ts_from_ms(int(kline["T"])) if kline.get("T") is not None else None,
@@ -147,7 +163,7 @@ class BinanceBarNormalizer:
                 "h": str(row[2]) if len(row) > 2 and row[2] not in ("", None) else close,
                 "l": str(row[3]) if len(row) > 3 and row[3] not in ("", None) else close,
                 "c": close,
-                "q": str(row[5]),
+                "q": _quote_volume_from_snapshot_row(row),
                 "i": interval,
             },
         }

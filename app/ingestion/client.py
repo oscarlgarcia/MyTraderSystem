@@ -74,7 +74,7 @@ def normalize_kline_typed(
 def normalize_kline(payload: dict) -> MarketEvent:
     """
     Normalize Binance kline payload to MarketEvent (use close price).
-    Expected keys: s (symbol), E (event time), k->{c (close), q (volume)}.
+    Expected keys: s (symbol), E (event time), k->{c (close), q (quote volume)}.
     """
     return ensure_legacy_market_event(normalize_kline_typed(payload))
 

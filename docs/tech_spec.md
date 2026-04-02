@@ -243,7 +243,7 @@
 ## Contrato canonico tipado
 - `app.marketdata.models` introduce una capa de contratos tipados para market data:
   - `TradeEvent`: `price`, `size`, `trade_id`, `side`
-  - `BarEvent`: `open`, `high`, `low`, `close`, `volume`, `interval`
+  - `BarEvent`: `open`, `high`, `low`, `close`, `volume`, `volume_kind`, `interval`
   - `BookEvent`: `bid_price`, `bid_size`, `ask_price`, `ask_size`, `sequence_id` como placeholder experimental, fuera del scope soportado de ingestion/storage
 - El surface soportado publicamente hoy es `TradeEvent` + `BarEvent`; `BookEvent` se mantiene para evolucion futura sin prometer soporte operativo actual.
 - Todos comparten:
@@ -403,13 +403,16 @@
   - payloads `trade`: `s`, `E`, `p`, `q`, numericos finitos y no negativos
   - payloads `kline`: `s`, `E`, `k`, `c`, `q` y, cuando vienen `o/h/l/t/T`, consistencia OHLC y orden temporal
   - `TradeEvent`: precio/tamano finitos y no negativos, `exchange_ts` saneado y `process_ts >= receive_ts`
-  - `BarEvent`: OHLC consistente, volumen no negativo y `close_ts >= open_ts`
+  - `BarEvent`: OHLC consistente, volumen no negativo, `volume_kind` explicito y `close_ts >= open_ts`
   - `BookEvent`: libro no cruzado, tamanos/precios finitos y no negativos
 - Regla operativa:
   - payload raw invalido de `BinanceSource` -> `ErrorSink` / DLQ local
   - evento tipado invalido inyectado por una fuente custom -> fallo rapido del source
   - `BookEvent` no entra en el scope soportado de runtime/storage; si llega a `ParquetWriter`, el writer falla explicitamente
 - Se considera timestamp absurdo cualquier timestamp con mas de 5 minutos de adelanto respecto al reloj del proceso.
+- Semantica de volumen soportada hoy:
+  - `Binance` `kline` emite `BarEvent.volume_kind="quote"`
+  - `BarEvent.volume` representa quote asset volume; el consumidor no debe inferirlo desde el vendor payload
 
 ## Normalized storage v2
 - `app.ingestion.storage` escribe ahora en:

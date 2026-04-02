@@ -34,6 +34,9 @@ def _metadata_ts(metadata: dict[str, str], key: str) -> datetime | None:
     return datetime.fromisoformat(raw)
 
 
+BarVolumeKind: TypeAlias = Literal["base", "quote", "contracts"]
+
+
 @dataclass(slots=True, kw_only=True)
 class BaseMarketEvent:
     symbol: str
@@ -91,6 +94,7 @@ class BarEvent(BaseMarketEvent):
     low: float
     close: float
     volume: float
+    volume_kind: BarVolumeKind = "quote"
     interval: str = "1m"
     open_ts: datetime | None = None
     close_ts: datetime | None = None
@@ -115,6 +119,8 @@ class BarEvent(BaseMarketEvent):
             raise ValueError("open must be within [low, high]")
         if not (self.low <= self.close <= self.high):
             raise ValueError("close must be within [low, high]")
+        if self.volume_kind not in {"base", "quote", "contracts"}:
+            raise ValueError("volume_kind must be base, quote, or contracts")
         if not self.interval:
             raise ValueError("interval must be non-empty")
         _validate_optional_ts(self.open_ts, "open_ts")
@@ -230,6 +236,7 @@ def legacy_market_event_to_bar(
         low=float(metadata.get("low", event.price)),
         close=event.price,
         volume=event.size,
+        volume_kind=metadata.get("volume_kind", "quote"),
         interval=metadata.get("interval", interval),
         open_ts=open_ts or _metadata_ts(metadata, "open_ts"),
         close_ts=close_ts or _metadata_ts(metadata, "close_ts") or event.event_ts,
@@ -273,6 +280,7 @@ def typed_event_to_legacy(event: CanonicalMarketEvent) -> MarketEvent:
         metadata.setdefault("open", str(event.open))
         metadata.setdefault("high", str(event.high))
         metadata.setdefault("low", str(event.low))
+        metadata.setdefault("volume_kind", event.volume_kind)
         return MarketEvent(
             symbol=event.symbol,
             event_ts=event.close_ts or event.exchange_ts,

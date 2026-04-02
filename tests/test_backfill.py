@@ -117,6 +117,15 @@ def test_normalize_kline_row_utc():
     assert ev.low == 98.0
     assert ev.close == 100.0
     assert ev.volume == 5.0
+    assert ev.volume_kind == "quote"
+
+
+def test_normalize_kline_row_prefers_quote_asset_volume_when_full_binance_row_is_available():
+    row = [0, "99", "101", "98", "100", "5", 60_000, "250.5"]
+    ev = backfill.normalize_kline_row("BTCUSDT", row)
+
+    assert ev.volume == 250.5
+    assert ev.volume_kind == "quote"
 
 
 def test_backfill_writes_and_idempotent(monkeypatch, tmp_path):

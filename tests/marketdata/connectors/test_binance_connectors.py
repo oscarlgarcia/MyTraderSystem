@@ -38,7 +38,7 @@ def test_binance_bar_snapshot_payload_builder_and_normalizer():
     payload = snapshot_payload_from_row(
         "kline",
         "BTCUSDT",
-        [1704067200000, "100", "101", "99", "100.5", "10", 1704067250000],
+        [1704067200000, "100", "101", "99", "100.5", "10", 1704067250000, "2500"],
         interval="1m",
     )
     event = BinanceBarNormalizer.normalize_typed(payload)
@@ -46,6 +46,10 @@ def test_binance_bar_snapshot_payload_builder_and_normalizer():
     assert isinstance(event, BarEvent)
     assert event.interval == "1m"
     assert event.close == 100.5
+    assert event.volume == 2500.0
+    assert event.volume_kind == "quote"
+    assert event.metadata["volume_kind"] == "quote"
+    assert event.metadata["volume_semantics"] == "quote_asset_volume"
 
 
 def test_normalize_binance_event_dispatches_by_feed():

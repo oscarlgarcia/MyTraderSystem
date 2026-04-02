@@ -150,6 +150,10 @@ def fetch_klines(
 
 def _kline_payload_from_row(symbol: str, row: list, *, interval: str) -> dict:
     close = str(row[4])
+    if len(row) > 7 and row[7] not in ("", None):
+        quote_volume = str(row[7])
+    else:
+        quote_volume = str(row[5])
     return {
         "s": symbol,
         "E": int(row[6]),
@@ -160,7 +164,7 @@ def _kline_payload_from_row(symbol: str, row: list, *, interval: str) -> dict:
             "h": str(row[2]) if len(row) > 2 and row[2] not in ("", None) else close,
             "l": str(row[3]) if len(row) > 3 and row[3] not in ("", None) else close,
             "c": close,
-            "q": str(row[5]),
+            "q": quote_volume,
             "i": interval,
         },
     }

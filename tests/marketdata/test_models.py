@@ -60,6 +60,7 @@ def test_bar_event_construction_and_validation():
     assert event.source == "kline"
     assert event.price == 102.0
     assert event.size == 10.0
+    assert event.volume_kind == "quote"
 
 
 def test_book_event_construction_and_validation():
@@ -100,6 +101,20 @@ def test_bar_event_rejects_inconsistent_ohlc():
         )
 
 
+def test_bar_event_rejects_unknown_volume_kind():
+    with pytest.raises(ValueError, match="volume_kind"):
+        BarEvent(
+            symbol="BTCUSDT",
+            exchange_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            open=100.0,
+            high=101.0,
+            low=99.0,
+            close=100.0,
+            volume=1.0,
+            volume_kind="ticks",  # type: ignore[arg-type]
+        )
+
+
 def test_legacy_market_event_to_trade_adapter():
     legacy = MarketEvent(
         symbol="BTCUSDT",
@@ -133,6 +148,7 @@ def test_legacy_market_event_to_bar_adapter():
     assert typed.low == 100.0
     assert typed.close == 100.0
     assert typed.volume == 20.0
+    assert typed.volume_kind == "quote"
 
 
 def test_typed_event_to_legacy_trade_roundtrip():
@@ -187,6 +203,7 @@ def test_typed_event_to_legacy_bar_roundtrip():
     assert legacy.price == 103.0
     assert legacy.size == 12.0
     assert legacy.metadata["interval"] == "1m"
+    assert legacy.metadata["volume_kind"] == "quote"
     assert legacy.metadata["receive_ts"] == receive_ts.isoformat()
     assert legacy.metadata["process_ts"] == process_ts.isoformat()
 
@@ -194,6 +211,7 @@ def test_typed_event_to_legacy_bar_roundtrip():
     assert roundtrip.exchange_ts == bar.exchange_ts
     assert roundtrip.receive_ts == receive_ts
     assert roundtrip.process_ts == process_ts
+    assert roundtrip.volume_kind == "quote"
 
 
 def test_pipeline_accepts_typed_trade_events_without_legacy_coercion():

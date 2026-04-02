@@ -120,6 +120,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
     - `low`
     - `close`
     - `volume`
+    - `volume_kind`
     - `interval`
     - `open_ts`
     - `close_ts`
@@ -146,6 +147,7 @@ El `docker-compose.yml` monta el repo en `/workspace` y mantiene `.venv` en un v
 - Extender streams: registra un builder con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")` y construye la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
 - Contrato de fuentes/sinks: live ahora se ejecuta sobre un `Source` (`BinanceSource` por defecto) y un `EventSink` (`ParquetEventSink` por defecto), lo que permite tests con mocks sin tocar Binance ni Parquet.
 - Contrato canonico tipado: `app.marketdata.models` introduce `TradeEvent` y `BarEvent` como surface soportada de ingestion/storage/runtime. `BookEvent` se conserva como placeholder experimental para trabajo futuro de depth/quotes, pero hoy esta fuera de scope publico y `normalized` rechaza ese feed explicitamente. El hot path de `collect_events(...)` ya opera con eventos tipados; los adapters legacy quedan acotados a capas de compatibilidad explicita como storage legacy o consumidores antiguos.
+- Semantica de `BarEvent.volume`: el contrato tipado expone `volume_kind` para que el consumidor no tenga que inferir unidades. En el scope soportado hoy (`Binance` `kline`), `volume_kind="quote"` y `volume` representa quote asset volume. En snapshots REST completos se toma la columna de quote asset volume; en fixtures legacy reducidos se mantiene el fallback compatible ya existente.
 - Orquestacion desacoplada:
   - `app.ingestion.service.run_ingestion_service(...)` ejecuta solo ingestion
   - `app.main.run_trading_cycle(...)` ejecuta features, strategy, risk, execution y portfolio a partir de eventos ya ingeridos

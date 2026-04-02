@@ -77,6 +77,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `low`
     - `close`
     - `volume`
+    - `volume_kind`
     - `interval`
     - `open_ts`
     - `close_ts`
@@ -218,6 +219,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - si el feed es `trade`, no rellena el hueco con barras y deja el gap fuerte como `gap_irreparable`.
 - Si el source usado es `HandoffSource`, `collect_events` le inyecta el checkpoint local cargado antes de arrancar live para que el bootstrap historico no reprocesse borde ya cubierto.
 - `Source` y `EventSink` aceptan eventos tipados o `MarketEvent` legacy como interfaz de compatibilidad; el surface soportado publicamente hoy es `TradeEvent` + `BarEvent`. `BookEvent` no entra en el runtime soportado y el handler live ya no convierte a `MarketEvent` en el hot path.
+- `BarEvent.volume` ya no debe interpretarse por inferencia externa: el contrato typed incluye `volume_kind`. En el scope soportado hoy (`Binance` `kline`), el normalizador emite `volume_kind="quote"` y `volume` representa quote asset volume.
 - Si el path live es el real (sin `source`/`sink` custom), `collect_events` carga `ingestion-checkpoint.json` al arrancar y lo reescribe tras un cierre limpio del sink.
 - `BinanceSource` valida payloads raw antes de normalizar y valida el evento resultante tras normalizar; si un mensaje es incompatible, lo envia al `ErrorSink` y sigue procesando el stream.
 
