@@ -111,6 +111,25 @@ def test_binance_source_captures_receive_and_process_timestamps_on_raw_stream():
     assert metric["receive_process_skew_seconds"] >= 0.0
 
 
+def test_binance_source_only_emits_closed_kline_events_from_live_stream():
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=".", log_level="INFO")
+
+    def fake_ws_stream(url: str, end_time=None):
+        del url, end_time
+        yield '{"stream":"btcusdt@kline_1m","data":{"s":"BTCUSDT","E":1704067200000,"k":{"t":1704067140000,"T":1704067199999,"o":"100","h":"101","l":"99","c":"100.5","q":"5","i":"1m","x":false}}}'
+        yield '{"stream":"btcusdt@kline_1m","data":{"s":"BTCUSDT","E":1704067260000,"k":{"t":1704067200000,"T":1704067259999,"o":"100.5","h":"102","l":"100","c":"101","q":"7","i":"1m","x":true}}}'
+
+    source = BinanceSource(cfg, ws_stream=fake_ws_stream, stream_types=("kline",))
+    out = list(source.stream())
+
+    assert len(out) == 1
+    event = out[0]
+    assert event.source == "kline"
+    assert event.close_ts == datetime(2024, 1, 1, 0, 0, 59, 999000, tzinfo=timezone.utc)
+    metric = source.stats.stream_metrics["BINANCE:BTCUSDT:kline"]
+    assert metric["messages_in_total"] == 1
+
+
 def test_binance_source_records_per_stream_raw_latency(tmp_path: Path):
     cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
 

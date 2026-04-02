@@ -7,7 +7,7 @@ import pytest
 
 from app.marketdata.gaps import GapObservation
 from app.ingestion.resilience import ResilientRunner
-from app.marketdata.recovery import build_recovery_request, supports_live_recovery
+from app.marketdata.recovery import build_recovery_request, supports_live_recovery, verify_recovery_window
 from app.marketdata.models import BarEvent, TradeEvent
 from app.marketdata.support_matrix import FEED_SUPPORT_MATRIX
 from app.marketdata.temporal_state import TemporalPartitionKey
@@ -21,6 +21,7 @@ def _bar(symbol: str, ts: datetime) -> BarEvent:
         receive_ts=ts,
         process_ts=ts,
         venue="BINANCE",
+        source_id=str(int((ts - timedelta(minutes=1)).timestamp() * 1000)),
         open=100.0,
         high=101.0,
         low=99.0,
@@ -55,11 +56,12 @@ def test_exact_bar_recovery_fills_gap_without_edge_duplicates():
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
     stream_events = [
         _bar("BTCUSDT", base),
-        _bar("BTCUSDT", base + timedelta(seconds=12)),
+        _bar("BTCUSDT", base + timedelta(minutes=2)),
     ]
     snapshot_events = [
-        _bar("BTCUSDT", base + timedelta(seconds=5)),
-        _bar("BTCUSDT", base + timedelta(seconds=12)),
+        _bar("BTCUSDT", base),
+        _bar("BTCUSDT", base + timedelta(minutes=1)),
+        _bar("BTCUSDT", base + timedelta(minutes=2)),
     ]
     handled: list[datetime] = []
 
@@ -73,11 +75,11 @@ def test_exact_bar_recovery_fills_gap_without_edge_duplicates():
 
     assert handled == [
         base,
-        base + timedelta(seconds=5),
-        base + timedelta(seconds=12),
+        base + timedelta(minutes=1),
+        base + timedelta(minutes=2),
     ]
     assert runner.metrics.snapshot_runs == 1
-    assert runner.metrics.snapshot_duplicates_skipped == 1
+    assert runner.metrics.snapshot_duplicates_skipped == 2
     stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:kline"]
     assert stream_metrics["gap_irreparable"] is False
 
@@ -129,11 +131,13 @@ def test_build_recovery_request_scales_bar_snapshot_window_with_gap(gap_minutes:
             mode="weak_gap_detection",
             gap_seconds=float(gap_minutes * 60),
         ),
+        previous_cursor_kind="source_id",
+        previous_cursor_value=str(int((base - timedelta(minutes=1)).timestamp() * 1000)),
     )
 
     assert request is not None
-    assert request.start_ts == base
-    assert request.end_ts == base + timedelta(minutes=gap_minutes)
+    assert request.start_ts == base - timedelta(minutes=1)
+    assert request.end_ts == base + timedelta(minutes=gap_minutes - 1)
     assert request.interval == "1m"
     assert request.limit == expected_limit
     assert request.reason == "weak_gap_detection"
@@ -162,13 +166,51 @@ def test_runner_passes_recovery_request_window_to_snapshot_fn():
     request = captured["request"]
     assert request is not None
     assert request.partition == TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline")
-    assert request.start_ts == base
-    assert request.end_ts == base + timedelta(minutes=5)
+    assert request.start_ts == base - timedelta(minutes=1)
+    assert request.end_ts == base + timedelta(minutes=4)
     assert request.interval == "1m"
     assert request.limit == 6
 
 
-def test_large_gap_partial_snapshot_does_not_imply_exact_recovery():
+def test_exact_kline_recovery_uses_open_time_window_without_gap_or_double_count():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    stream_events = [
+        _bar("BTCUSDT", base),
+        _bar("BTCUSDT", base + timedelta(minutes=5)),
+    ]
+    handled: list[datetime] = []
+
+    def snapshot_fn(*, request=None):
+        assert request is not None
+        assert request.limit == 6
+        return [
+            _bar("BTCUSDT", base + timedelta(minutes=offset))
+            for offset in range(0, 6)
+        ]
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(stream_events),
+        snapshot_fn=snapshot_fn,
+        lag_threshold_seconds=2,
+        sleeper=lambda _seconds: None,
+    )
+    runner.run(lambda event: handled.append(event.event_ts), stop_on_complete=True)
+
+    assert handled == [
+        base,
+        base + timedelta(minutes=1),
+        base + timedelta(minutes=2),
+        base + timedelta(minutes=3),
+        base + timedelta(minutes=4),
+        base + timedelta(minutes=5),
+    ]
+    assert runner.metrics.recovery_exactness_violation_total == 0
+    stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:kline"]
+    assert stream_metrics["gap_irreparable"] is False
+    assert FEED_SUPPORT_MATRIX["kline"].supports_exact_recovery is True
+
+
+def test_exact_kline_recovery_marks_gap_irreparable_when_snapshot_window_is_incomplete():
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
     stream_events = [
         _bar("BTCUSDT", base),
@@ -209,4 +251,41 @@ def test_large_gap_partial_snapshot_does_not_imply_exact_recovery():
     assert stream_metrics["recovery_exactness_violation_total"] == 1
     alerts = [line for line in buffer.getvalue().splitlines() if "recovery_exactness_violation" in line]
     assert alerts
-    assert FEED_SUPPORT_MATRIX["kline"].supports_exact_recovery is False
+    assert FEED_SUPPORT_MATRIX["kline"].supports_exact_recovery is True
+
+
+def test_verify_recovery_window_rejects_missing_and_unexpected_kline_rows():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    request = build_recovery_request(
+        _bar("BTCUSDT", base + timedelta(minutes=5)),
+        partition=TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline"),
+        previous_ts=base,
+        previous_cursor_kind="source_id",
+        previous_cursor_value=str(int((base - timedelta(minutes=1)).timestamp() * 1000)),
+        gap_observation=GapObservation(
+            detected=True,
+            mode="weak_gap_detection",
+            gap_seconds=300.0,
+        ),
+    )
+
+    verification = verify_recovery_window(
+        partition=TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline"),
+        request=request,
+        recovered_events=[
+            _bar("BTCUSDT", base),
+            _bar("BTCUSDT", base + timedelta(minutes=1)),
+            _bar("BTCUSDT", base + timedelta(minutes=3)),
+            _bar("BTCUSDT", base + timedelta(minutes=5)),
+            _bar("BTCUSDT", base + timedelta(minutes=6)),
+        ],
+    )
+
+    assert verification.exact is False
+    assert verification.expected_rows == 6
+    assert verification.received_rows == 5
+    assert verification.missing_timestamps == (
+        base + timedelta(minutes=1),
+        base + timedelta(minutes=3),
+    )
+    assert verification.unexpected_timestamps == (base + timedelta(minutes=5),)

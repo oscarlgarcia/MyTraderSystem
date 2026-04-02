@@ -12,7 +12,18 @@ from app.marketdata.support_matrix import FEED_SUPPORT_MATRIX
 
 # Release-blocking registry: any feed promoted to exact recovery must point to
 # explicit tests that prove the claim.
-EXACT_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {}
+EXACT_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "kline": (
+        (
+            "tests.marketdata.recovery.test_recovery_guarantees",
+            "test_exact_kline_recovery_uses_open_time_window_without_gap_or_double_count",
+        ),
+        (
+            "tests.marketdata.recovery.test_recovery_guarantees",
+            "test_exact_kline_recovery_marks_gap_irreparable_when_snapshot_window_is_incomplete",
+        ),
+    ),
+}
 EXACT_VERIFIED_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {}
 
 

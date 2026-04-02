@@ -21,7 +21,14 @@ from app.ingestion.dedup import DedupStateEntry, Deduplicator, EventIdentity
 from app.ingestion.errors import IngestionError, classify_error
 from app.marketdata.gaps import detect_gap
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
-from app.marketdata.recovery import RecoveryPolicy, RecoveryRequest, build_recovery_request, recovery_policy_for_event
+from app.marketdata.recovery import (
+    RecoveryPolicy,
+    RecoveryRequest,
+    RecoveryVerification,
+    build_recovery_request,
+    recovery_policy_for_event,
+    verify_recovery_window,
+)
 from app.marketdata.temporal_state import (
     CursorState,
     TemporalPartitionKey,
@@ -375,6 +382,8 @@ class ResilientRunner:
                         partition=partition_key,
                         previous_ts=previous_ts,
                         gap_observation=gap_observation,
+                        previous_cursor_kind=stream_state.cursor_kind,
+                        previous_cursor_value=stream_state.cursor_value,
                     )
                     self._resync(
                         handler,
@@ -459,18 +468,25 @@ class ResilientRunner:
             self._update_temporal_metrics(partition_key, stream_state)
         recovered_rows = 0
         recovered_events: list[IngestionEvent] = []
+        recovery_verification = RecoveryVerification(exact=True, expected_rows=0, received_rows=0)
         try:
             recovered_events = list(recovery_policy.recover(self.snapshot_fn, partition=partition_key, request=request))
             if request is not None and request.limit is not None:
                 self.metrics.recovery_window_rows_received += len(recovered_events)
                 stream_state.recovery_window_rows_received += len(recovered_events)
-                if len(recovered_events) < request.limit:
+                recovery_verification = verify_recovery_window(
+                    partition=partition_key,
+                    request=request,
+                    recovered_events=recovered_events,
+                )
+                if not recovery_verification.exact:
                     self._record_recovery_exactness_violation(
                         partition_key,
                         stream_state,
-                        requested_rows=request.limit,
-                        received_rows=len(recovered_events),
+                        requested_rows=recovery_verification.expected_rows or request.limit,
+                        received_rows=recovery_verification.received_rows,
                         request=request,
+                        verification=recovery_verification,
                     )
                 else:
                     self._update_temporal_metrics(partition_key, stream_state)
@@ -531,9 +547,11 @@ class ResilientRunner:
             "recovery_window_rows_requested": requested_rows,
             "recovery_window_rows_received": len(recovered_events),
             "recovered_rows_delivered": recovered_rows,
-            "recovery_exactness_violated": bool(
-                request is not None and request.limit is not None and len(recovered_events) < request.limit
-            ),
+            "recovery_exactness_violated": bool(request is not None and request.limit is not None and not recovery_verification.exact),
+            "recovery_expected_rows": recovery_verification.expected_rows or None,
+            "recovery_missing_timestamps": [timestamp.isoformat() for timestamp in recovery_verification.missing_timestamps] or None,
+            "recovery_unexpected_timestamps": [timestamp.isoformat() for timestamp in recovery_verification.unexpected_timestamps] or None,
+            "recovery_duplicate_timestamps": [timestamp.isoformat() for timestamp in recovery_verification.duplicate_timestamps] or None,
         }
         self.recovery_audit_events.append(recovery_audit_event)
         self.metrics.recovery_audit_events_total += 1
@@ -552,6 +570,8 @@ class ResilientRunner:
                 "cursor_after_value": stream_state.cursor_value,
                 "recovery_window_rows_requested": requested_rows or None,
                 "recovery_window_rows_received": len(recovered_events) if request is not None and request.limit is not None else None,
+                "recovery_expected_rows": recovery_verification.expected_rows or None,
+                "recovery_exact": recovery_verification.exact if request is not None and request.limit is not None else None,
                 "snapshot_duplicates_skipped": self.metrics.snapshot_duplicates_skipped,
             },
         )
@@ -759,6 +779,7 @@ class ResilientRunner:
         requested_rows: int,
         received_rows: int,
         request: RecoveryRequest,
+        verification: RecoveryVerification | None = None,
     ) -> None:
         stream_state.recovery_exactness_violation_total += 1
         stream_state.gap_irreparable = True
@@ -780,6 +801,9 @@ class ResilientRunner:
                 "recovery_window_rows_received": received_rows,
                 "gap_seconds": request.gap_seconds,
                 "missing_count": request.missing_count,
+                "recovery_missing_timestamps": [timestamp.isoformat() for timestamp in verification.missing_timestamps] if verification else None,
+                "recovery_unexpected_timestamps": [timestamp.isoformat() for timestamp in verification.unexpected_timestamps] if verification else None,
+                "recovery_duplicate_timestamps": [timestamp.isoformat() for timestamp in verification.duplicate_timestamps] if verification else None,
             },
         )
         emit_operational_alert(
@@ -798,6 +822,9 @@ class ResilientRunner:
                 "recovery_window_rows_received": received_rows,
                 "gap_seconds": request.gap_seconds,
                 "missing_count": request.missing_count,
+                "recovery_missing_timestamps": [timestamp.isoformat() for timestamp in verification.missing_timestamps] if verification else None,
+                "recovery_unexpected_timestamps": [timestamp.isoformat() for timestamp in verification.unexpected_timestamps] if verification else None,
+                "recovery_duplicate_timestamps": [timestamp.isoformat() for timestamp in verification.duplicate_timestamps] if verification else None,
             },
         )
         self._update_temporal_metrics(partition_key, stream_state)

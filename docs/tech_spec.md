@@ -119,7 +119,7 @@
   - Si `stream_types` es `None`, usa los builders por defecto `trade` y `kline`.
   - Para tipos nuevos, requiere `register_stream_builder(...)` y un `register_normalizer(...)` compatible con `parse_message`.
 - `app.config.DEFAULT_INGEST_STREAM_TYPES`
-  - el runtime live usa por defecto `("kline",)` para no ofrecer feeds fuera del scope live actual; eso no implica exact recovery
+- el runtime live usa por defecto `("kline",)` para no ofrecer feeds fuera del scope live actual; hoy `kline` ya declara recovery `exact`, pero no `exact_verified`
 - `app.ingestion.backfill.run(argv=None, sink=None) -> int`
   - `--dedup` activa deduplicacion previa a sink con la misma clave `_key`.
 - `app.features.store.compute_features(events, window=5, windows=None, aggregators=None, feature_set=None, cache=None) -> list[FeatureVector]`
@@ -241,7 +241,7 @@
   - produccion rechaza configuraciones con degradacion silenciosa o perdida implicita;
 - cualquier `mode=live` rechaza feeds sin `supports_live` segun `app.marketdata.support_matrix`;
 - produccion rechaza ademas feeds live sin `supports_exact_recovery` y `supports_handoff`;
-- mientras no exista recovery exacto real para `kline`, `--production-mode` no admite ningun feed live;
+- aunque `kline` ya declare recovery `exact`, `--production-mode` no admite ningun feed live hasta que exista al menos un feed `exact_verified`;
 - fuera de produccion, el alcance live actual queda limitado a `kline`;
   - la ruta de persistencia debe ser valida y escribible.
 
@@ -319,7 +319,7 @@
 - `supports_live_recovery(...)`
   - devuelve `True` solo para `kline`
   - formaliza la decision arquitectonica actual: bars-only para live
-  - no implica por si mismo recovery exacto; ese claim queda gobernado por `support_matrix`
+- no implica por si mismo recovery `exact_verified`; ese claim queda gobernado por `support_matrix`
 - Handoff historico -> live:
   - `app.marketdata.handoff.HandoffSource`
   - ejecuta bootstrap historico por ventana antes del stream live
@@ -418,7 +418,7 @@
   - `reason`
 - `ResilientRunner` construye el request desde el gap observado y lo pasa al `snapshot_fn`.
 - `BinanceSource.snapshot(...)` ya no usa `limit=5` fijo; para `kline` pide una ventana proporcional al gap observado y solo cae a defaults cuando no hay contexto de recovery.
-- Aunque la ventana ya sea proporcional, el sistema sigue sin declarar exact recovery para `kline` mientras dependa de snapshot REST del vendor.
+- Para `kline` el sistema ya declara recovery `exact` sobre barras cerradas, con ventana exacta por `open_ts/source_id` y verificacion de completitud; el salto a `exact_verified` queda bloqueado por la suite especifica de claim.
 - Limitacion actual:
   - el raw layout no guarda un contador global de orden entre particiones; el merge multi-particion es determinista, pero la garantia mas fuerte de orden exacto aplica a la secuencia append-only dentro de cada fichero raw.
 
@@ -531,7 +531,7 @@
   - deteccion fuerte de secuencia rota
   - deduplicacion por identidad nativa aunque `timestamp/price/size` coincidan
   - handoff historico -> live limpio o inconsistente segun corresponda
-  - recovery por snapshot para barras, sin declararlo exacto mientras siga acotado, y marcacion explicita de `gap_irreparable` para trades sin recovery exacto
+- recovery por snapshot exacto para barras cerradas (`kline`) y marcacion explicita de `gap_irreparable` para trades sin recovery exacto
   - soak determinista con evidencia persistida
   - canary baseline vs candidate sobre una ventana corta persistida del vendor real
 - **Seguridad operativa**:

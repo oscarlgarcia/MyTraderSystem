@@ -37,7 +37,7 @@ FEED_SUPPORT_MATRIX: dict[str, FeedSupport] = {
     "kline": FeedSupport(
         feed_type="kline",
         supports_live=True,
-        recovery_capability="approximate",
+        recovery_capability="exact",
         supports_handoff=True,
     ),
     "book": FeedSupport(

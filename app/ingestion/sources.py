@@ -606,6 +606,10 @@ class BinanceSource:
                     payload, data, _stream, event_type = parse_message_parts(str(item))
                     if event_type not in allowed_event_types:
                         raise KeyError(f"Unknown event type: {event_type}")
+                    if event_type == "kline" and data.get("k", {}).get("x") is False:
+                        # Exact recovery for live klines is only defendable against
+                        # closed candles; Binance WS emits in-progress updates too.
+                        continue
                     event = normalize_binance_event(
                         event_type,
                         data,
