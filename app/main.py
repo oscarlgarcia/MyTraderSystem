@@ -134,6 +134,7 @@ def _validate_operational_security(
             validate_live_feed_support(
                 ingest_stream_types,
                 require_exact_recovery=production_mode,
+                require_exact_verified=production_mode,
                 require_handoff=production_mode,
             )
         except ValueError as exc:
@@ -170,6 +171,7 @@ def _validate_operational_security(
             validate_live_feed_support(
                 ingest_stream_types,
                 require_exact_recovery=True,
+                require_exact_verified=True,
                 require_handoff=True,
             )
         except ValueError as exc:

@@ -465,6 +465,7 @@ def collect_events(
         validate_live_feed_support(
             stream_types,
             require_exact_recovery=production_mode,
+            require_exact_verified=production_mode,
             require_handoff=production_mode,
         )
     if mode == "dry":

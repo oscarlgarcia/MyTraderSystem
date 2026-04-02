@@ -264,7 +264,7 @@ def test_live_mode_rejects_trade_feed_until_exact_recovery_exists(tmp_path):
         main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 
-def test_production_mode_rejects_live_kline_without_exact_recovery(tmp_path):
+def test_production_mode_rejects_live_kline_without_exact_verified_recovery(tmp_path):
     cfg = load_config("dev")
     cfg = type(cfg)(
         env=cfg.env,
@@ -285,7 +285,7 @@ def test_production_mode_rejects_live_kline_without_exact_recovery(tmp_path):
         "ingest_stream_types": ("kline",),
     }
 
-    with pytest.raises(ValueError, match="kline does not support exact recovery"):
+    with pytest.raises(ValueError, match="kline does not support exact_verified recovery"):
         main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 
