@@ -28,12 +28,13 @@ START ?= 2024-01-01T00:00:00+00:00
 END ?= 2024-01-01T01:00:00+00:00
 INTERVAL ?= 1m
 BATCH ?= 500
+FEED_TYPE ?= kline
 
 backfill-dev:
-	poetry run python -m app.ingestion.backfill --env dev --symbol $(SYMBOL) --start $(START) --end $(END) --interval $(INTERVAL) --batch $(BATCH) --dry-run
+	poetry run python -m app.ingestion.backfill --env dev --symbol $(SYMBOL) --feed-type $(FEED_TYPE) --start $(START) --end $(END) --interval $(INTERVAL) --batch $(BATCH) --dry-run
 
 backfill-dev-write:
-	poetry run python -m app.ingestion.backfill --env dev --symbol $(SYMBOL) --start $(START) --end $(END) --interval $(INTERVAL) --batch $(BATCH)
+	poetry run python -m app.ingestion.backfill --env dev --symbol $(SYMBOL) --feed-type $(FEED_TYPE) --start $(START) --end $(END) --interval $(INTERVAL) --batch $(BATCH)
 
 # Docker helpers
 .PHONY: docker-build docker-up docker-down docker-shell docker-exec docker-test docker-test-all docker-test-slow docker-test-ingestion-readiness docker-ingestion-soak docker-ingestion-canary

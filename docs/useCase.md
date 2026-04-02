@@ -30,11 +30,11 @@
 - **Actor**: Trader/Usuario
 - **Precondiciones**: Config REST valida; rango start/end en ISO UTC; intervalo soportado.
 - **Flujo principal**:
-  1. `python -m app.ingestion.backfill --env <env> --symbol <SYM> --start <ISO> --end <ISO> --interval <int> --batch <n> [--dry-run]`.
-  2. Se normalizan klines y se calculan expected vs received.
-  3. Se detectan gaps.
+  1. `python -m app.ingestion.backfill --env <env> --symbol <SYM> --feed-type <kline|trade> --start <ISO> --end <ISO> [--interval <int>] --batch <n> [--dry-run]`.
+2. Se normalizan `kline` o trades historicos (`aggTrades`); para `kline` se calcula `expected` vs `received`.
+3. Para `kline` se detectan gaps; para `trade` se preserva parity `raw -> replay -> normalized`.
   4. Si no es dry-run, se deduplica y escribe Parquet ordenado.
-  5. Log final resume rows/expected/gaps/rango/intervalo.
+5. Log final resume rows, expected y gaps cuando aplican, rango y `feed_type`.
 - **Flujos alternativos**: reintentos 429/5xx; dry-run no escribe.
 - **Errores posibles**: intervalo no soportado; fechas sin TZ; agotados reintentos HTTP; fallo de escritura.
 - **Resultado esperado**: Parquet sin duplicados; reejecucion no crece filas; metricas de gaps visibles.

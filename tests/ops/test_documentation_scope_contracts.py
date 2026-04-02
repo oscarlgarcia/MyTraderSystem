@@ -15,8 +15,8 @@ def test_historical_scope_adr_exists_and_is_approved() -> None:
     text = ADR_PATH.read_text(encoding="utf-8")
 
     assert "Estado: Aprobada" in text
-    assert "bars-only (`kline`)" in text
-    assert "`trade` historical backfill **no** forma parte del contrato soportado actual" in text
+    assert "`kline` y `trade`" in text
+    assert "aggTrades" in text
 
 
 def test_public_docs_reference_the_historical_scope_adr() -> None:
@@ -27,4 +27,4 @@ def test_public_docs_reference_the_historical_scope_adr() -> None:
     ):
         text = _read(relative_path)
         assert "ADR-0001-historical-market-data-scope.md" in text
-        assert "bars-only (`kline`)" in text
+        assert "`kline` y `trade`" in text

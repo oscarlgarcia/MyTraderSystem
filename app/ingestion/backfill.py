@@ -1,8 +1,9 @@
 """
-Historical backfill for bars only (`kline`).
+Historical backfill for Binance `kline` and `trade` feeds.
 
 Usage:
-    python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start 2024-01-01 --end 2024-01-02 --interval 1m --batch 1000 --dry-run
+    python -m app.ingestion.backfill --env dev --symbol BTCUSDT --feed-type kline --start 2024-01-01T00:00:00+00:00 --end 2024-01-02T00:00:00+00:00 --interval 1m --batch 1000 --dry-run
+    python -m app.ingestion.backfill --env dev --symbol BTCUSDT --feed-type trade --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T00:15:00+00:00 --batch 1000 --dry-run
 """
 
 from __future__ import annotations
@@ -10,25 +11,25 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import time
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import httpx
 
 from app.common.dto import normalize_symbol
-from app.ingestion.client import normalize_kline_typed
 from app.config import load_config
+from app.ingestion.client import normalize_kline_typed, normalize_trade_typed
 from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_market_events
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
 from app.marketdata.instruments import ensure_default_instruments, persist_instrument_catalog_snapshot
-from app.marketdata.models import BarEvent
+from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
 from app.observability.alerts import emit_operational_alert
 from app.observability.logger import get_logger, set_trace_id
 
 
-SUPPORTED_HISTORICAL_BACKFILL_FEEDS = ("kline",)
-HISTORICAL_BACKFILL_SCOPE = "bars-only"
+SUPPORTED_HISTORICAL_BACKFILL_FEEDS = ("kline", "trade")
+HISTORICAL_BACKFILL_SCOPE = "bars-and-trades"
 
 
 def supports_historical_backfill(feed_type: str) -> bool:
@@ -59,22 +60,84 @@ def to_ms(ts: dt.datetime) -> int:
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Backfill historico bars-only (`kline`): escribe raw + normalized o solo descarga con --dry-run",
-        epilog="Trade historical backfill no esta soportado; el alcance historico actual es bars-only (`kline`).",
+        description=(
+            "Backfill historico soportado para `kline` y `trade`: escribe raw + normalized o solo descarga con --dry-run"
+        ),
+        epilog=(
+            "Trade historical backfill usa Binance REST `aggTrades` y normaliza el snapshot historico a `TradeEvent`; "
+            "live `trade` sigue fuera del scope live."
+        ),
     )
     parser.add_argument("--env", choices=["dev", "test"], default=None, help="Config environment")
     parser.add_argument("--symbol", required=True, help="Simbolo (ej: BTCUSDT)")
+    parser.add_argument(
+        "--feed-type",
+        choices=SUPPORTED_HISTORICAL_BACKFILL_FEEDS,
+        default="kline",
+        help="Feed historico a descargar: `kline` o `trade`.",
+    )
     parser.add_argument("--start", required=True, type=parse_iso_utc, help="Inicio (ISO UTC, ej: 2024-01-01T00:00:00+00:00)")
     parser.add_argument("--end", required=True, type=parse_iso_utc, help="Fin (ISO UTC)")
     parser.add_argument(
         "--interval",
         default="1m",
-        help="Intervalo kline (default 1m). Trade historical backfill no esta soportado; el alcance historico actual es bars-only.",
+        help="Intervalo kline (default 1m). Solo aplica a `--feed-type kline`.",
     )
     parser.add_argument("--batch", type=int, default=1000, help="Limite por pagina (<=1000)")
     parser.add_argument("--dedup", action="store_true", help="Deduplica eventos con la clave compartida de ingestion")
     parser.add_argument("--dry-run", action="store_true", help="No persiste, solo descarga y resume")
     return parser.parse_args(argv)
+
+
+def _request_json_with_retries(
+    client: httpx.Client,
+    url: str,
+    *,
+    params: dict[str, Any],
+    timeout: float,
+    retries_429: int,
+    retries_5xx: int,
+) -> Any:
+    attempt_429 = 0
+    attempt_5xx = 0
+    while True:
+        try:
+            resp = client.get(url, params=params, timeout=timeout)
+        except httpx.TimeoutException as exc:
+            attempt_5xx += 1
+            if attempt_5xx > retries_5xx:
+                raise httpx.HTTPStatusError(
+                    f"Timeout agotado para {url} tras {retries_5xx} reintentos",
+                    request=None,
+                    response=None,
+                ) from exc
+            time.sleep(0.5 * attempt_5xx)
+            continue
+
+        if resp.status_code == 429:
+            attempt_429 += 1
+            if attempt_429 > retries_429:
+                raise httpx.HTTPStatusError(
+                    f"Rate limit alcanzado ({resp.status_code}) tras {retries_429} reintentos para {url}",
+                    request=getattr(resp, "request", None),
+                    response=resp,
+                )
+            time.sleep(0.5 * attempt_429)
+            continue
+
+        if resp.status_code >= 500:
+            attempt_5xx += 1
+            if attempt_5xx > retries_5xx:
+                raise httpx.HTTPStatusError(
+                    f"Error servidor {resp.status_code} tras {retries_5xx} reintentos para {url}",
+                    request=getattr(resp, "request", None),
+                    response=resp,
+                )
+            time.sleep(0.5 * attempt_5xx)
+            continue
+
+        resp.raise_for_status()
+        return resp.json()
 
 
 def fetch_klines(
@@ -94,51 +157,14 @@ def fetch_klines(
     out: List[dict] = []
     next_start = start_ms
     while next_start < end_ms:
-        params = {"symbol": symbol, "interval": interval, "limit": limit, "startTime": next_start, "endTime": end_ms}
-        attempt_429 = 0
-        attempt_5xx = 0
-        while True:
-            try:
-                resp = client.get(url, params=params, timeout=timeout)
-            except httpx.TimeoutException as exc:
-                attempt_5xx += 1
-                if attempt_5xx > retries_5xx:
-                    raise httpx.HTTPStatusError(
-                        f"Timeout agotado al descargar klines {symbol} interval={interval} start={start_ms}",
-                        request=None,
-                        response=None,
-                    ) from exc
-                time.sleep(0.5 * attempt_5xx)
-                continue
-
-            if resp.status_code == 429:
-                attempt_429 += 1
-                if attempt_429 > retries_429:
-                    raise httpx.HTTPStatusError(
-                        f"Rate limit alcanzado ({resp.status_code}) tras {retries_429} reintentos "
-                        f"para {symbol} interval={interval}",
-                        request=getattr(resp, "request", None),
-                        response=resp,
-                    )
-                time.sleep(0.5 * attempt_429)
-                continue
-
-            if resp.status_code >= 500:
-                attempt_5xx += 1
-                if attempt_5xx > retries_5xx:
-                    raise httpx.HTTPStatusError(
-                        f"Error servidor {resp.status_code} tras {retries_5xx} reintentos "
-                        f"para {symbol} interval={interval}",
-                        request=getattr(resp, "request", None),
-                        response=resp,
-                    )
-                time.sleep(0.5 * attempt_5xx)
-                continue
-
-            resp.raise_for_status()
-            break
-
-        batch = resp.json()
+        batch = _request_json_with_retries(
+            client,
+            url,
+            params={"symbol": symbol, "interval": interval, "limit": limit, "startTime": next_start, "endTime": end_ms},
+            timeout=timeout,
+            retries_429=retries_429,
+            retries_5xx=retries_5xx,
+        )
         if not batch:
             break
         out.extend(batch)
@@ -149,7 +175,60 @@ def fetch_klines(
     return out
 
 
-def _kline_payload_from_row(symbol: str, row: list, *, interval: str) -> dict:
+def fetch_trades(
+    client: httpx.Client,
+    base_url: str,
+    symbol: str,
+    start_ms: int,
+    end_ms: int,
+    limit: int = 1000,
+    retries_429: int = 3,
+    retries_5xx: int = 2,
+    timeout: float = 10.0,
+) -> List[dict[str, Any]]:
+    """Descarga aggregate trades de Binance en orden estable por `a` hasta end_ms (exclusivo)."""
+    url = f"{base_url.rstrip('/')}/api/v3/aggTrades"
+    out: List[dict[str, Any]] = []
+    next_from_id: int | None = None
+    first_request = True
+
+    while True:
+        params: dict[str, Any] = {"symbol": symbol, "limit": limit}
+        if first_request:
+            params["startTime"] = start_ms
+            params["endTime"] = end_ms
+        else:
+            params["fromId"] = next_from_id
+
+        batch = _request_json_with_retries(
+            client,
+            url,
+            params=params,
+            timeout=timeout,
+            retries_429=retries_429,
+            retries_5xx=retries_5xx,
+        )
+        if not batch:
+            break
+
+        stop = False
+        for row in batch:
+            trade_ts = int(row["T"])
+            if trade_ts < start_ms:
+                continue
+            if trade_ts >= end_ms:
+                stop = True
+                break
+            out.append(row)
+
+        next_from_id = int(batch[-1]["a"]) + 1
+        first_request = False
+        if stop or len(batch) < limit:
+            break
+    return out
+
+
+def _kline_payload_from_row(symbol: str, row: list, *, interval: str) -> dict[str, Any]:
     close = str(row[4])
     if len(row) > 7 and row[7] not in ("", None):
         quote_volume = str(row[7])
@@ -171,6 +250,25 @@ def _kline_payload_from_row(symbol: str, row: list, *, interval: str) -> dict:
     }
 
 
+def _trade_payload_from_row(symbol: str, row: dict[str, Any]) -> dict[str, Any]:
+    aggregate_trade_id = int(row["a"])
+    return {
+        "e": "trade",
+        "s": symbol,
+        "E": int(row["T"]),
+        "p": str(row["p"]),
+        "q": str(row["q"]),
+        "t": aggregate_trade_id,
+        "m": bool(row.get("m")) if row.get("m") is not None else None,
+        "M": bool(row.get("M")) if row.get("M") is not None else None,
+        "a": aggregate_trade_id,
+        "f": int(row["f"]) if row.get("f") is not None else None,
+        "l": int(row["l"]) if row.get("l") is not None else None,
+        "_backfill_endpoint": "aggTrades",
+        "_historical_trade_kind": "aggregate_trade",
+    }
+
+
 def normalize_kline_row(
     symbol: str,
     row: list,
@@ -187,6 +285,23 @@ def normalize_kline_row(
         receive_ts=receive_ts,
         process_ts=process_ts,
         interval=interval,
+    )
+
+
+def normalize_trade_row(
+    symbol: str,
+    row: dict[str, Any],
+    *,
+    receive_ts: dt.datetime | None = None,
+    process_ts: dt.datetime | None = None,
+    venue: str = "BINANCE",
+) -> TradeEvent:
+    payload = _trade_payload_from_row(symbol, row)
+    return normalize_trade_typed(
+        payload,
+        venue=venue,
+        receive_ts=receive_ts,
+        process_ts=process_ts,
     )
 
 
@@ -214,22 +329,54 @@ def raw_record_from_kline_row(
     )
 
 
-def deduplicate_events(events: List[BarEvent]) -> tuple[List[BarEvent], int]:
+def raw_record_from_trade_row(
+    symbol: str,
+    row: dict[str, Any],
+    *,
+    receive_ts: dt.datetime,
+    process_ts: dt.datetime | None,
+    trace_id: str | None,
+    venue: str = "BINANCE",
+) -> RawRecord:
+    payload = _trade_payload_from_row(symbol, row)
+    return RawRecord(
+        payload=payload,
+        venue=venue,
+        stream_type="trade",
+        symbol=symbol,
+        exchange_ts=dt.datetime.fromtimestamp(int(row["T"]) / 1000, tz=dt.timezone.utc),
+        receive_ts=receive_ts,
+        process_ts=process_ts,
+        trace_id=trace_id,
+        source_id=str(row["a"]),
+    )
+
+
+def deduplicate_events(events: List[IngestionEvent]) -> tuple[List[IngestionEvent], int]:
     return deduplicate_market_events(
         events,
         deduplicator=Deduplicator(ttl_seconds=None, max_entries=max(len(events), 4096)),
     )
 
 
+def _event_sort_key(event: IngestionEvent) -> tuple[Any, ...]:
+    native_id = getattr(event, "trade_id", None) or getattr(event, "source_id", None) or ""
+    return (event.event_ts, str(native_id), event.symbol, event.source)
+
+
+def _raw_sort_key(record: RawRecord) -> tuple[Any, ...]:
+    return (record.exchange_ts, str(record.source_id or ""), record.symbol, record.stream_type)
+
+
 def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_sink: Optional[RawSink] = None) -> int:
     args = parse_args(argv)
-    assert_historical_backfill_support("kline")
+    assert_historical_backfill_support(args.feed_type)
     cfg = load_config(args.env)
     symbol = normalize_symbol(args.symbol)
     ensure_default_instruments([symbol], venue="BINANCE")
     start_ms = to_ms(args.start)
     end_ms = to_ms(args.end)
-    interval_ms = _interval_to_ms(args.interval)
+    interval_ms = _interval_to_ms(args.interval) if args.feed_type == "kline" else None
 
     trace_id = f"backfill-{int(time.time())}"
     logger = get_logger(name="backfill", level=cfg.log_level)
@@ -247,9 +394,10 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             "trace_id": trace_id,
             "env": cfg.env,
             "symbol": symbol,
+            "feed_type": args.feed_type,
             "start": args.start.isoformat(),
             "end": args.end.isoformat(),
-            "interval": args.interval,
+            "interval": args.interval if args.feed_type == "kline" else None,
             "historical_scope": HISTORICAL_BACKFILL_SCOPE,
             "supported_historical_feeds": list(SUPPORTED_HISTORICAL_BACKFILL_FEEDS),
             "batch": args.batch,
@@ -274,7 +422,8 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
                 "drift_removed_symbols": list(catalog_state.drift.removed_symbols),
                 "drift_changed_symbols": list(catalog_state.drift.changed_symbols),
                 "drift_changed_fields_by_symbol": {
-                    symbol: list(fields) for symbol, fields in catalog_state.drift.changed_fields_by_symbol.items()
+                    changed_symbol: list(fields)
+                    for changed_symbol, fields in catalog_state.drift.changed_fields_by_symbol.items()
                 },
                 "instrument_catalog_version": catalog_state.instrument_catalog_version,
                 "instrument_catalog_snapshot_path": str(catalog_state.path),
@@ -282,39 +431,78 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
         )
 
     with httpx.Client() as client:
-        klines = fetch_klines(
-            client=client,
-            base_url=cfg.rest_base,
-            symbol=symbol,
-            start_ms=start_ms,
-            end_ms=end_ms,
-            interval=args.interval,
-            limit=args.batch,
-        )
+        if args.feed_type == "kline":
+            rows = fetch_klines(
+                client=client,
+                base_url=cfg.rest_base,
+                symbol=symbol,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                interval=args.interval,
+                limit=args.batch,
+            )
+        else:
+            rows = fetch_trades(
+                client=client,
+                base_url=cfg.rest_base,
+                symbol=symbol,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                limit=args.batch,
+            )
+
     receive_ts = dt.datetime.now(dt.timezone.utc)
-    raw_records = [
-        raw_record_from_kline_row(
-            symbol,
-            row,
-            interval=args.interval,
-            receive_ts=receive_ts,
-            process_ts=receive_ts,
-            trace_id=trace_id,
-        )
-        for row in klines
-    ]
-    events = [
-        normalize_kline_row(
-            symbol,
-            row,
-            interval=args.interval,
-            receive_ts=receive_ts,
-            process_ts=receive_ts,
-        )
-        for row in klines
-    ]
-    events.sort(key=lambda event: event.event_ts)
-    raw_records.sort(key=lambda record: record.exchange_ts)
+    process_ts = receive_ts
+    if args.feed_type == "kline":
+        assert interval_ms is not None
+        raw_records = [
+            raw_record_from_kline_row(
+                symbol,
+                row,
+                interval=args.interval,
+                receive_ts=receive_ts,
+                process_ts=process_ts,
+                trace_id=trace_id,
+            )
+            for row in rows
+        ]
+        events: List[IngestionEvent] = [
+            normalize_kline_row(
+                symbol,
+                row,
+                interval=args.interval,
+                receive_ts=receive_ts,
+                process_ts=process_ts,
+            )
+            for row in rows
+        ]
+        expected: int | None = ((end_ms - start_ms) // interval_ms) + 1
+        gaps: int | None = _count_bar_gaps([event for event in events if isinstance(event, BarEvent)], interval_ms)
+    else:
+        raw_records = [
+            raw_record_from_trade_row(
+                symbol,
+                row,
+                receive_ts=receive_ts,
+                process_ts=process_ts,
+                trace_id=trace_id,
+            )
+            for row in rows
+        ]
+        events = [
+            normalize_trade_row(
+                symbol,
+                row,
+                receive_ts=receive_ts,
+                process_ts=process_ts,
+            )
+            for row in rows
+        ]
+        expected = len(events)
+        gaps = None
+
+    events.sort(key=_event_sort_key)
+    raw_records.sort(key=_raw_sort_key)
 
     duplicates_dropped = 0
     if args.dedup:
@@ -322,11 +510,13 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
         if duplicates_dropped:
             logger.info(
                 "backfill duplicates dropped",
-                extra={"trace_id": trace_id, "symbol": symbol, "duplicates_dropped": duplicates_dropped},
+                extra={
+                    "trace_id": trace_id,
+                    "symbol": symbol,
+                    "feed_type": args.feed_type,
+                    "duplicates_dropped": duplicates_dropped,
+                },
             )
-
-    expected = ((end_ms - start_ms) // interval_ms) + 1
-    gaps = _count_gaps(events, interval_ms)
 
     if not args.dry_run:
         raw_sink_impl = raw_sink or JsonlRawSink(base_dir=cfg.data_dir / "raw", env=cfg.env)
@@ -345,6 +535,7 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             "trace_id": trace_id,
             "env": cfg.env,
             "symbol": symbol,
+            "feed_type": args.feed_type,
             "rows": len(events),
             "expected": expected,
             "gaps": gaps,
@@ -352,7 +543,7 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             "duplicates_dropped": duplicates_dropped,
             "start": args.start.isoformat(),
             "end": args.end.isoformat(),
-            "interval": args.interval,
+            "interval": args.interval if args.feed_type == "kline" else None,
             "historical_scope": HISTORICAL_BACKFILL_SCOPE,
             "supported_historical_feeds": list(SUPPORTED_HISTORICAL_BACKFILL_FEEDS),
             "dry_run": args.dry_run,
@@ -375,7 +566,7 @@ def _interval_to_ms(interval: str) -> int:
     return mapping[interval]
 
 
-def _count_gaps(events: List[BarEvent], interval_ms: int) -> int:
+def _count_bar_gaps(events: List[BarEvent], interval_ms: int) -> int:
     if len(events) < 2:
         return 0
     events_sorted = sorted(events, key=lambda event: event.event_ts)

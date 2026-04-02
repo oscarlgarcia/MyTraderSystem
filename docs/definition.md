@@ -7,7 +7,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - **common**: DTOs, utilidades compartidas (normalización de símbolos, timestamps UTC).
 - **ingestion**: conectores de mercado; entrada de datos normalizados a `MarketEvent`.
 - **ingestion.client**: adaptadores Binance/Bybit (trade/kline 1m), normalización a DTO, construcción de URLs de suscripción.
-- **ingestion.backfill**: descarga histórica REST de klines, normaliza a `MarketEvent` en memoria (Fase 1 sin escritura).
+- **ingestion.backfill**: descarga historica REST de `kline` y `trade` (via Binance `aggTrades`), normaliza a eventos canonicos y soporta escritura raw + normalized.
 - **ingestion.runner**: ingesta en vivo puntual WS/REST, resiliencia básica, escritura Parquet.
 - **features**: cálculo y serving de `FeatureVector` para estrategias (stub).
 - **strategy**: generación de `Signal` a partir de features (stub).
@@ -34,15 +34,15 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - `AppConfig`: env, data_dir, log_level; se carga desde `config.<env>.yaml` con override por env vars.
 - Log records: JSON con `ts`, `level`, `logger`, `module`, `message`, `trace_id` opcional y extras seguros.
 - Ingesta live: `normalize_trade`/`normalize_kline` validan precio/tamaño≥0, timestamps UTC; `build_ws_url` arma streams trade+kline por símbolo; `parse_message` despacha según tipo de stream.
-- Backfill: fetch paginado de klines REST, normalización a `MarketEvent`; dry-run (sin escritura) y modo persistente que deduplica y detecta huecos antes de escribir Parquet.
+- Backfill: fetch paginado de `kline` REST y `aggTrades`, normalizacion a eventos canonicos; dry-run (sin escritura) y modo persistente que deduplica y detecta huecos cuando aplica antes de escribir Parquet.
 - Storage: `ParquetWriter` con buffer y partición `data/<env>/symbol=<SYM>/date=<YYYY-MM-DD>/data.parquet`; `read_parquet` para smoke.
 - Resiliencia: `ResilientRunner` con backoff exponencial (cap 8s), detección de gap por timestamp, snapshot opcional y métricas (reconnects, last_lag_seconds).
 
 ## Backfill histórico (vista rápida)
-- CLI: `python -m app.ingestion.backfill --env dev --symbol BTCUSDT --start <ISO UTC> --end <ISO UTC> --interval 1m --batch 500 [--dry-run]`
+- **ingestion.backfill**: descarga historica REST de `kline` y `trade` (via Binance `aggTrades`), normaliza a eventos canonicos y soporta escritura raw + normalized.
 - Métricas de salida: `rows`, `expected`, `gaps`, `dry_run`, rango y símbolo.
 - Dedup y detección de huecos: compara `event_ts` contra intervalo esperado; gaps > intervalo se reportan en log.
-- Make targets: `backfill-dev` (dry-run), `backfill-dev-write` (escribe Parquet), configurables vía vars `SYMBOL/START/END/INTERVAL/BATCH`.
+- Make targets: `backfill-dev` (dry-run), `backfill-dev-write` (escribe Parquet), configurables via vars `SYMBOL/START/END/FEED_TYPE/INTERVAL/BATCH`.
 
 ## Supuestos actuales
 - Todos los timestamps deben ser timezone-aware en UTC.

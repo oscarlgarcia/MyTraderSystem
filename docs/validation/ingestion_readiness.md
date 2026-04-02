@@ -12,7 +12,7 @@
 - [ ] `python -m app.main --release-gates --release-gates-target paper` devuelve `0`
 - [ ] `python scripts/ingestion_live_drill.py` devuelve `0`
 - [ ] existe ADR aprobada para el alcance historico: `docs/adr/ADR-0001-historical-market-data-scope.md`
-- [ ] el alcance historico soportado esta declarado explicitamente y alineado con la ADR: bars-only (`kline`); trade historical no se promete
+- [ ] el alcance historico soportado esta declarado explicitamente y alineado con la ADR: `kline` y `trade` quedan soportados; `trade` historical marca `aggTrades` como origen del snapshot
 - [ ] cada run/backfill persiste `metadata/instruments/.../runs/<trace_id>.json` y no hay alertas `provider_metadata_drift` sin revisar
 - [ ] no hay duplicados no explicados en reconnect/restart/handoff
 - [ ] no hay corrupcion de `data.parquet`

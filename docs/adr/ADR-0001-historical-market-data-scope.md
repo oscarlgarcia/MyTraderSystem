@@ -7,27 +7,24 @@
 ## Decision
 
 El alcance historico soportado por `app.ingestion.backfill` queda fijado de forma
-definitiva en **bars-only (`kline`)**.
+definitiva en **`kline` y `trade`**.
 
-`trade` historical backfill **no** forma parte del contrato soportado actual del
-modulo de ingestion. No debe prometerse en CLI, documentacion, readiness ni
-gating operativo mientras no exista una implementacion real con parity
-`raw -> replay -> normalized`.
+`trade` historical backfill forma parte del contrato soportado actual del
+modulo de ingestion. La implementacion usa Binance REST `aggTrades`, marca ese
+origen historico en metadata y mantiene parity `raw -> replay -> normalized`.
 
 ## Contexto
 
-El modulo ya hace enforcement de bars-only en runtime y CLI, pero faltaba una
-decision arquitectonica final. Esa ambiguedad dejaba abierto un roadmap
-incorrecto para research tick/trade-based y podia inducir a asumir una
-capacidad historica que no existe.
+El modulo ya soportaba backfill historico de `kline`, pero faltaba una decision
+arquitectonica final para `trade` historical. Esa ambiguedad bloqueaba el
+roadmap tick/trade y mantenia una discrepancia entre necesidades de research y
+el contrato publico de ingestion.
 
 ## Consecuencias
 
-- Backtesting serio aprobado hoy:
-  - solo para datasets historicos de `kline`.
-- `trade` historical sigue fuera de alcance:
-  - cualquier necesidad de backtesting tick/trade requiere una nueva epica de
-    implementacion, no documentacion adicional.
+- Backtesting historico aprobado hoy:
+  - datasets de `kline`
+  - datasets de `trade` normalizados desde Binance `aggTrades`
+- El contrato historico deja de ser bars-only y pasa a exigir parity `raw -> replay -> normalized` para ambos feeds.
 - Ningun feed, doc, CLI o checklist puede contradecir esta decision.
-- Si en el futuro se aprueba historical trade, esta ADR debe reemplazarse por
-  una nueva decision junto con cambios de codigo, tests y support matrix.
+- Si en el futuro se sustituye `aggTrades` por otra fuente historica de trades, la decision debe actualizarse con una ADR posterior y evidencia nueva.

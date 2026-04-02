@@ -5,9 +5,9 @@
 - **Servicio de ingestion**:
   - `app.ingestion.service.run_ingestion_service(...)` ejecuta solo captura/validacion/dedup/persistencia de market data
   - `app.main.run_trading_cycle(...)` consume eventos ya ingeridos y ejecuta el resto del pipeline cuantitativo
-- **Backfill**: descarga klines REST para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
-- alcance historico soportado definitivo: bars-only (`kline`)
-- trade historical backfill: no implementado / no soportado
+- **Backfill**: descarga `kline` REST y trades historicos Binance `aggTrades` para rangos historicos, ordena por timestamp y puede deduplicar con `--dedup` antes de persistir.
+- alcance historico soportado definitivo: `kline` y `trade`
+- trade historical backfill: implementado via Binance `aggTrades` con parity `raw -> replay -> normalized`
 - ADR vigente: `docs/adr/ADR-0001-historical-market-data-scope.md`
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
 - **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
@@ -121,6 +121,7 @@
 - `app.config.DEFAULT_INGEST_STREAM_TYPES`
 - el runtime live usa por defecto `("kline",)` para no ofrecer feeds fuera del scope live actual; hoy `kline` ya declara recovery `exact_verified`
 - `app.ingestion.backfill.run(argv=None, sink=None) -> int`
+  - `--feed-type {kline,trade}` selecciona el feed historico.
   - `--dedup` activa deduplicacion previa a sink con la misma clave `_key`.
 - `app.features.store.compute_features(events, window=5, windows=None, aggregators=None, feature_set=None, cache=None) -> list[FeatureVector]`
 
@@ -185,7 +186,7 @@
 - **Backfill**:
   - `fetch_klines` pagina con manejo simple de `429`, `5xx` y timeout.
   - `normalize_kline_row` valida payload y genera `BarEvent`.
-- `supports_historical_backfill(...)` y `assert_historical_backfill_support(...)` formalizan el alcance historico soportado; la ADR vigente fija de forma definitiva `kline` como unico feed historico soportado.
+- `supports_historical_backfill(...)` y `assert_historical_backfill_support(...)` formalizan el alcance historico soportado; la ADR vigente fija `kline` y `trade` como feeds historicos soportados.
   - cada fila historica valida se persiste tambien como raw append-only en `data/raw/...` usando el mismo formato `RawRecord` que live para permitir replay con `ReplaySource`.
   - Con `--dedup`, aplica deduplicacion con `_key` antes del sink y registra `duplicates_dropped`.
   - Sin `--dedup`, conserva duplicados tras normalizar y ordenar.
@@ -531,7 +532,7 @@
   - deteccion fuerte de secuencia rota
   - deduplicacion por identidad nativa aunque `timestamp/price/size` coincidan
   - handoff historico -> live limpio o inconsistente segun corresponda
-- recovery por snapshot exacto para barras cerradas (`kline`) y marcacion explicita de `gap_irreparable` para trades sin recovery exacto
+- recovery por snapshot exacto para barras cerradas (`kline`) y marcacion explicita de `gap_irreparable` para trades live sin recovery exacto
   - soak determinista con evidencia persistida
   - canary baseline vs candidate sobre una ventana corta persistida del vendor real
 - **Seguridad operativa**:

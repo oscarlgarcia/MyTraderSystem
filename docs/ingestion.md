@@ -201,8 +201,8 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - `ingestion.service`
   - `run_ingestion_service(...)`: entrypoint aislado para ingestion. Ejecuta `collect_events(...)` sin invocar feature engineering, strategy, risk ni execution.
 - `ingestion.backfill`
-  - Descarga klines historicos, normaliza filas a `BarEvent`, escribe raw append-only reutilizando `JsonlRawSink`, ordena y opcionalmente deduplica con `--dedup` antes del sink normalized.
-  - El alcance historico soportado queda formalmente limitado a bars (`kline`). Trade historical backfill no esta implementado ni debe asumirse.
+  - Descarga `kline` historicos y trades historicos Binance `aggTrades`, normaliza filas a `BarEvent` / `TradeEvent`, escribe raw append-only reutilizando `JsonlRawSink`, ordena y opcionalmente deduplica con `--dedup` antes del sink normalized.
+  - El alcance historico soportado queda formalmente fijado en `kline` y `trade`. Trade historical backfill usa Binance `aggTrades` y marca ese origen en metadata.
 - `ingestion.storage`
   - `ParquetWriter`: persiste eventos normalized v2 separados por tipo (`trades`, `bars`) y particionados por `env`, `venue`, `symbol`, `date`; el hot path escribe segmentos nuevos con `tmp + rename`, separa eventos aceptados de eventos confirmados en disco y mide `last_write_latency_seconds` / `max_write_latency_seconds`.
   - `book` queda fuera de scope en storage normalized hasta que exista un feed real y un schema typed first-class; el writer falla explicitamente si recibe ese tipo.

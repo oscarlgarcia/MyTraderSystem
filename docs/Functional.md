@@ -9,7 +9,7 @@ Proveer una plataforma de trading personal que permita:
 ## Actores
 - **Trader/Usuario**: lanza ingesta, backfill y revisa resultados.
 - **Ingesta WS/REST**: fuente de datos de mercado en vivo (ej. Binance testnet).
-- **Backfill REST**: fuente historica (klines).
+- **Backfill REST**: fuente historica (`kline` y `trade` via Binance `aggTrades`).
 - **Almacenamiento Parquet**: destino de datos normalizados.
 - **Feature Store (inicial)**: consumidor de eventos para generar features.
 - **Observabilidad**: receptor de logs estructurados.
@@ -18,7 +18,7 @@ Proveer una plataforma de trading personal que permita:
 ## Casos de uso principales
 0. **Pipeline run**: ejecutar `python -m app --mode dry|live` para recorrer ingestion -> features -> estrategia -> riesgo -> ejecucion (paper) -> portfolio.
 1. **Ingesta en vivo puntual**: recibir trades/klines durante una ventana, normalizar, persistir y loguear metricas.
-2. **Backfill historico**: descargar klines de un rango, normalizar, detectar huecos, deduplicar y (opcional) escribir Parquet.
+2. **Backfill historico**: descargar `kline` o `trade` de un rango, normalizar, detectar huecos cuando aplica, deduplicar y (opcional) escribir Parquet.
 3. **Inspeccion de datos**: consultar rapidamente eventos almacenados filtrando por simbolo/fecha.
 4. **Pipeline de features (inicial)**: a partir de eventos, calcular features basicas para backtesting (en memoria).
 
@@ -38,10 +38,10 @@ Proveer una plataforma de trading personal que permita:
 ### Backfill historico (happy path)
 1. Usuario ejecuta `make backfill-dev` (dry-run) o `backfill-dev-write` con rango start/end.
 2. Sistema carga config REST y normaliza simbolo.
-3. Pagina klines REST hasta cubrir el rango; calcula `expected` vs `received`.
-4. Detecta huecos (gaps) por intervalo; los reporta en log.
+3. Pagina `kline` REST o `aggTrades` REST hasta cubrir el rango; para `kline` calcula `expected` vs `received`.
+4. Para `kline` detecta huecos (gaps) por intervalo; para `trade` preserva orden temporal e identidad de `aggTrades`.
 5. Si no es dry-run, deduplica contra archivos existentes y escribe Parquet ordenado.
-6. Log final incluye rows, expected, gaps, rango e intervalo.
+6. Log final incluye rows, expected y gaps cuando aplican, rango y `feed_type`.
 
 ### Inspeccion de datos (happy path)
 1. Usuario ejecuta `make inspect-dev` o CLI con filtros de simbolo/fecha/limit.

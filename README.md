@@ -29,12 +29,15 @@ python -m app --env dev --mode live --fast-path                    # experimenta
 python -m app --env dev --mode live --ingest-lag-warn 2 --ingest-buffer-warn 0  # experimental: WARNINGs de presion/latencia
 python -m app.ingestion.runner --env dev --duration 600     # ingesta puntual WS con flush
 python -m app.ingestion.inspect --env dev --limit 10        # inspeccion rapida de Parquet
-python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
+python -m app.ingestion.backfill --env dev --symbol BTCUSDT --feed-type kline \
   --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 \
-  --interval 1m --batch 500 --dry-run                       # backfill bars-only (`kline`) en memoria
-python -m app.ingestion.backfill --env dev --symbol BTCUSDT \
+  --interval 1m --batch 500 --dry-run                       # backfill historico de bars (`kline`) en memoria
+python -m app.ingestion.backfill --env dev --symbol BTCUSDT --feed-type trade \
+  --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T00:15:00+00:00 \
+  --batch 500 --dry-run                                     # backfill historico de trades normalizados desde Binance aggTrades
+python -m app.ingestion.backfill --env dev --symbol BTCUSDT --feed-type kline \
   --start 2024-01-01T00:00:00+00:00 --end 2024-01-01T01:00:00+00:00 \
-  --interval 1m --batch 500 --dedup                         # backfill bars-only escribiendo raw + Parquet sin duplicados
+  --interval 1m --batch 500 --dedup                         # backfill historico escribiendo raw + Parquet sin duplicados
 python -m app.ingestion.backfill --help                     # recordatorio de flags disponibles
 python -m app.ingestion.demo --env dev --duration 30 --max-events 200  # demo en vivo con resumen de métricas
 ```
@@ -140,8 +143,10 @@ Con la matriz actual, `kline` es el primer feed live que ya cumple `exact_verifi
   Ingesta puntual con ResilientRunner y flush a Parquet.
 - `python -m app.ingestion.inspect --env dev --limit 10`  
   Lista rapidamente filas de Parquet (filtros opcionales por simbolo/fecha).
-- `python -m app.ingestion.backfill ... --dry-run`
-  Descarga klines, calcula expected/gaps sin escribir disco. El alcance historico soportado queda fijado de forma definitiva en bars-only (`kline`) por `docs/adr/ADR-0001-historical-market-data-scope.md`.
+- `python -m app.ingestion.backfill ... --feed-type kline --dry-run`
+  Descarga klines, calcula expected/gaps sin escribir disco. El alcance historico soportado queda fijado en `kline` y `trade` por `docs/adr/ADR-0001-historical-market-data-scope.md`.
+- `python -m app.ingestion.backfill ... --feed-type trade --dry-run`
+  Descarga `aggTrades` de Binance, los normaliza a `TradeEvent` y permite validar parity historica sin escribir disco.
 - `python -m app.ingestion.backfill ... --dedup`  
   Deduplica por la misma clave de ingest live, escribe raw append-only en `data/raw/...` y normalized typed en Parquet para el rango indicado.
 - `python -m app.ingestion.backfill ...` (sin `--dry-run` ni `--dedup`)  
@@ -281,8 +286,9 @@ events = collect_events("live", cfg, duration_s=0, source=source, sink=sink)
 - Seco (no escribe): `make backfill-dev START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
 - Escribe raw + Parquet: `make backfill-dev-write START=2024-01-01T00:00:00+00:00 END=2024-01-01T01:00:00+00:00 SYMBOL=BTCUSDT`
 - Campos clave: `INTERVAL` (soportados: 1m,3m,5m,15m,30m,1h), `BATCH` (<=1000).
-- Alcance soportado: solo bars (`kline`). Historical backfill de `trade` no esta implementado ni soportado.
-- Decision arquitectonica vigente: `docs/adr/ADR-0001-historical-market-data-scope.md` fija bars-only como contrato historico oficial hasta nueva ADR con implementacion real.
+- Alcance soportado: bars (`kline`) y trades historicos (`trade`).
+- `trade` historical usa Binance REST `aggTrades`, normaliza a `TradeEvent` y persiste parity `raw -> replay -> normalized`. Live `trade` sigue fuera del alcance live.
+- Decision arquitectonica vigente: `docs/adr/ADR-0001-historical-market-data-scope.md` fija `kline` y `trade` como contrato historico oficial.
 
 Puedes sobrescribir el directorio de datos con `APP_DATA_DIR=/ruta python -m app --env dev`.
 

@@ -215,6 +215,17 @@ class BinanceTradeNormalizer:
         process_ts: datetime | None = None,
     ) -> TradeEvent:
         validate_trade_payload(payload)
+        metadata = _instrument_metadata(str(payload["s"]), venue)
+        if payload.get("_backfill_endpoint") is not None:
+            metadata["historical_trade_endpoint"] = str(payload["_backfill_endpoint"])
+        if payload.get("_historical_trade_kind") is not None:
+            metadata["historical_trade_kind"] = str(payload["_historical_trade_kind"])
+        if payload.get("a") is not None:
+            metadata["aggregate_trade_id"] = str(payload["a"])
+        if payload.get("f") is not None:
+            metadata["aggregate_trade_first_id"] = str(payload["f"])
+        if payload.get("l") is not None:
+            metadata["aggregate_trade_last_id"] = str(payload["l"])
         event = TradeEvent(
             symbol=normalize_symbol(str(payload["s"])),
             exchange_ts=_ts_from_ms(int(payload["E"])),
@@ -222,7 +233,7 @@ class BinanceTradeNormalizer:
             process_ts=_process_ts(process_ts),
             venue=venue,
             source_id=str(payload.get("t")) if payload.get("t") is not None else None,
-            metadata=stamp_normalizer_version(_instrument_metadata(str(payload["s"]), venue)),
+            metadata=stamp_normalizer_version(metadata),
             price=float(payload["p"]),
             size=float(payload["q"]),
             trade_id=str(payload.get("t")) if payload.get("t") is not None else None,

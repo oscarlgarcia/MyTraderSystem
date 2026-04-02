@@ -309,6 +309,58 @@ def test_raw_and_normalized_parity_holds_for_replayed_trade_dataset(tmp_path: Pa
     assert all(row["normalizer_version"] == NORMALIZER_VERSION for row in rows)
 
 
+def test_backfill_raw_replay_and_normalized_parity_hold_for_trade_dataset(tmp_path: Path, monkeypatch):
+    cfg = SimpleNamespace(env="test", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
+    rows = [
+        {"a": 9001, "p": "100", "q": "1", "f": 9001, "l": 9001, "T": 1704067200000, "m": False, "M": True},
+        {"a": 9002, "p": "101", "q": "2", "f": 9002, "l": 9002, "T": 1704067201000, "m": True, "M": True},
+    ]
+
+    monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(backfill, "fetch_trades", lambda **kwargs: rows)
+
+    backfill.run(
+        [
+            "--env",
+            "test",
+            "--symbol",
+            "BTCUSDT",
+            "--feed-type",
+            "trade",
+            "--start",
+            "2024-01-01T00:00:00+00:00",
+            "--end",
+            "2024-01-01T00:10:00+00:00",
+            "--dedup",
+        ]
+    )
+
+    replayed = list(
+        ReplaySource(
+            base_dir=tmp_path / "raw",
+            env="test",
+            symbol="BTCUSDT",
+            stream_types=("trade",),
+            normalizer_version=NORMALIZER_VERSION,
+        ).stream()
+    )
+
+    assert all(isinstance(event, TradeEvent) for event in replayed)
+
+    normalized_files = list_normalized_parquet_files(tmp_path, "test", include_legacy=False)
+    assert len(normalized_files) == 1
+    table = read_parquet(normalized_files[0])
+    rows_out = table.to_pylist()
+
+    assert [_trade_row_signature(row) for row in rows_out] == [_trade_signature(event) for event in replayed[: len(rows_out)]]
+    assert all(row["normalizer_version"] == NORMALIZER_VERSION for row in rows_out)
+    assert all(dict(row["metadata"])["historical_trade_endpoint"] == "aggTrades" for row in rows_out)
+
+    entries = read_raw_entries(tmp_path / "raw", "test", symbol="BTCUSDT", stream_types=("trade",))
+    assert [entry.record.ingestion_seq for entry in entries] == [1, 2]
+    assert len({entry.record.run_id for entry in entries}) == 1
+
+
 def test_backfill_raw_replay_and_normalized_parity_hold_for_bar_dataset(tmp_path: Path, monkeypatch):
     cfg = SimpleNamespace(env="test", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
     rows = [
