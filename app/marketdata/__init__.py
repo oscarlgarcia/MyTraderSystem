@@ -30,7 +30,14 @@ from .instruments import (
     infer_spot_assets,
     resolve_instrument,
 )
-from .recovery import BarRecoveryPolicy, RecoveryPolicy, TradeRecoveryPolicy, recovery_policy_for_event
+from .recovery import (
+    BarRecoveryPolicy,
+    RecoveryPolicy,
+    RecoveryRequest,
+    TradeRecoveryPolicy,
+    build_recovery_request,
+    recovery_policy_for_event,
+)
 from .support_matrix import (
     FEED_SUPPORT_MATRIX,
     FeedSupport,
@@ -98,8 +105,10 @@ __all__ = [
     "normalize_feed_types",
     "validate_live_feed_support",
     "RecoveryPolicy",
+    "RecoveryRequest",
     "TradeRecoveryPolicy",
     "BarRecoveryPolicy",
+    "build_recovery_request",
     "recovery_policy_for_event",
     "validate_trade_payload",
     "validate_kline_payload",

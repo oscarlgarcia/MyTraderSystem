@@ -13,7 +13,9 @@ from app.ingestion import pipeline
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sources import BinanceSource, StaticSource
+from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.models import TradeEvent
+from app.marketdata.temporal_state import TemporalPartitionKey
 from app.marketdata.raw_sink import JsonlRawSink
 from app.observability.logger import get_logger
 
@@ -444,6 +446,48 @@ def test_snapshot_circuit_breaker_fails_fast_after_threshold():
     assert attempts["n"] == 1
     alerts = [record for record in _json_lines(buffer) if record["message"] == "operational alert"]
     assert sum(1 for record in alerts if record["alert_type"] == "snapshot_retry_exhausted") >= 2
+
+
+def test_snapshot_request_uses_recovery_window_params_instead_of_fixed_limit():
+    cfg = mock.Mock(
+        env="dev",
+        ws_base="wss://stream.binance.com:9443",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+        data_dir=".",
+        log_level="INFO",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_http_get(url: str, **kwargs):
+        captured["url"] = url
+        captured["params"] = dict(kwargs["params"])
+        request = httpx.Request("GET", url, params=kwargs["params"])
+        return httpx.Response(
+            200,
+            request=request,
+            json=[[1704067200000, "100", "101", "99", "100.5", "5", 1704067259999]],
+        )
+
+    source = BinanceSource(cfg, http_get=fake_http_get, stream_types=("kline",))
+    request = RecoveryRequest(
+        partition=TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline"),
+        start_ts=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        end_ts=datetime(2024, 1, 1, 0, 5, tzinfo=timezone.utc),
+        interval="5m",
+        limit=11,
+        reason="weak_gap_detection",
+    )
+
+    events = list(source.snapshot(request=request))
+
+    assert len(events) == 1
+    assert captured["url"].endswith("/api/v3/klines")
+    assert captured["params"]["symbol"] == "BTCUSDT"
+    assert captured["params"]["interval"] == "5m"
+    assert captured["params"]["limit"] == 11
+    assert captured["params"]["startTime"] == 1704067200000
+    assert captured["params"]["endTime"] == 1704067500000
 
 
 def test_sink_failure_alert_is_emitted_when_normalized_sink_fails():

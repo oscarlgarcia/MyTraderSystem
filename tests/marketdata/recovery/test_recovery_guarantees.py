@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from app.marketdata.gaps import GapObservation
 from app.ingestion.resilience import ResilientRunner
-from app.marketdata.recovery import supports_live_recovery
+from app.marketdata.recovery import build_recovery_request, supports_live_recovery
 from app.marketdata.models import BarEvent, TradeEvent
+from app.marketdata.temporal_state import TemporalPartitionKey
 
 
 def _bar(symbol: str, ts: datetime) -> BarEvent:
@@ -100,3 +102,54 @@ def test_trade_gap_without_exact_recovery_is_marked_irreparable():
     assert stream_metrics["gap_detected"] is True
     assert stream_metrics["gap_irreparable"] is True
     assert stream_metrics["last_gap_detection_mode"] == "sequence_gap_detection"
+
+
+def test_build_recovery_request_scales_bar_snapshot_window_with_gap():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    current = _bar("BTCUSDT", base + timedelta(minutes=5))
+    request = build_recovery_request(
+        current,
+        partition=TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline"),
+        previous_ts=base,
+        gap_observation=GapObservation(
+            detected=True,
+            mode="weak_gap_detection",
+            gap_seconds=300.0,
+        ),
+    )
+
+    assert request is not None
+    assert request.start_ts == base
+    assert request.end_ts == base + timedelta(minutes=5)
+    assert request.interval == "1m"
+    assert request.limit == 6
+    assert request.reason == "weak_gap_detection"
+
+
+def test_runner_passes_recovery_request_window_to_snapshot_fn():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    stream_events = [
+        _bar("BTCUSDT", base),
+        _bar("BTCUSDT", base + timedelta(minutes=5)),
+    ]
+    captured: dict[str, object] = {}
+
+    def snapshot_fn(*, request=None):
+        captured["request"] = request
+        return [_bar("BTCUSDT", base + timedelta(minutes=1))]
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(stream_events),
+        snapshot_fn=snapshot_fn,
+        lag_threshold_seconds=2,
+        sleeper=lambda _seconds: None,
+    )
+    runner.run(lambda _event: None, stop_on_complete=True)
+
+    request = captured["request"]
+    assert request is not None
+    assert request.partition == TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="kline")
+    assert request.start_ts == base
+    assert request.end_ts == base + timedelta(minutes=5)
+    assert request.interval == "1m"
+    assert request.limit == 6

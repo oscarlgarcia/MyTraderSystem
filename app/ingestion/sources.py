@@ -7,6 +7,7 @@ Keep this layer small: it only knows how to fetch/stream normalized typed ingest
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 import time
 from dataclasses import dataclass, field
@@ -31,6 +32,7 @@ from app.marketdata.connectors.binance import BINANCE_FEED_NORMALIZERS, normaliz
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
 from app.marketdata.instruments import ensure_default_instruments
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
+from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.validators import validate_ingestion_event
 from app.observability.alerts import emit_operational_alert, should_emit_threshold_alert
 from app.observability.logger import get_trace_id
@@ -42,7 +44,7 @@ def _identity_delay(delay: float) -> float:
 
 class Source(Protocol):
     def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]: ...
-    def snapshot(self) -> Optional[Iterable[IngestionEvent]]: ...
+    def snapshot(self, request: RecoveryRequest | None = None) -> Optional[Iterable[IngestionEvent]]: ...
 
 
 @dataclass
@@ -200,9 +202,16 @@ def _ws_stream(
             yield raw
 
 
-def source_snapshot_fn(source: Source) -> Callable[[], Iterable[IngestionEvent]]:
-    def snapshot() -> Iterable[IngestionEvent]:
-        events = source.snapshot()
+def source_snapshot_fn(source: Source) -> Callable[..., Iterable[IngestionEvent]]:
+    def snapshot(*, request: RecoveryRequest | None = None) -> Iterable[IngestionEvent]:
+        try:
+            parameters = inspect.signature(source.snapshot).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "request" in parameters or any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+            events = source.snapshot(request=request)
+        else:
+            events = source.snapshot()
         if events is None:
             return []
         return events
@@ -227,6 +236,7 @@ class BinanceSource:
     snapshot_retries_5xx: int = 2
     snapshot_backoff_base_seconds: float = 0.5
     snapshot_backoff_max_seconds: float = 4.0
+    snapshot_default_limit: int = 500
     snapshot_breaker: CircuitBreaker | None = None
     stats: SourceStats = field(default_factory=SourceStats)
 
@@ -421,7 +431,24 @@ class BinanceSource:
             },
         )
 
-    def _snapshot_get(self, *, symbol: str, url: str) -> httpx.Response:
+    def _snapshot_params(self, *, symbol: str, request: RecoveryRequest | None) -> dict[str, object]:
+        interval = request.interval if request is not None and request.interval else "1m"
+        if request is not None and request.limit is not None:
+            limit = request.limit
+        else:
+            limit = self.snapshot_default_limit
+        params: dict[str, object] = {
+            "symbol": symbol,
+            "interval": interval,
+            "limit": min(max(int(limit), 1), 1000),
+        }
+        if request is not None and request.start_ts is not None:
+            params["startTime"] = int(request.start_ts.timestamp() * 1000)
+        if request is not None and request.end_ts is not None:
+            params["endTime"] = int(request.end_ts.timestamp() * 1000)
+        return params
+
+    def _snapshot_get(self, *, symbol: str, url: str, params: dict[str, object]) -> httpx.Response:
         if self.snapshot_breaker is not None and not self.snapshot_breaker.allow_request():
             self._emit_snapshot_retry_exhausted(
                 symbol=symbol,
@@ -440,7 +467,7 @@ class BinanceSource:
             try:
                 response = self.http_get(
                     url,
-                    params={"symbol": symbol, "interval": "1m", "limit": 5},
+                    params=params,
                     timeout=5.0,
                 )
                 response.raise_for_status()
@@ -583,21 +610,25 @@ class BinanceSource:
                             )
             raise classify_connector_error(exc) from exc
 
-    def snapshot(self) -> Iterable[IngestionEvent]:
+    def snapshot(self, request: RecoveryRequest | None = None) -> Iterable[IngestionEvent]:
         events: list[IngestionEvent] = []
         try:
             self.stats.snapshot_runs += 1
             for symbol in self.cfg.symbols:
                 for stream_type in self.stream_types:
+                    if request is not None:
+                        if symbol != request.partition.symbol or stream_type != request.partition.stream_type:
+                            continue
                     normalizer = BINANCE_FEED_NORMALIZERS.get(stream_type)
                     if normalizer is None or not getattr(normalizer, "supports_snapshot", False):
                         continue
                     url = f"{self.cfg.rest_base.rstrip('/')}/api/v3/klines"
-                    resp = self._snapshot_get(symbol=symbol, url=url)
+                    params = self._snapshot_params(symbol=symbol, request=request)
+                    resp = self._snapshot_get(symbol=symbol, url=url, params=params)
                     receive_ts = datetime.now(timezone.utc)
                     for row in resp.json():
                         self.stats.source_events_in += 1
-                        payload = snapshot_payload_from_row(stream_type, symbol, row, interval="1m")
+                        payload = snapshot_payload_from_row(stream_type, symbol, row, interval=str(params["interval"]))
                         try:
                             event = normalize_binance_event(
                                 stream_type,
@@ -654,7 +685,8 @@ class StaticSource:
             metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
             yield event
 
-    def snapshot(self) -> Optional[Iterable[IngestionEvent]]:
+    def snapshot(self, request: RecoveryRequest | None = None) -> Optional[Iterable[IngestionEvent]]:
+        del request
         self.stats.snapshot_runs += 1
         if self.snapshot_events is None:
             return None

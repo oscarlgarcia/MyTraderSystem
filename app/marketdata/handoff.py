@@ -14,6 +14,7 @@ from app.ingestion.client import _key
 from app.ingestion.errors import IngestionError
 from app.ingestion.sources import Source, SourceStats
 from app.marketdata.models import IngestionEvent
+from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.temporal_state import CursorState, cursor_from_event, temporal_partition_key
 
 
@@ -150,8 +151,8 @@ class HandoffSource:
             self._record_stream_metric(event, "messages_in_total", 1)
             yield event
 
-    def snapshot(self) -> Iterable[IngestionEvent] | None:
-        return self.live_source.snapshot()
+    def snapshot(self, request: RecoveryRequest | None = None) -> Iterable[IngestionEvent] | None:
+        return self.live_source.snapshot(request=request)
 
     def _bootstrap_events(self) -> list[IngestionEvent]:
         self.stats.snapshot_runs += 1

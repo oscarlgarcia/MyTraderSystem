@@ -17,6 +17,7 @@ from app.ingestion.client import normalize_kline_typed, normalize_trade_typed, p
 from app.ingestion.sources import Source
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
 from app.marketdata.normalization import NORMALIZER_VERSION, resolve_normalizer_version, stamp_normalizer_version
+from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.raw_sink import RawRecord
 from app.marketdata.validators import validate_ingestion_event
 
@@ -215,5 +216,6 @@ class ReplaySource(Source):
             first = False
             yield normalize_replay_record(entry.record, normalizer_version=self.normalizer_version)
 
-    def snapshot(self) -> None:
+    def snapshot(self, request: RecoveryRequest | None = None) -> None:
+        del request
         return None

@@ -21,7 +21,7 @@ from app.ingestion.dedup import DedupStateEntry, Deduplicator, EventIdentity
 from app.ingestion.errors import IngestionError, classify_error
 from app.marketdata.gaps import detect_gap
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
-from app.marketdata.recovery import RecoveryPolicy, recovery_policy_for_event
+from app.marketdata.recovery import RecoveryPolicy, RecoveryRequest, build_recovery_request, recovery_policy_for_event
 from app.marketdata.temporal_state import (
     CursorState,
     TemporalPartitionKey,
@@ -32,7 +32,7 @@ from app.marketdata.temporal_state import (
 from app.observability.alerts import emit_operational_alert
 
 
-SnapshotFn = Callable[[], Iterable[IngestionEvent]]
+SnapshotFn = Callable[..., Iterable[IngestionEvent]]
 StreamFn = Callable[[], Iterable[IngestionEvent]]
 Sleeper = Callable[[float], None]
 RecoveryPolicyResolver = Callable[[IngestionEvent], RecoveryPolicy]
@@ -361,13 +361,24 @@ class ResilientRunner:
                 self.metrics.last_lag_seconds = self.metrics.max_event_gap_seconds
                 self._update_temporal_metrics(partition_key, stream_state)
 
-            if delta_seconds > self.lag_threshold_seconds and recovery_policy.can_recover(self.snapshot_fn):
-                self._resync(handler, partition_key=partition_key, recovery_policy=recovery_policy)
-                # The snapshot may have already delivered this event (or a duplicate),
-                # so skip if it's now seen to avoid double handling.
-                if self.deduplicator.contains_key(k):
-                    self.metrics.snapshot_duplicates_skipped += 1
-                    return
+                if delta_seconds > self.lag_threshold_seconds and recovery_policy.can_recover(self.snapshot_fn):
+                    recovery_request = build_recovery_request(
+                        ev,
+                        partition=partition_key,
+                        previous_ts=previous_ts,
+                        gap_observation=gap_observation,
+                    )
+                    self._resync(
+                        handler,
+                        partition_key=partition_key,
+                        recovery_policy=recovery_policy,
+                        request=recovery_request,
+                    )
+                    # The snapshot may have already delivered this event (or a duplicate),
+                    # so skip if it's now seen to avoid double handling.
+                    if self.deduplicator.contains_key(k):
+                        self.metrics.snapshot_duplicates_skipped += 1
+                        return
             if delta_seconds > self.max_lag_seconds:
                 # log via handler extra if it accepts 'warning' pattern? we can't assume; emit via logging module
                 logging.getLogger("ingest.resilience").warning(
@@ -404,6 +415,7 @@ class ResilientRunner:
         *,
         partition_key: TemporalPartitionKey,
         recovery_policy: RecoveryPolicy,
+        request: RecoveryRequest | None,
     ) -> None:
         if not recovery_policy.can_recover(self.snapshot_fn):
             return
@@ -415,12 +427,16 @@ class ResilientRunner:
                 "symbol": partition_key.symbol,
                 "stream_type": partition_key.stream_type,
                 "recovery_policy": recovery_policy.name,
+                "recovery_request_start_ts": request.start_ts.isoformat() if request and request.start_ts else None,
+                "recovery_request_end_ts": request.end_ts.isoformat() if request and request.end_ts else None,
+                "recovery_request_interval": request.interval if request else None,
+                "recovery_request_limit": request.limit if request else None,
             },
         )
         self.metrics.snapshot_runs += 1
         recovered_rows = 0
         try:
-            for ev in recovery_policy.recover(self.snapshot_fn, partition=partition_key):
+            for ev in recovery_policy.recover(self.snapshot_fn, partition=partition_key, request=request):
                 event_partition_key, stream_state = self.temporal_state.state_for_event(ev)
                 self.metrics.snapshot_rows += 1
                 self.metrics.events_in += 1

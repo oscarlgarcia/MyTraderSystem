@@ -399,6 +399,18 @@
   - el replay re-normaliza desde raw, no desde normalized
   - `normalizer_version` se resuelve de forma explicita antes de re-normalizar y se inyecta en `metadata` del evento re-normalizado para fijar la version del contrato usada
   - la politica actual es global y solo soporta `normalizer_version="v1"`
+
+## RecoveryRequest
+- `app.marketdata.recovery.RecoveryRequest` formaliza el resync REST por gap:
+  - `partition`
+  - `start_ts`
+  - `end_ts`
+  - `interval`
+  - `limit`
+  - `reason`
+- `ResilientRunner` construye el request desde el gap observado y lo pasa al `snapshot_fn`.
+- `BinanceSource.snapshot(...)` ya no usa `limit=5` fijo; para `kline` pide una ventana proporcional al gap observado y solo cae a defaults cuando no hay contexto de recovery.
+- Aunque la ventana ya sea proporcional, el sistema sigue sin declarar exact recovery para `kline` mientras dependa de snapshot REST del vendor.
 - Limitacion actual:
   - el raw layout no guarda un contador global de orden entre particiones; el merge multi-particion es determinista, pero la garantia mas fuerte de orden exacto aplica a la secuencia append-only dentro de cada fichero raw.
 

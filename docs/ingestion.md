@@ -129,6 +129,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - El recovery ya no es generico:
     - `trade`: no acepta snapshots de barras como catch-up. Un gap fuerte sin recovery exacto se marca `gap_irreparable`.
     - `kline`: usa snapshots filtrados por `(venue, symbol, stream_type)` y elimina el borde duplicado via dedup del runner, pero mientras el resync siga apoyandose en una ventana REST acotada no se declara recovery exacto.
+  - `RecoveryRequest` formaliza el resync REST y calcula `start_ts`, `end_ts`, `interval` y `limit` desde el gap observado; ya no hay `limit=5` fijo en el path live.
   - `supports_live_recovery(...)` hace explicito que el alcance live actual es bars-only (`kline`).
 - `marketdata.support_matrix`
   - Define `FeedSupport` y `FEED_SUPPORT_MATRIX`.
@@ -294,6 +295,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - El raw valido se escribe inmediatamente despues de validar y normalizar el mensaje, antes de hacer `yield` al pipeline. Si el sink normalized falla despues, el raw ya queda preservado para diagnostico/replay.
 - `ReplaySource` se apoya en raw landing; no lee normalized Parquet. Esto permite re-ejecutar normalizacion de forma determinista para backtesting/debugging sin depender del layout final del sink.
 - `normalizer_version` queda fijada explicitamente tanto en replay como en normalized. Si mañana cambia la normalizacion, el contrato exige introducir una nueva version y no sobreescribir silenciosamente el significado de los datasets ya escritos.
+- El request de snapshot live solo demuestra que la ventana pedida es proporcional al gap observado; no convierte por si mismo el resync REST en exact recovery.
 - La suite cuantitativa dedicada queda separada por area:
   - `tests/marketdata/replay/test_replay_guarantees.py`: orden exacto raw -> replay y paridad raw/normalized
   - `tests/ingestion/test_raw_normalized_parity.py`: paridad live raw -> replay -> normalized para trades
