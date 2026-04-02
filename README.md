@@ -173,6 +173,7 @@ Con la matriz actual, `kline` es el primer feed live que ya cumple `exact_verifi
   - `python -m app.ops.quarantine_cli --base-dir . replay --env dev --record-id ingestion-dlq.jsonl:1 --write-normalized --report-path docs/validation/quarantine_replay_report.json`
 - Benchmark reproducible de storage segmentado:
   - `python scripts/ingestion_storage_benchmark.py`
+  - `python scripts/ingestion_live_drill.py`
   - mide:
     - synthetic multi-partition burst
     - replay raw -> normalized segmentado
@@ -273,6 +274,7 @@ events = collect_events("live", cfg, duration_s=0, source=source, sink=sink)
 - [Use Cases](docs/useCase.md)
 - [Dependencies](docs/dependencies.md)
 - [Runbook de ingestion](docs/operations/ingestion_runbook.md)
+- [Live cutover](docs/ops/live_cutover.md)
 - [Checklist de readiness](docs/validation/ingestion_readiness.md)
 
 ### Backfill historico
@@ -377,6 +379,7 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
   - `python scripts/ingestion_canary.py --mode rest-baseline --refresh-baseline`
   - `python scripts/ingestion_canary.py --mode ws-live --symbol BTCUSDT --max-events 2 --duration-seconds 130`
   - `python scripts/ingestion_storage_benchmark.py`
+  - `python scripts/ingestion_live_drill.py`
   - `python -m app.main --release-gates --release-gates-target paper`
   - generan:
     - `docs/validation/ingestion_soak_evidence.json`
@@ -385,6 +388,7 @@ En ejecuciones normales de ingest (`dry` y `live`) se emiten dos logs finales: `
     - `docs/validation/ingestion_ws_canary_report.json`
     - `docs/validation/ingestion_storage_benchmark.json`
     - `docs/validation/ingestion_release_gates.json`
+    - `docs/validation/ingestion_live_drill_report.json`
 Los checkpoints solo se guardan tras un cierre limpio del sink; no ofrecen exactly-once.
 
 ### Seguridad operativa minima

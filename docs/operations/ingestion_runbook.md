@@ -34,6 +34,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `docs/validation/ingestion_ws_canary_report.json`
 - `docs/validation/ingestion_storage_benchmark.json`
 - `docs/validation/ingestion_release_gates.json`
+- `docs/validation/ingestion_live_drill_report.json`
 - `docs/validation/quarantine_replay_report.json`
 - `<data_dir>/shadow/env=<env>/comparisons.jsonl`
 - `<data_dir>/normalized/.../data.parquet`
@@ -74,38 +75,44 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 6. Ejecutar `python scripts/ingestion_compact.py --env dev --dry-run`.
 7. Ejecutar `python scripts/ingestion_storage_benchmark.py`.
 8. Ejecutar `python -m app.main --release-gates --release-gates-target paper`.
-9. Verificar que no hay `FAILED` y que todos los scripts devuelven exit code `0`.
-10. Revisar `docs/validation/ingestion_soak_evidence.json`:
+9. Ejecutar `python scripts/ingestion_live_drill.py`.
+10. Verificar que no hay `FAILED` y que todos los scripts devuelven exit code `0`.
+11. Revisar `docs/validation/ingestion_soak_evidence.json`:
    - `pass_ok = true`
    - `max_gaps = 0`
    - `max_gap_irreparable = 0`
-11. Revisar `docs/validation/ingestion_canary_report.json`:
+12. Revisar `docs/validation/ingestion_canary_report.json`:
    - `pass_ok = true`
    - `diffs.events_persisted = 0`
    - `diffs.duplicates = 0`
    - `diffs.gaps = 0`
-12. Revisar `docs/validation/ingestion_ws_canary_report.json`:
+13. Revisar `docs/validation/ingestion_ws_canary_report.json`:
    - `pass_ok = true`
    - `reconnects_observed >= reconnects_target`
    - existe `continuity`
    - existen `gaps`, `duplicates` y `reconnects` en el reporte
-13. Revisar `docs/validation/ingestion_storage_benchmark.json`:
+14. Revisar `docs/validation/ingestion_storage_benchmark.json`:
    - `pass_ok = true`
    - existe `slo`
    - los cuatro casos (`synthetic_case`, `replay_case`, `concurrent_compaction_case`, `shadow_scoped_case`) quedan medidos
-14. Revisar `docs/validation/ingestion_release_gates.json`:
+15. Revisar `docs/validation/ingestion_release_gates.json`:
    - `overall_status = PASS`
    - existe `blocks`
    - cada bloque deja `status`, `required`, `reasons`
-15. Revisar el reporte de compactacion:
+16. Revisar `docs/validation/ingestion_live_drill_report.json`:
+   - `drill_executed = true`
+   - `checklist_completed = true`
+   - `rollback_ready = true`
+   - `promote_ready = true` solo si el cutover es aprobable
+17. Revisar el reporte de compactacion:
    - `failed_partitions = 0`
    - `planned_partitions` consistente con el estado de `segments/`
-16. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
+18. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
    - se publica `data.parquet`
    - el path activo `segments/` queda vacio o eliminado
    - `retained-segments/` solo existe si se pidio retencion
    - no queda `compaction-failures.jsonl` nuevo
-17. Si existe `schema-drift-quarantine.jsonl` o `ingestion-dlq.jsonl`, inspeccionar antes de promover:
+19. Si existe `schema-drift-quarantine.jsonl` o `ingestion-dlq.jsonl`, inspeccionar antes de promover:
    - `python -m app.ops.quarantine_cli --base-dir . list --limit 20`
    - si se corrige un payload, reinyectarlo con `replay`
    - verificar en el reporte si `normalized_modified = true`
@@ -185,6 +192,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 
 ## Rollback minimo
 - Ver checklist detallada en `docs/operations/ingestion_rollback_checklist.md`.
+- Ver procedimiento formal de cutover en `docs/ops/live_cutover.md`.
 - Regla practica:
   1. si `ingestion_canary_report.json` muestra diffs relevantes, no promocionar
   2. volver a `--ingest-pipeline-version v1`
