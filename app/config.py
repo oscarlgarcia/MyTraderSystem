@@ -250,7 +250,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--ingest-stream-types",
         type=_parse_stream_types,
         default=DEFAULT_INGEST_STREAM_TYPES,
-        help="Streams live a ingerir, separados por coma. Ejemplo: kline. `trade` queda bloqueado hasta tener recovery exacto.",
+        help="Streams live a ingerir, separados por coma. Ejemplo: kline. El scope live soportado hoy es solo `kline`; `trade` y `book` quedan bloqueados.",
     )
     parser.add_argument(
         "--fast-path",

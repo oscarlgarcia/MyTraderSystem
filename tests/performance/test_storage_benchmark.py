@@ -50,3 +50,16 @@ def test_storage_benchmark_script_help_runs():
     assert "--symbol-count" in result.stdout
     assert "--high-cardinality-symbol-counts" in result.stdout
     assert "--min-rows-per-second" in result.stdout
+
+
+def test_vendor_contracts_script_help_runs():
+    result = subprocess.run(
+        [sys.executable, "scripts/ingestion_vendor_contracts.py", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--pytest-target" in result.stdout
+    assert "--output" in result.stdout

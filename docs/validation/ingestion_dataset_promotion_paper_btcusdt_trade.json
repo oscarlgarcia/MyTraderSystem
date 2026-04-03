@@ -1,0 +1,82 @@
+{
+  "target": "paper",
+  "normalized_path": "data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03",
+  "raw_base_dir": "data/paper_candidate_ok/raw",
+  "requested_contract_mode": "strict",
+  "required_contract_mode": "strict",
+  "contract": {
+    "path": "data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03",
+    "mode": "strict",
+    "feed_type": "trade",
+    "row_count": 3,
+    "required_columns": [
+      "event_ts",
+      "exchange_ts",
+      "feed_type",
+      "historical_feed_kind",
+      "metadata",
+      "normalizer_version",
+      "price",
+      "process_ts",
+      "provider_ts",
+      "raw_ingestion_seq",
+      "raw_run_id",
+      "receive_ts",
+      "side",
+      "size",
+      "source",
+      "source_id",
+      "symbol",
+      "trade_id",
+      "venue"
+    ],
+    "missing_columns": [],
+    "required_metadata_keys": [
+      "historical_feed_kind",
+      "instrument_catalog_snapshot_json",
+      "instrument_catalog_version",
+      "instrument_snapshot",
+      "metadata_snapshot_mode",
+      "metadata_source",
+      "normalizer_version",
+      "raw_ingestion_seq",
+      "raw_run_id",
+      "venue_snapshot_version"
+    ],
+    "missing_metadata_keys": [],
+    "warnings": [],
+    "historical_feed_kind": "aggregate_trade",
+    "required_historical_feed_kind": "aggregate_trade",
+    "pass_ok": true
+  },
+  "compat_contract": null,
+  "parity": {
+    "generated_at": "2026-04-03T01:00:46.447061+00:00",
+    "raw_base_dir": "data/paper_candidate_ok/raw",
+    "normalized_path": "data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03",
+    "env": "papercand",
+    "symbol": "BTCUSDT",
+    "stream_type": "trade",
+    "raw_rows": 3,
+    "replay_rows": 3,
+    "normalized_rows": 3,
+    "replay_identity_count": 3,
+    "normalized_identity_count": 3,
+    "manifest_ok": true,
+    "manifest_checked_files": [
+      "data/paper_candidate_ok/raw/env=papercand/venue=BINANCE/stream_type=trade/symbol=BTCUSDT/date=2024-04-03/events.jsonl"
+    ],
+    "manifest_missing_files": [],
+    "manifest_mismatches": [],
+    "order_match": true,
+    "pass_ok": true
+  },
+  "feed_type": "trade",
+  "historical_feed_kind": "aggregate_trade",
+  "approved_trade_dataset_usages": [
+    "aggregate_trade"
+  ],
+  "reasons": [],
+  "generated_at": "2026-04-03T01:00:46.447149+00:00",
+  "pass_ok": true
+}

@@ -10,7 +10,7 @@
 - trade historical backfill: implementado via Binance `aggTrades` con parity `raw -> replay -> normalized`
 - ADR vigente: `docs/adr/ADR-0001-historical-market-data-scope.md`
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
-- **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el default Binance (`trade`, `kline`).
+- **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin tocar el scope live soportado hoy (`kline`-only; `trade` y `book` siguen bloqueados para runtime live).
 - **Catalogo autoritativo de instrumentos**:
   - `app.marketdata.instrument_loader.load_binance_exchange_info_snapshot(...)`
   - `app.marketdata.instrument_loader.load_binance_instrument_records(...)`
@@ -213,7 +213,7 @@
 - Flujo minimo:
   1. registrar builder (`foo -> {symbol}@foo`);
   2. registrar normalizer `foo`;
-  3. construir URL con `build_ws_url(..., stream_types=("trade", "foo"))`;
+  3. construir URL con `build_ws_url(..., stream_types=("kline", "foo"))`;
   4. dejar que `parse_message` enrute por el tipo registrado.
 - Restriccion actual: la extension es por tipo de stream, no por adaptadores completos de exchange; sigue siendo el mismo contrato Binance-compatible de URL multiplexada.
 

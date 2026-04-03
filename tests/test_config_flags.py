@@ -1,4 +1,5 @@
 from app.config import parse_args
+import pytest
 
 
 def test_defaults_flags():
@@ -67,6 +68,14 @@ def test_shadow_mode_flags():
 def test_ingest_stream_types_flag():
     args = parse_args(["--ingest-stream-types", "kline"])
     assert args.ingest_stream_types == ("kline",)
+
+
+def test_ingest_stream_types_help_states_live_scope_is_kline_only(capsys: pytest.CaptureFixture[str]):
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    help_text = capsys.readouterr().out
+    assert "scope live soportado hoy es solo `kline`" in help_text
+    assert "`trade` y `book` quedan bloqueados" in help_text
 
 
 def test_release_gate_paths_flags():

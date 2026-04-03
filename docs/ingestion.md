@@ -144,8 +144,9 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
     - `supports_handoff`
   - Gating actual:
     - cualquier `mode=live` rechaza feeds sin `supports_live`
-    - `production_mode` rechaza ademas feeds sin recovery exacto o sin handoff soportado
-    - `kline` conserva `supports_live=True` y `supports_handoff=True`, pero `supports_exact_recovery=False` hasta que exista recovery real basado en ventana/cursor
+    - `production_mode` rechaza ademas feeds sin recovery `exact_verified` o sin handoff soportado
+    - el scope live soportado hoy es `kline`-only: `kline` es el unico feed con `supports_live=True`, `supports_handoff=True` y recovery `exact_verified`
+    - `trade` y `book` siguen con `supports_live=False` y quedan fuera del scope live
 - `marketdata.handoff`
   - Define `HistoricalWindow`, `windowed_bootstrap_events(...)` y `HandoffSource`.
   - `HandoffSource` compone:
@@ -445,7 +446,7 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 ## Extension rapida de streams
 - Registrar el builder del tipo nuevo con `register_stream_builder("foo", lambda symbol: f"{symbol}@foo")`.
 - Registrar el normalizer correspondiente con `register_normalizer("foo", normalize_foo)`.
-- Construir la URL con `build_ws_url(ws_base, symbols, stream_types=("trade", "foo"))`.
+- Construir la URL con `build_ws_url(ws_base, symbols, stream_types=("kline", "foo"))`.
 - Si no se pasa `stream_types`, el runtime live usa por defecto `kline`.
 
 ## Operacion a altas tasas

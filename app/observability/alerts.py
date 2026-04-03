@@ -14,6 +14,8 @@ AlertType = Literal[
     "snapshot_retry_exhausted",
     "recovery_exactness_violation",
     "invalid_timestamp_detected",
+    "exchange_receive_skew_high",
+    "receive_process_skew_high",
     "schema_drift_detected",
     "provider_metadata_drift",
     "compaction_backlog_high",
@@ -67,6 +69,16 @@ ALERT_SPECS: dict[AlertType, AlertSpec] = {
         severity="warning",
         threshold=1,
         recommended_action="Inspect timestamp skew and payload sanity before trusting the affected stream.",
+    ),
+    "exchange_receive_skew_high": AlertSpec(
+        severity="warning",
+        threshold=1,
+        recommended_action="Investigate vendor or network latency before trusting event-time ordering.",
+    ),
+    "receive_process_skew_high": AlertSpec(
+        severity="warning",
+        threshold=1,
+        recommended_action="Inspect ingestion backpressure or downstream processing lag before trusting timeliness.",
     ),
     "schema_drift_detected": AlertSpec(
         severity="error",

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app import main
-from app.config import load_config
+from app.config import DEFAULT_INGEST_STREAM_TYPES, load_config, parse_args
 from app.marketdata.support_matrix import FEED_SUPPORT_MATRIX
 
 
@@ -48,6 +48,14 @@ EXACT_VERIFIED_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {
         ),
     ),
 }
+
+LIVE_SCOPE_DOC_PATHS: tuple[Path, ...] = (
+    Path("docs/definition.md"),
+    Path("docs/tech_spec.md"),
+    Path("docs/ingestion.md"),
+    Path("docs/operations/ingestion_promotion_runbook.md"),
+    Path("docs/operations/ingestion_runbook.md"),
+)
 
 
 def _production_runtime(feed_type: str) -> dict[str, object]:
@@ -133,6 +141,38 @@ def test_exact_verified_recovery_registry_points_to_real_tests():
         for module_name, test_name in test_refs:
             module = importlib.import_module(module_name)
             assert hasattr(module, test_name), f"missing proving test {module_name}.{test_name}"
+
+
+def test_live_scope_claim_is_kline_only_across_support_matrix_and_cli_defaults() -> None:
+    live_supported = sorted(feed_type for feed_type, support in FEED_SUPPORT_MATRIX.items() if support.supports_live)
+    assert live_supported == ["kline"]
+    assert FEED_SUPPORT_MATRIX["kline"].supports_exact_verified_recovery is True
+    assert FEED_SUPPORT_MATRIX["trade"].supports_live is False
+    assert FEED_SUPPORT_MATRIX["book"].supports_live is False
+    assert DEFAULT_INGEST_STREAM_TYPES == ("kline",)
+    assert parse_args([]).ingest_stream_types == ("kline",)
+
+
+def test_live_scope_docs_do_not_advertise_trade_or_book_as_supported_live_runtime() -> None:
+    required_markers = (
+        "`kline`-only",
+        "`trade`",
+        "`book`",
+    )
+    forbidden_markers = (
+        "trade+kline",
+        'stream_types=("trade", "foo")',
+        "supports_exact_recovery=False",
+        "default Binance (`trade`, `kline`)",
+    )
+
+    for path in LIVE_SCOPE_DOC_PATHS:
+        content = path.read_text(encoding="utf-8")
+        assert "`kline`" in content, f"{path} must mention the supported live feed explicitly"
+        for marker in required_markers:
+            assert marker in content, f"{path} must document live scope markers: missing {marker}"
+        for marker in forbidden_markers:
+            assert marker not in content, f"{path} still advertises stale live scope wording: {marker}"
 
 
 @pytest.mark.parametrize("feed_type,support", FEED_SUPPORT_MATRIX.items(), ids=sorted(FEED_SUPPORT_MATRIX))

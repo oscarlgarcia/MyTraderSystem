@@ -39,6 +39,12 @@ def main() -> int:
         max_compaction_elapsed_slo=args.max_compaction_elapsed_seconds,
         max_shadow_elapsed_slo=args.max_shadow_elapsed_seconds,
     )
+    print(f"storage benchmark: {'PASS' if evidence.pass_ok else 'FAIL'}")
+    print(f"- generated_at: {evidence.generated_at}")
+    print(f"- synthetic_rows_per_second: {evidence.synthetic_case.rows_per_second:.3f}")
+    print(f"- replay_rows_per_second: {evidence.replay_case.rows_per_second:.3f}")
+    print(f"- high_cardinality_cases: {len(evidence.high_cardinality_cases)}")
+    print(f"- report_path: {args.output}")
     return 0 if evidence.pass_ok else 1
 
 

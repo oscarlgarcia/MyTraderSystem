@@ -31,19 +31,66 @@ def test_failure_injection_release_gate_fails_with_stale_ws_artifact(tmp_path: P
         {
             "report_generated_at": (NOW - timedelta(days=2)).isoformat(),
             "pass_ok": True,
+            "symbol": "BTCUSDT",
+            "stream_type": "kline",
             "continuity": {"reconnects": 1, "duplicates": 0, "gaps": 0, "gap_irreparable": 0},
             "reconnects_observed": 1,
             "reconnects_target": 1,
             "comparison_reason": "ok",
         },
     )
-    _write_json(tmp_path / "benchmark.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "slo": {}})
+    _write_json(
+        tmp_path / "benchmark.json",
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "slo": {"min_rows_per_second": 1.0},
+            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "replay_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0},
+        },
+    )
     _write_json(
         tmp_path / "parity.json",
-        {"generated_at": NOW.isoformat(), "pass_ok": True, "order_match": True, "manifest_ok": True, "manifest_missing_files": [], "manifest_mismatches": []},
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "order_match": True,
+            "manifest_ok": True,
+            "normalized_path": str(tmp_path / "normalized" / "bars" / "env=dev" / "venue=BINANCE" / "symbol=BTCUSDT" / "date=2024-01-01"),
+            "symbol": "BTCUSDT",
+            "stream_type": "kline",
+            "manifest_missing_files": [],
+            "manifest_mismatches": [],
+        },
     )
-    _write_json(tmp_path / "soak.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "max_gaps": 0, "max_gap_irreparable": 0})
-    _write_json(tmp_path / "vendor.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "command": ["pytest"], "returncode": 0})
+    _write_json(
+        tmp_path / "soak.json",
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "max_allowed_gaps": 0,
+            "max_gaps": 0,
+            "max_allowed_gap_irreparable": 0,
+            "max_gap_irreparable": 0,
+            "max_allowed_compaction_failures": 0,
+            "compaction_failures_total": 0,
+            "reconnects_observed": 1,
+            "reconnects_target": 1,
+        },
+    )
+    _write_json(
+        tmp_path / "vendor.json",
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "pytest_target": "tests/network/test_binance_contracts.py",
+            "command": ["pytest"],
+            "duration_seconds": 1.0,
+            "returncode": 0,
+        },
+    )
 
     report = run_release_gates(
         base_dir=tmp_path,
@@ -129,13 +176,26 @@ def test_failure_injection_release_gate_fails_with_manifest_mismatch(tmp_path: P
         {
             "report_generated_at": NOW.isoformat(),
             "pass_ok": True,
+            "symbol": "BTCUSDT",
+            "stream_type": "kline",
             "continuity": {"reconnects": 1, "duplicates": 0, "gaps": 0, "gap_irreparable": 0},
             "reconnects_observed": 1,
             "reconnects_target": 1,
             "comparison_reason": "ok",
         },
     )
-    _write_json(tmp_path / "benchmark.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "slo": {}})
+    _write_json(
+        tmp_path / "benchmark.json",
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "slo": {"min_rows_per_second": 1.0},
+            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "replay_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0},
+        },
+    )
     _write_json(
         tmp_path / "parity.json",
         {
@@ -143,12 +203,39 @@ def test_failure_injection_release_gate_fails_with_manifest_mismatch(tmp_path: P
             "pass_ok": False,
             "order_match": True,
             "manifest_ok": False,
+            "normalized_path": str(tmp_path / "normalized" / "bars" / "env=dev" / "venue=BINANCE" / "symbol=BTCUSDT" / "date=2024-01-01"),
+            "symbol": "BTCUSDT",
+            "stream_type": "kline",
             "manifest_missing_files": [],
             "manifest_mismatches": ["events.jsonl:sha256"],
         },
     )
-    _write_json(tmp_path / "soak.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "max_gaps": 0, "max_gap_irreparable": 0})
-    _write_json(tmp_path / "vendor.json", {"generated_at": NOW.isoformat(), "pass_ok": True, "command": ["pytest"], "returncode": 0})
+    _write_json(
+        tmp_path / "soak.json",
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "max_allowed_gaps": 0,
+            "max_gaps": 0,
+            "max_allowed_gap_irreparable": 0,
+            "max_gap_irreparable": 0,
+            "max_allowed_compaction_failures": 0,
+            "compaction_failures_total": 0,
+            "reconnects_observed": 1,
+            "reconnects_target": 1,
+        },
+    )
+    _write_json(
+        tmp_path / "vendor.json",
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "pytest_target": "tests/network/test_binance_contracts.py",
+            "command": ["pytest"],
+            "duration_seconds": 1.0,
+            "returncode": 0,
+        },
+    )
 
     report = run_release_gates(
         base_dir=tmp_path,

@@ -1,0 +1,17 @@
+{
+  "updated_at": "2026-04-03T01:00:46.476249+00:00",
+  "entries": [
+    {
+      "target": "paper",
+      "normalized_path": "data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03",
+      "promotion_report_path": "docs/validation/ingestion_dataset_promotion_paper_btcusdt_trade.json",
+      "registered_at": "2026-04-03T01:00:46.476216+00:00",
+      "approved_contract_mode": "strict",
+      "feed_type": "trade",
+      "historical_feed_kind": "aggregate_trade",
+      "approved_trade_dataset_usages": [
+        "aggregate_trade"
+      ]
+    }
+  ]
+}

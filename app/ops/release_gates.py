@@ -33,6 +33,7 @@ class GateBlockReport:
 class ReleaseGateReport:
     target: ReleaseTarget
     env: str
+    base_dir: str
     generated_at: str
     overall_status: Literal["PASS", "FAIL"]
     pass_ok: bool
@@ -49,6 +50,7 @@ def write_release_gate_report(path: Path, report: ReleaseGateReport) -> Path:
 
 def render_release_gate_summary(report: ReleaseGateReport) -> str:
     lines = [f"Release gates: {report.overall_status} ({report.target})"]
+    lines.append(f"- base_dir: {report.base_dir}")
     for block in report.blocks:
         prefix = block.status.upper()
         suffix = "required" if block.required else "informational"
@@ -70,7 +72,9 @@ def run_release_gates(
     benchmark_path: Path | None = None,
     soak_path: Path | None = None,
     network_contracts_path: Path | None = None,
+    failure_injection_path: Path | None = None,
     live_drill_path: Path | None = None,
+    require_live_drill: bool = True,
 ) -> ReleaseGateReport:
     normalized_stream_types = normalize_feed_types(stream_types)
     blocks = (
@@ -90,7 +94,7 @@ def run_release_gates(
             name="canary_ws",
             path=Path(ws_canary_path or "docs/validation/ingestion_ws_canary_report.json"),
             required=True,
-            expected_keys=("pass_ok", "continuity", "reconnects_observed"),
+            expected_keys=("pass_ok", "continuity", "reconnects_observed", "report_generated_at", "symbol", "stream_type"),
             bool_paths=(("pass_ok",),),
             extra_checks=_validate_ws_canary_payload,
             max_age=timedelta(hours=24),
@@ -99,15 +103,16 @@ def run_release_gates(
             name="storage_benchmark",
             path=Path(benchmark_path or "docs/validation/ingestion_storage_benchmark.json"),
             required=True,
-            expected_keys=("pass_ok", "slo"),
+            expected_keys=("pass_ok", "generated_at", "slo", "synthetic_case", "replay_case", "concurrent_compaction_case", "shadow_scoped_case"),
             bool_paths=(("pass_ok",),),
+            extra_checks=_validate_storage_benchmark_payload,
             max_age=timedelta(days=7),
         ),
         _canary_block(
             name="replay_parity",
             path=Path(replay_parity_path or "docs/validation/ingestion_replay_parity.json"),
             required=True,
-            expected_keys=("pass_ok", "order_match", "manifest_ok"),
+            expected_keys=("pass_ok", "order_match", "manifest_ok", "generated_at", "normalized_path", "symbol", "stream_type"),
             bool_paths=(("pass_ok",), ("order_match",), ("manifest_ok",)),
             extra_checks=_validate_replay_parity_payload,
             max_age=timedelta(days=7),
@@ -116,7 +121,17 @@ def run_release_gates(
             name="paper_soak",
             path=Path(soak_path or "docs/validation/ingestion_soak_evidence.json"),
             required=(target in {"paper", "live"}),
-            expected_keys=("pass_ok", "max_gaps", "max_gap_irreparable"),
+            expected_keys=(
+                "pass_ok",
+                "generated_at",
+                "max_allowed_gaps",
+                "max_gaps",
+                "max_allowed_gap_irreparable",
+                "max_gap_irreparable",
+                "max_allowed_compaction_failures",
+                "compaction_failures_total",
+                "reconnects_observed",
+            ),
             bool_paths=(("pass_ok",),),
             extra_checks=_validate_soak_payload,
             max_age=timedelta(hours=24),
@@ -125,15 +140,25 @@ def run_release_gates(
             name="vendor_contracts",
             path=Path(network_contracts_path or "docs/validation/ingestion_vendor_contracts.json"),
             required=(target in {"paper", "live"}),
-            expected_keys=("pass_ok", "command", "returncode"),
+            expected_keys=("pass_ok", "generated_at", "pytest_target", "command", "returncode", "duration_seconds"),
             bool_paths=(("pass_ok",),),
+            extra_checks=_validate_vendor_contracts_payload,
             max_age=timedelta(hours=24),
         ),
-        _observability_contract_block(required=(target in {"paper", "live"})),
+        _canary_block(
+            name="failure_injection",
+            path=Path(failure_injection_path or "docs/validation/ingestion_failure_injection.json"),
+            required=(target == "live"),
+            expected_keys=("pass_ok", "generated_at", "pytest_target", "critical_test_ids", "command", "returncode", "duration_seconds"),
+            bool_paths=(("pass_ok",),),
+            extra_checks=_validate_failure_injection_payload,
+            max_age=timedelta(hours=24),
+        ),
+        _observability_contract_block(target=target, required=(target in {"paper", "live"})),
         _canary_block(
             name="live_drill",
             path=Path(live_drill_path or "docs/validation/ingestion_live_drill_report.json"),
-            required=(target == "live"),
+            required=(target == "live" and require_live_drill),
             expected_keys=("drill_executed", "promote_ready", "rollback_ready", "overall_status"),
             bool_paths=(("drill_executed",), ("promote_ready",), ("rollback_ready",)),
             extra_checks=_validate_live_drill_payload,
@@ -146,6 +171,7 @@ def run_release_gates(
     report = ReleaseGateReport(
         target=target,
         env=env,
+        base_dir=str(Path(base_dir)),
         generated_at=datetime.now(timezone.utc).isoformat(),
         overall_status="PASS" if pass_ok else "FAIL",
         pass_ok=pass_ok,
@@ -275,6 +301,7 @@ def _canary_block(
         details={
             "path": str(path),
             "pass_ok": bool(payload.get("pass_ok", False)),
+            "generated_at": payload.get("generated_at") or payload.get("report_generated_at") or payload.get("fetched_at"),
             "comparison_reason": payload.get("comparison_reason"),
             "artifact_age_seconds": age.total_seconds() if age is not None else None,
         },
@@ -315,12 +342,101 @@ def _validate_replay_parity_payload(payload: dict[str, object]) -> list[str]:
     return reasons
 
 
+def _validate_storage_benchmark_payload(payload: dict[str, object]) -> list[str]:
+    reasons: list[str] = []
+    for key in ("synthetic_case", "replay_case", "concurrent_compaction_case", "shadow_scoped_case"):
+        case = payload.get(key)
+        if not isinstance(case, dict):
+            reasons.append(f"{key} missing")
+            continue
+        if case.get("pass_ok") is not True:
+            reasons.append(f"{key}.pass_ok is not true")
+        if "rows_per_second" not in case:
+            reasons.append(f"{key}.rows_per_second missing")
+    slo = payload.get("slo")
+    if not isinstance(slo, dict) or "min_rows_per_second" not in slo:
+        reasons.append("slo.min_rows_per_second missing")
+    return reasons
+
+
+def _validate_vendor_contracts_payload(payload: dict[str, object]) -> list[str]:
+    reasons: list[str] = []
+    command = payload.get("command")
+    if not isinstance(command, list) or not command:
+        reasons.append("command missing")
+    elif "pytest" not in " ".join(str(part) for part in command):
+        reasons.append("command does not invoke pytest")
+    try:
+        if int(payload.get("returncode", 1)) != 0:
+            reasons.append("returncode is not zero")
+    except (TypeError, ValueError):
+        reasons.append("invalid returncode")
+    duration = payload.get("duration_seconds")
+    try:
+        if float(duration) < 0.0:
+            reasons.append("duration_seconds must be non-negative")
+    except (TypeError, ValueError):
+        reasons.append("invalid duration_seconds")
+    return reasons
+
+
+def _validate_failure_injection_payload(payload: dict[str, object]) -> list[str]:
+    reasons: list[str] = []
+    critical_test_ids = payload.get("critical_test_ids")
+    if not isinstance(critical_test_ids, list) or not critical_test_ids:
+        reasons.append("critical_test_ids missing")
+    else:
+        required_ids = {
+            "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_stale_ws_artifact",
+            "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot",
+            "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch",
+        }
+        observed_ids = {str(item) for item in critical_test_ids}
+        missing = sorted(required_ids - observed_ids)
+        if missing:
+            reasons.append(f"critical failure-injection subset incomplete: {', '.join(missing)}")
+    command = payload.get("command")
+    if not isinstance(command, list) or not command:
+        reasons.append("command missing")
+    elif "pytest" not in " ".join(str(part) for part in command):
+        reasons.append("command does not invoke pytest")
+    try:
+        if int(payload.get("returncode", 1)) != 0:
+            reasons.append("returncode is not zero")
+    except (TypeError, ValueError):
+        reasons.append("invalid returncode")
+    duration = payload.get("duration_seconds")
+    try:
+        if float(duration) < 0.0:
+            reasons.append("duration_seconds must be non-negative")
+    except (TypeError, ValueError):
+        reasons.append("invalid duration_seconds")
+    return reasons
+
+
 def _validate_soak_payload(payload: dict[str, object]) -> list[str]:
     reasons: list[str] = []
-    if int(payload.get("max_gap_irreparable", 0) or 0) > 0:
-        reasons.append("gap_irreparable observed during soak")
-    if int(payload.get("max_gaps", 0) or 0) > 0:
-        reasons.append("gaps observed during soak")
+    reconnects_observed = payload.get("reconnects_observed")
+    reconnects_target = payload.get("reconnects_target", 0)
+    try:
+        max_gap_irreparable = int(payload.get("max_gap_irreparable", 0) or 0)
+        max_allowed_gap_irreparable = int(payload.get("max_allowed_gap_irreparable", 0) or 0)
+        if max_gap_irreparable > max_allowed_gap_irreparable:
+            reasons.append("gap_irreparable exceeds soak threshold")
+        max_gaps = int(payload.get("max_gaps", 0) or 0)
+        max_allowed_gaps = int(payload.get("max_allowed_gaps", 0) or 0)
+        if max_gaps > max_allowed_gaps:
+            reasons.append("gaps exceed soak threshold")
+        compaction_failures_total = int(payload.get("compaction_failures_total", 0) or 0)
+        max_allowed_compaction_failures = int(payload.get("max_allowed_compaction_failures", 0) or 0)
+        if compaction_failures_total > max_allowed_compaction_failures:
+            reasons.append("compaction failures exceed soak threshold")
+        if int(reconnects_observed) < 0:
+            reasons.append("invalid reconnects_observed")
+        if int(reconnects_observed) < int(reconnects_target):
+            reasons.append("soak reconnect target not met")
+    except (TypeError, ValueError):
+        reasons.append("invalid reconnect counters")
     return reasons
 
 
@@ -442,18 +558,38 @@ def _storage_health_block(*, base_dir: Path, env: str, required: bool) -> GateBl
     )
 
 
-def _observability_contract_block(*, required: bool) -> GateBlockReport:
-    report = build_observability_contract_report()
-    reasons = ["observability contract defined"] if report.pass_ok else ["missing required alert definitions"]
+def _observability_contract_block(*, target: ReleaseTarget, required: bool) -> GateBlockReport:
+    report = build_observability_contract_report(target=target)
+    reasons: list[str] = []
+    if report.missing_alerts:
+        reasons.append("missing required alert definitions")
+    if report.missing_metric_thresholds:
+        reasons.append("missing required metric thresholds")
+    if report.invalid_alert_specs:
+        reasons.append("invalid alert threshold definitions")
+    if not reasons:
+        reasons.append("observability contract defined")
     return GateBlockReport(
         name="observability_contract",
         status="pass" if report.pass_ok else ("fail" if required else "warn"),
         required=required,
         reasons=tuple(reasons),
         details={
+            "target": report.target,
             "required_metrics": list(report.required_metrics),
             "required_alerts": list(report.required_alerts),
+            "required_metric_thresholds": report.required_metric_thresholds,
+            "alert_specs": {
+                name: {
+                    "severity": spec.severity,
+                    "threshold": spec.threshold,
+                    "recommended_action": spec.recommended_action,
+                }
+                for name, spec in report.alert_specs.items()
+            },
             "missing_alerts": list(report.missing_alerts),
+            "missing_metric_thresholds": list(report.missing_metric_thresholds),
+            "invalid_alert_specs": list(report.invalid_alert_specs),
         },
     )
 

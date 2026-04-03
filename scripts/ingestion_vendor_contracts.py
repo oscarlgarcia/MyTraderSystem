@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
-import sys
-from datetime import datetime, timezone
 from pathlib import Path
+
+from app.ops.ingestion_validation import run_vendor_contract_validation
 
 
 def parse_args() -> argparse.Namespace:
@@ -13,30 +11,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default="docs/validation/ingestion_vendor_contracts.json",
+        help="JSON artifact output path",
     )
     parser.add_argument(
         "--pytest-target",
         default="tests/network/test_binance_contracts.py",
+        help="Pytest target executed with marker=network",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    command = [sys.executable, "-m", "pytest", args.pytest_target, "-q", "-m", "network"]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
-    payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "command": command,
-        "returncode": result.returncode,
-        "pass_ok": result.returncode == 0,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-    }
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return result.returncode
+    evidence = run_vendor_contract_validation(
+        Path(args.output),
+        pytest_target=args.pytest_target,
+    )
+    print(f"vendor contracts: {'PASS' if evidence.pass_ok else 'FAIL'}")
+    print(f"- generated_at: {evidence.generated_at}")
+    print(f"- pytest_target: {evidence.pytest_target}")
+    print(f"- duration_seconds: {evidence.duration_seconds:.3f}")
+    print(f"- returncode: {evidence.returncode}")
+    print(f"- report_path: {args.output}")
+    return 0 if evidence.pass_ok else evidence.returncode
 
 
 if __name__ == "__main__":

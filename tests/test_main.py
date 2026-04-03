@@ -73,6 +73,7 @@ def test_run_release_gates_exits_before_pipeline(monkeypatch, tmp_path: Path):
         target = "paper"
         overall_status = "PASS"
         blocks = ()
+        base_dir = str(tmp_path.resolve())
 
     monkeypatch.setattr(main, "parse_args", lambda: args)
     monkeypatch.setattr(main, "load_config", lambda env=None: cfg)

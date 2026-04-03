@@ -4,7 +4,16 @@ from pathlib import Path
 import sys
 
 from app.ingestion.backfill import normalize_kline_row
-from app.ops.ingestion_validation import run_canary_validation, run_soak_validation, run_ws_live_canary
+from types import SimpleNamespace
+
+from app.ops.ingestion_validation import (
+    CRITICAL_FAILURE_INJECTION_TEST_IDS,
+    run_canary_validation,
+    run_failure_injection_validation,
+    run_soak_validation,
+    run_vendor_contract_validation,
+    run_ws_live_canary,
+)
 
 
 def _kline_rows(count: int) -> list[list[object]]:
@@ -49,6 +58,14 @@ def test_soak_validation_writes_evidence_and_passes(tmp_path: Path):
 
     assert evidence.pass_ok is True
     assert evidence.total_events_persisted == 40
+    assert evidence.generated_at
+    assert evidence.max_allowed_gaps == 0
+    assert evidence.max_gap_irreparable == 0
+    assert evidence.max_gaps == 0
+    assert evidence.max_allowed_gap_irreparable == 0
+    assert evidence.max_allowed_compaction_failures == 0
+    assert evidence.compaction_failures_total == 0
+    assert evidence.reconnects_observed == 0
     assert output.exists()
 
 
@@ -159,6 +176,95 @@ def test_ws_live_canary_writes_report_and_records_reconnects(tmp_path: Path):
     assert output.exists()
 
 
+def test_ws_live_soak_writes_report_and_records_reconnects(tmp_path: Path):
+    output = tmp_path / "soak.json"
+    events = _bar_events(3)
+
+    class FakeWSSoakSource:
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, end_time=None):
+            del end_time
+            if self.calls == 0:
+                self.calls += 1
+                yield events[0]
+                raise TimeoutError("induced reconnect")
+            self.calls += 1
+            for event in events[1:]:
+                yield event
+
+        def snapshot(self, request=None):
+            del request
+            return [events[0], events[1]]
+
+    evidence = run_soak_validation(
+        output,
+        mode="ws-live",
+        iterations=1,
+        events_per_iteration=2,
+        duration_seconds=5.0,
+        pipeline_version="v2",
+        symbol="BTCUSDT",
+        stream_type="kline",
+        interval="1m",
+        reconnect_after_events=1,
+        induced_reconnects=1,
+        source_builder=lambda cfg: FakeWSSoakSource(),
+    )
+
+    assert evidence.pass_ok is True
+    assert evidence.reconnects_observed >= 1
+    assert evidence.reconnects_target == 1
+    assert evidence.max_allowed_gaps == 1
+    assert evidence.compaction_failures_total == 0
+    assert evidence.max_gap_irreparable == 0
+    assert output.exists()
+
+
+def test_vendor_contract_validation_writes_artifact(tmp_path: Path):
+    output = tmp_path / "vendor-contracts.json"
+
+    def fake_runner(command, **kwargs):
+        assert command[-3:] == ["-q", "-m", "network"]
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["check"] is False
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    evidence = run_vendor_contract_validation(
+        output,
+        pytest_target="tests/network/test_binance_contracts.py",
+        runner=fake_runner,
+    )
+
+    assert evidence.pass_ok is True
+    assert evidence.returncode == 0
+    assert evidence.pytest_target == "tests/network/test_binance_contracts.py"
+    assert output.exists()
+
+
+def test_failure_injection_validation_writes_artifact_for_critical_subset(tmp_path: Path):
+    output = tmp_path / "failure-injection.json"
+
+    def fake_runner(command, **kwargs):
+        assert command[:3] == [sys.executable, "-m", "pytest"]
+        assert command[3] == "-q"
+        assert command[4:] == list(CRITICAL_FAILURE_INJECTION_TEST_IDS)
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["check"] is False
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    evidence = run_failure_injection_validation(output, runner=fake_runner)
+
+    assert evidence.pass_ok is True
+    assert evidence.returncode == 0
+    assert evidence.critical_test_ids == CRITICAL_FAILURE_INJECTION_TEST_IDS
+    assert evidence.pytest_target == "tests/ops/test_failure_injection.py"
+    assert output.exists()
+
+
 def test_ingestion_canary_script_help_exposes_ws_mode():
     result = subprocess.run(
         [sys.executable, "scripts/ingestion_canary.py", "--help"],
@@ -170,3 +276,41 @@ def test_ingestion_canary_script_help_exposes_ws_mode():
     assert result.returncode == 0
     assert "--mode" in result.stdout
     assert "--stream-type" in result.stdout
+
+
+def test_ingestion_ws_canary_script_help_runs():
+    result = subprocess.run(
+        [sys.executable, "scripts/ingestion_ws_canary.py", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--stream-type" in result.stdout
+    assert "--induced-reconnects" in result.stdout
+
+
+def test_ingestion_failure_injection_script_help_runs():
+    result = subprocess.run(
+        [sys.executable, "scripts/ingestion_failure_injection.py", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--critical-test-ids" in result.stdout
+
+
+def test_ingestion_soak_script_help_runs():
+    result = subprocess.run(
+        [sys.executable, "scripts/ingestion_soak.py", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--mode" in result.stdout
+    assert "--duration-seconds" in result.stdout

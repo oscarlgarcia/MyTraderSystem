@@ -1,0 +1,92 @@
+{
+  "generated_at": "2026-04-03T01:18:37.596512+00:00",
+  "synthetic_case": {
+    "name": "synthetic_segmented_write",
+    "dataset_kind": "synthetic",
+    "rows_in": 6,
+    "partitions": 2,
+    "bursts": 1,
+    "elapsed_seconds": 0.03495790698798373,
+    "rows_per_second": 171.6349895336243,
+    "max_write_latency_seconds": 0.03095845799543895,
+    "compaction_elapsed_seconds": 0.0,
+    "shadow_elapsed_seconds": 0.0,
+    "segments_pending_total": 2,
+    "segments_per_partition_max": 1,
+    "normalized_partition_row_count": 6,
+    "pass_ok": true
+  },
+  "replay_case": {
+    "name": "replay_backed_segmented_write",
+    "dataset_kind": "replay_raw",
+    "rows_in": 6,
+    "partitions": 2,
+    "bursts": 1,
+    "elapsed_seconds": 0.012986331013962626,
+    "rows_per_second": 462.0242617833265,
+    "max_write_latency_seconds": 0.00815618401975371,
+    "compaction_elapsed_seconds": 0.0,
+    "shadow_elapsed_seconds": 0.0,
+    "segments_pending_total": 2,
+    "segments_per_partition_max": 1,
+    "normalized_partition_row_count": 6,
+    "pass_ok": true
+  },
+  "concurrent_compaction_case": {
+    "name": "concurrent_compaction",
+    "dataset_kind": "synthetic",
+    "rows_in": 6,
+    "partitions": 2,
+    "bursts": 1,
+    "elapsed_seconds": 0.04972019899287261,
+    "rows_per_second": 120.67530141744002,
+    "max_write_latency_seconds": 0.01574134800466709,
+    "compaction_elapsed_seconds": 0.04098394399625249,
+    "shadow_elapsed_seconds": 0.0,
+    "segments_pending_total": 1,
+    "segments_per_partition_max": 1,
+    "normalized_partition_row_count": 6,
+    "pass_ok": true
+  },
+  "shadow_scoped_case": {
+    "name": "shadow_scoped_runtime",
+    "dataset_kind": "synthetic",
+    "rows_in": 8,
+    "partitions": 2,
+    "bursts": 1,
+    "elapsed_seconds": 0.1790597889921628,
+    "rows_per_second": 44.677814293359575,
+    "max_write_latency_seconds": 0.0,
+    "compaction_elapsed_seconds": 0.0,
+    "shadow_elapsed_seconds": 0.1790597889921628,
+    "segments_pending_total": 2,
+    "segments_per_partition_max": 1,
+    "normalized_partition_row_count": 8,
+    "pass_ok": true
+  },
+  "slo": {
+    "min_rows_per_second": 1.0,
+    "max_write_latency_seconds": 2.0,
+    "max_compaction_elapsed_seconds": 5.0,
+    "max_shadow_elapsed_seconds": 5.0
+  },
+  "pass_ok": true,
+  "high_cardinality_cases": [
+    {
+      "name": "high_cardinality_2",
+      "dataset_kind": "synthetic_high_cardinality",
+      "rows_in": 6,
+      "partitions": 2,
+      "bursts": 1,
+      "elapsed_seconds": 0.03561762499157339,
+      "rows_per_second": 168.45592600347473,
+      "max_write_latency_seconds": 0.030621342011727393,
+      "compaction_elapsed_seconds": 0.0,
+      "shadow_elapsed_seconds": 0.0,
+      "segments_pending_total": 2,
+      "segments_per_partition_max": 1,
+      "normalized_partition_row_count": 6,
+      "pass_ok": true
+    }
+  ]
+}

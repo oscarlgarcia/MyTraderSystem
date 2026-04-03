@@ -13,7 +13,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env", required=True, help="Environment name")
     parser.add_argument("--symbol", required=True, help="Instrument symbol")
     parser.add_argument("--stream-type", choices=["trade", "kline"], required=True, help="Stream type")
-    parser.add_argument("--output", default=None, help="Optional JSON report output path")
+    parser.add_argument(
+        "--output",
+        default="docs/validation/ingestion_replay_parity.json",
+        help="JSON report output path",
+    )
     return parser.parse_args()
 
 
@@ -26,9 +30,15 @@ def main() -> int:
         symbol=args.symbol,
         stream_type=args.stream_type,
     )
-    if args.output:
-        write_replay_parity_report(Path(args.output), report)
+    output_path = Path(args.output)
+    write_replay_parity_report(output_path, report)
     print(f"replay parity: {'PASS' if report.pass_ok else 'FAIL'}")
+    print(f"- generated_at: {report.generated_at}")
+    print(f"- raw_base_dir: {report.raw_base_dir}")
+    print(f"- normalized_path: {report.normalized_path}")
+    print(f"- env: {report.env}")
+    print(f"- symbol: {report.symbol}")
+    print(f"- stream_type: {report.stream_type}")
     print(f"- raw_rows: {report.raw_rows}")
     print(f"- replay_rows: {report.replay_rows}")
     print(f"- normalized_rows: {report.normalized_rows}")
@@ -40,6 +50,7 @@ def main() -> int:
     if report.manifest_mismatches:
         print(f"- manifest_mismatches: {list(report.manifest_mismatches)}")
     print(f"- order_match: {report.order_match}")
+    print(f"- report_path: {output_path}")
     return 0 if report.pass_ok else 1
 
 

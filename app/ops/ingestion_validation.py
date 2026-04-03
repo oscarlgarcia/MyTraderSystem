@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass
@@ -49,14 +51,27 @@ class ValidationRun:
 
 @dataclass(frozen=True, slots=True)
 class SoakEvidence:
+    generated_at: str
+    mode: str
+    vendor: str
+    symbol: str
+    stream_type: str
+    interval: str | None
     iterations: int
-    events_per_iteration: int
+    max_events_per_iteration: int
+    duration_seconds: float
+    reconnects_target: int
+    reconnects_observed: int
     elapsed_seconds: float
     max_processing_latency_seconds: float
     max_write_latency_seconds: float
     total_events_persisted: int
+    max_allowed_gaps: int
     max_gaps: int
+    max_allowed_gap_irreparable: int
     max_gap_irreparable: int
+    max_allowed_compaction_failures: int
+    compaction_failures_total: int
     pass_ok: bool
     runs: list[ValidationRun]
 
@@ -142,6 +157,42 @@ class WSCanaryEvidence:
     report_generated_at: str
     pass_ok: bool
     comparison_reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class VendorContractsEvidence:
+    generated_at: str
+    pytest_target: str
+    command: list[str]
+    cwd: str
+    python_executable: str
+    duration_seconds: float
+    returncode: int
+    pass_ok: bool
+    stdout: str
+    stderr: str
+
+
+CRITICAL_FAILURE_INJECTION_TEST_IDS: tuple[str, ...] = (
+    "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_stale_ws_artifact",
+    "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot",
+    "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class FailureInjectionEvidence:
+    generated_at: str
+    pytest_target: str
+    critical_test_ids: tuple[str, ...]
+    command: list[str]
+    cwd: str
+    python_executable: str
+    duration_seconds: float
+    returncode: int
+    pass_ok: bool
+    stdout: str
+    stderr: str
 
 
 CanaryFetchRows = Callable[..., list[list[object]]]
@@ -508,44 +559,122 @@ def _execute_canary_version(
 def run_soak_validation(
     output_path: Path,
     *,
+    mode: str = "deterministic",
     iterations: int = 5,
     events_per_iteration: int = 500,
+    duration_seconds: float = 130.0,
     pipeline_version: str = "v2",
+    symbol: str = "BTCUSDT",
+    stream_type: str = "kline",
+    interval: str = "1m",
+    ws_base: str = "wss://stream.binance.com:9443",
+    rest_base: str = "https://api.binance.com",
+    reconnect_after_events: int = 1,
+    induced_reconnects: int = 1,
+    max_allowed_gaps: int | None = None,
+    max_allowed_gap_irreparable: int = 0,
+    max_allowed_compaction_failures: int = 0,
+    source_builder: WSCanarySourceBuilder | None = None,
 ) -> SoakEvidence:
+    if mode not in {"deterministic", "ws-live"}:
+        raise ValueError(f"unsupported soak mode: {mode}")
+    if mode == "ws-live" and stream_type != "kline":
+        raise ValueError("ws-live soak currently supports only kline feeds")
     runs: list[ValidationRun] = []
+    reconnects_observed = 0
+    compaction_failures_total = 0
     started = time.perf_counter()
     for index in range(iterations):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base_dir = Path(tmp_dir)
             buffer = io.StringIO()
-            collect_events(
-                mode="live",
-                cfg=_cfg(base_dir),
-                max_events=events_per_iteration,
-                duration_s=0,
-                logger=get_logger(name=f"ops.soak.{index}", level="INFO", stream=buffer),
-                source=StaticSource(events=_events(events_per_iteration)),
-                sink=ParquetEventSink(
-                    ParquetWriter(base_dir=base_dir, env="test", flush_size=256, dedup=True, schema_version=pipeline_version)
+            cfg = _cfg(base_dir, rest_base=rest_base, symbols=[symbol] if mode == "ws-live" else None)
+            cfg.ws_base = ws_base
+            writer = ParquetWriter(base_dir=base_dir, env="test", flush_size=256, dedup=True, schema_version=pipeline_version)
+            sink = ParquetEventSink(writer)
+            collect_kwargs = {
+                "mode": "live",
+                "cfg": cfg,
+                "max_events": events_per_iteration,
+                "duration_s": duration_seconds if mode == "ws-live" else 0,
+                "logger": get_logger(name=f"ops.soak.{index}", level="INFO", stream=buffer),
+                "sink": sink,
+                "snapshot_enabled": mode == "ws-live",
+                "summary_logging": True,
+                "dedup_enabled": True,
+                "batch_size": 1 if mode == "ws-live" else 32,
+                "pipeline_version": pipeline_version,
+            }
+            if mode == "ws-live":
+                checkpoint_dir = base_dir / "checkpoints"
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                collect_kwargs["source"] = (
+                    source_builder(cfg)
+                    if source_builder is not None
+                    else _build_ws_live_canary_source(
+                        cfg,
+                        stream_type=stream_type,
+                        reconnect_after_events=reconnect_after_events,
+                        induced_reconnects=induced_reconnects,
+                    )
+                )
+                collect_kwargs["stream_types"] = (stream_type,)
+                collect_kwargs["checkpoint_store"] = CheckpointStore(checkpoint_dir / "soak-checkpoint.json")
+            else:
+                collect_kwargs["source"] = StaticSource(events=_events(events_per_iteration))
+            collect_events(**collect_kwargs)
+            sink.close()
+            run_compaction_job(
+                base_dir,
+                "test",
+                policy=CompactionJobPolicy(
+                    batch_limit=10,
+                    retry_attempts=1,
+                    min_segments_pending=1,
+                    min_compaction_lag_seconds=0.0,
+                    retain_compacted_segments=1,
                 ),
-                snapshot_enabled=False,
-                summary_logging=True,
-                dedup_enabled=True,
-                batch_size=32,
-                pipeline_version=pipeline_version,
             )
-            runs.append(_extract_run(_json_lines(buffer), pipeline_version=pipeline_version, shadow_mode=False))
+            run = _extract_run(_json_lines(buffer), pipeline_version=pipeline_version, shadow_mode=False)
+            runs.append(run)
+            reconnects_observed += run.reconnects
+            compaction_failures_total += collect_storage_health(base_dir, "test").compaction_failures_total
     elapsed = max(0.0, time.perf_counter() - started)
+    reconnects_target = max(0, induced_reconnects * iterations) if mode == "ws-live" else 0
+    allowed_gaps = (
+        reconnects_target if max_allowed_gaps is None and mode == "ws-live" else (0 if max_allowed_gaps is None else max_allowed_gaps)
+    )
+    observed_max_gaps = max(run.gaps for run in runs)
+    observed_max_gap_irreparable = max(run.gap_irreparable for run in runs)
     evidence = SoakEvidence(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        mode=mode,
+        vendor="BINANCE" if mode == "ws-live" else "STATIC",
+        symbol=symbol,
+        stream_type=stream_type if mode == "ws-live" else "trade",
+        interval=interval if mode == "ws-live" else None,
         iterations=iterations,
-        events_per_iteration=events_per_iteration,
+        max_events_per_iteration=events_per_iteration,
+        duration_seconds=float(duration_seconds if mode == "ws-live" else 0.0),
+        reconnects_target=reconnects_target,
+        reconnects_observed=reconnects_observed,
         elapsed_seconds=elapsed,
         max_processing_latency_seconds=max(run.processing_latency_seconds for run in runs),
         max_write_latency_seconds=max(run.write_latency_seconds for run in runs),
         total_events_persisted=sum(run.events_persisted for run in runs),
-        max_gaps=max(run.gaps for run in runs),
-        max_gap_irreparable=max(run.gap_irreparable for run in runs),
-        pass_ok=all(run.result == "ok" for run in runs) and all(run.gaps == 0 for run in runs),
+        max_allowed_gaps=allowed_gaps,
+        max_gaps=observed_max_gaps,
+        max_allowed_gap_irreparable=max_allowed_gap_irreparable,
+        max_gap_irreparable=observed_max_gap_irreparable,
+        max_allowed_compaction_failures=max_allowed_compaction_failures,
+        compaction_failures_total=compaction_failures_total,
+        pass_ok=(
+            all(run.result == "ok" for run in runs)
+            and observed_max_gaps <= allowed_gaps
+            and observed_max_gap_irreparable <= max_allowed_gap_irreparable
+            and compaction_failures_total <= max_allowed_compaction_failures
+            and reconnects_observed >= reconnects_target
+        ),
         runs=runs,
     )
     write_json_report(output_path, asdict(evidence))
@@ -758,6 +887,73 @@ def run_ws_live_canary(
             pass_ok=pass_ok,
             comparison_reason="continuity_ok" if pass_ok else ",".join(reasons),
         )
+    write_json_report(output_path, asdict(evidence))
+    return evidence
+
+
+def run_vendor_contract_validation(
+    output_path: Path,
+    *,
+    pytest_target: str = "tests/network/test_binance_contracts.py",
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> VendorContractsEvidence:
+    command = [sys.executable, "-m", "pytest", pytest_target, "-q", "-m", "network"]
+    started = time.perf_counter()
+    effective_runner = runner or subprocess.run
+    result = effective_runner(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    elapsed = max(0.0, time.perf_counter() - started)
+    evidence = VendorContractsEvidence(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        pytest_target=pytest_target,
+        command=list(command),
+        cwd=str(Path.cwd()),
+        python_executable=sys.executable,
+        duration_seconds=elapsed,
+        returncode=int(result.returncode),
+        pass_ok=result.returncode == 0,
+        stdout=str(result.stdout),
+        stderr=str(result.stderr),
+    )
+    write_json_report(output_path, asdict(evidence))
+    return evidence
+
+
+def run_failure_injection_validation(
+    output_path: Path,
+    *,
+    pytest_target: str = "tests/ops/test_failure_injection.py",
+    critical_test_ids: Sequence[str] = CRITICAL_FAILURE_INJECTION_TEST_IDS,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> FailureInjectionEvidence:
+    selected_ids = tuple(str(test_id) for test_id in critical_test_ids)
+    command = [sys.executable, "-m", "pytest", "-q", *selected_ids]
+    started = time.perf_counter()
+    effective_runner = runner or subprocess.run
+    result = effective_runner(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    elapsed = max(0.0, time.perf_counter() - started)
+    evidence = FailureInjectionEvidence(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        pytest_target=pytest_target,
+        critical_test_ids=selected_ids,
+        command=list(command),
+        cwd=str(Path.cwd()),
+        python_executable=sys.executable,
+        duration_seconds=elapsed,
+        returncode=int(result.returncode),
+        pass_ok=result.returncode == 0,
+        stdout=str(result.stdout),
+        stderr=str(result.stderr),
+    )
     write_json_report(output_path, asdict(evidence))
     return evidence
 

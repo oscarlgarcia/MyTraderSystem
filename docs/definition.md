@@ -33,7 +33,7 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - `TraceContext`: trace_id (+ span_id opcional) para correlación.
 - `AppConfig`: env, data_dir, log_level; se carga desde `config.<env>.yaml` con override por env vars.
 - Log records: JSON con `ts`, `level`, `logger`, `module`, `message`, `trace_id` opcional y extras seguros.
-- Ingesta live: `normalize_trade`/`normalize_kline` validan precio/tamaño≥0, timestamps UTC; `build_ws_url` arma streams trade+kline por símbolo; `parse_message` despacha según tipo de stream.
+- Ingesta live: `normalize_trade`/`normalize_kline` validan precio/tamaño≥0, timestamps UTC; el runtime live soportado hoy es `kline`-only y `build_ws_url` arma `kline` por símbolo en ese modo; `trade` y `book` siguen fuera del scope live; `parse_message` despacha según tipo de stream.
 - Backfill: fetch paginado de `kline` REST y `aggTrades`, normalizacion a eventos canonicos; dry-run (sin escritura) y modo persistente que deduplica y detecta huecos cuando aplica antes de escribir Parquet.
 - Storage: `ParquetWriter` con buffer y partición `data/<env>/symbol=<SYM>/date=<YYYY-MM-DD>/data.parquet`; `read_parquet` para smoke.
 - Resiliencia: `ResilientRunner` con backoff exponencial (cap 8s), detección de gap por timestamp, snapshot opcional y métricas (reconnects, last_lag_seconds).

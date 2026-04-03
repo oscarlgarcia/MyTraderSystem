@@ -1,45 +1,53 @@
 {
+  "baseline_path": "docs/validation/ingestion_canary_baseline.json",
+  "baseline_source": "vendor_refresh",
+  "vendor": "BINANCE",
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "bars": 5,
+  "baseline_hash": "a09840d24e7d7649852a48736e0311c1f55bdcc63906d57921a399ad7fada168",
   "baseline": {
-    "mode": "live",
+    "mode": "canary",
     "pipeline_version": "v1",
     "shadow_mode": false,
-    "events_in": 201,
-    "events_persisted": 200,
-    "duplicates": 1,
+    "events_in": 5,
+    "events_persisted": 5,
+    "duplicates": 0,
     "gaps": 0,
     "gap_irreparable": 0,
     "reconnects": 0,
-    "processing_latency_seconds": 70938315.792215,
-    "write_latency_seconds": 0.01394768500176724,
-    "streams_degraded": [
-      "BINANCE:BTCUSDT:trade"
-    ],
+    "processing_latency_seconds": 0.0,
+    "write_latency_seconds": 0.009832063980866224,
+    "streams_degraded": [],
     "result": "ok"
   },
   "candidate": {
-    "mode": "live",
+    "mode": "canary",
     "pipeline_version": "v2",
     "shadow_mode": false,
-    "events_in": 201,
-    "events_persisted": 200,
-    "duplicates": 1,
+    "events_in": 5,
+    "events_persisted": 5,
+    "duplicates": 0,
     "gaps": 0,
     "gap_irreparable": 0,
     "reconnects": 0,
-    "processing_latency_seconds": 70938315.84303,
-    "write_latency_seconds": 2.2151912140107015,
-    "streams_degraded": [
-      "BINANCE:BTCUSDT:trade"
-    ],
+    "processing_latency_seconds": 0.0,
+    "write_latency_seconds": 0.0048390000010840595,
+    "streams_degraded": [],
     "result": "ok"
   },
   "diffs": {
-    "events_persisted": 0.0,
-    "duplicates": 0.0,
-    "gaps": 0.0,
-    "processing_latency_seconds": 0.050815001130104065,
-    "write_latency_seconds": 2.2012435290089343
+    "vendor_row_count": 5,
+    "baseline_row_count": 5,
+    "candidate_row_count": 5,
+    "row_count": 0,
+    "baseline_matches_vendor": true,
+    "candidate_matches_vendor": true,
+    "vendor_projection_checksum": "2cb1436faeb16e09b67608dbd75e299be29179ef15b71c2738b1a865d1b273d5",
+    "baseline_projection_checksum": "2cb1436faeb16e09b67608dbd75e299be29179ef15b71c2738b1a865d1b273d5",
+    "candidate_projection_checksum": "2cb1436faeb16e09b67608dbd75e299be29179ef15b71c2738b1a865d1b273d5",
+    "projection_checksum_match": true
   },
   "pass_ok": true,
-  "comparison_reason": "counts_match"
+  "comparison_reason": "semantic_match"
 }

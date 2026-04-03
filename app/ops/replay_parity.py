@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.ingestion.storage import read_parquet
@@ -11,6 +12,7 @@ from app.marketdata.replay import ReplaySource, list_raw_files, read_raw_entries
 
 @dataclass(frozen=True, slots=True)
 class ReplayParityReport:
+    generated_at: str
     raw_base_dir: str
     normalized_path: str
     env: str
@@ -125,6 +127,7 @@ def build_replay_parity_report(
     normalized_identities = [_row_identity(row) for row in normalized_rows]
     order_match = replay_identities == normalized_identities
     return ReplayParityReport(
+        generated_at=datetime.now(timezone.utc).isoformat(),
         raw_base_dir=str(raw_base_dir),
         normalized_path=str(normalized_path),
         env=env,

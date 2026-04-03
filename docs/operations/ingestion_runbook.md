@@ -2,6 +2,7 @@
 
 ## Objetivo
 Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo a live. Todo el flujo usa fuentes mock/deterministas salvo el canary real cuando se ejecute expresamente.
+- El scope live soportado hoy es `kline`-only. `trade` y `book` no son objetivos validos de promotion live.
 
 ## Comandos base
 - Shell del contenedor:
