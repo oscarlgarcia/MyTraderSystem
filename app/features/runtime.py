@@ -1,10 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import math
 import time
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List
 
 from app.common.dto import FeatureVector, MarketEvent
 from app.features.cache import FeatureCache
@@ -16,6 +16,9 @@ from app.features.state import RuntimeStateStore
 logger = logging.getLogger("features.runtime")
 
 
+STRICT_TEMPORAL_MODES = {"paper", "live"}
+
+
 def _event_ts(event) -> datetime:
     ts = getattr(event, "event_ts", None)
     if ts is None:
@@ -25,9 +28,25 @@ def _event_ts(event) -> datetime:
 
 def _available_ts(event) -> datetime:
     ts = getattr(event, "available_ts", None)
-    if ts is not None:
-        return ts
-    return _event_ts(event)
+    if ts is None:
+        return _event_ts(event)
+    return ts
+
+
+def _has_explicit_available_ts(event) -> bool:
+    explicit = getattr(event, "has_explicit_available_ts", None)
+    if explicit is not None:
+        return bool(explicit)
+    event_ts = _event_ts(event)
+    available_ts = getattr(event, "available_ts", None)
+    published_ts = getattr(event, "published_ts", None)
+    processed_ts = getattr(event, "processed_ts", None)
+    receive_ts = getattr(event, "receive_ts", None)
+    provider_ts = getattr(event, "provider_ts", None)
+    return any(
+        ts is not None and ts != event_ts
+        for ts in (available_ts, published_ts, processed_ts, receive_ts, provider_ts)
+    )
 
 
 class FeatureRuntimeEngine:
@@ -37,6 +56,8 @@ class FeatureRuntimeEngine:
         feature_set: FeatureSetDefinition,
         cache: FeatureCache | None = None,
         out_of_order_policy: str = "reject",
+        strict_temporal_semantics: bool = False,
+        runtime_mode: str = "research",
     ) -> None:
         self.feature_set = feature_set
         self.cache = cache or FeatureCache()
@@ -45,6 +66,16 @@ class FeatureRuntimeEngine:
         self.state = RuntimeStateStore(effective_window=effective_window)
         self.metrics = FeatureMetrics()
         self.out_of_order_policy = out_of_order_policy
+        self.strict_temporal_semantics = strict_temporal_semantics
+        self.runtime_mode = runtime_mode
+
+    def _enforce_temporal_semantics(self, event) -> None:
+        if not (self.strict_temporal_semantics or self.runtime_mode in STRICT_TEMPORAL_MODES):
+            return
+        if not _has_explicit_available_ts(event):
+            raise ValueError(
+                "strict temporal semantics require explicit available_ts/published_ts/processing timestamps"
+            )
 
     def _compute_from_event(self, event: MarketEvent, *, record_event: bool = True) -> FeatureVector | None:
         if not isinstance(event.price, (int, float)) or not math.isfinite(event.price):
@@ -82,7 +113,7 @@ class FeatureRuntimeEngine:
         return fv
 
     def _recompute_symbol(self, symbol: str) -> List[FeatureVector]:
-        events = sorted(self.state.recent_events[symbol], key=lambda ev: (ev.available_ts, ev.event_ts))
+        events = sorted(self.state.recent_events[symbol], key=lambda ev: (_available_ts(ev), _event_ts(ev)))
         self.state.prices[symbol].clear()
         self.state.previous_price[symbol] = None
         for key in [key for key in self.state.agg_state if key[1] == symbol]:
@@ -97,6 +128,7 @@ class FeatureRuntimeEngine:
 
     def update(self, event: MarketEvent) -> FeatureVector | None:
         self.metrics.events_in += 1
+        self._enforce_temporal_semantics(event)
         watermark = self.state.watermarks.get(event.symbol)
         event_available_ts = _available_ts(event)
         if watermark is not None and event_available_ts < watermark:

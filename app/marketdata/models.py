@@ -69,6 +69,25 @@ class BaseMarketEvent:
         # Transitional alias for the legacy ingestion stack.
         return self.exchange_ts
 
+    @property
+    def observation_ts(self) -> datetime:
+        return self.exchange_ts
+
+    @property
+    def published_ts(self) -> datetime:
+        return self.provider_ts or self.exchange_ts
+
+    @property
+    def available_ts(self) -> datetime:
+        # Features can only consume data once it has been received/processed locally.
+        return self.process_ts or self.receive_ts or self.published_ts
+
+    @property
+    def has_explicit_available_ts(self) -> bool:
+        return any(ts is not None for ts in (self.provider_ts, self.receive_ts, self.process_ts)) or any(
+            key in self.metadata for key in ("published_ts", "available_ts", "receive_ts", "process_ts")
+        )
+
 
 @dataclass(slots=True, kw_only=True)
 class TradeEvent(BaseMarketEvent):
@@ -201,9 +220,9 @@ def legacy_market_event_to_trade(
     return TradeEvent(
         symbol=event.symbol,
         exchange_ts=event.event_ts,
-        provider_ts=_metadata_ts(metadata, "provider_ts"),
-        receive_ts=receive_ts or _metadata_ts(metadata, "receive_ts"),
-        process_ts=process_ts or _metadata_ts(metadata, "process_ts"),
+        provider_ts=event.published_ts or _metadata_ts(metadata, "provider_ts"),
+        receive_ts=receive_ts or event.available_ts or _metadata_ts(metadata, "receive_ts"),
+        process_ts=process_ts or event.processed_ts or _metadata_ts(metadata, "process_ts"),
         venue=metadata.get("venue", venue),
         source_id=metadata.get("source_id") or trade_id,
         metadata=metadata,
@@ -230,9 +249,9 @@ def legacy_market_event_to_bar(
     return BarEvent(
         symbol=event.symbol,
         exchange_ts=event.event_ts,
-        provider_ts=_metadata_ts(metadata, "provider_ts"),
-        receive_ts=receive_ts or _metadata_ts(metadata, "receive_ts"),
-        process_ts=process_ts or _metadata_ts(metadata, "process_ts"),
+        provider_ts=event.published_ts or _metadata_ts(metadata, "provider_ts"),
+        receive_ts=receive_ts or event.available_ts or _metadata_ts(metadata, "receive_ts"),
+        process_ts=process_ts or event.processed_ts or _metadata_ts(metadata, "process_ts"),
         venue=metadata.get("venue", venue),
         metadata=metadata,
         open=float(metadata.get("open", event.price)),
@@ -270,6 +289,10 @@ def typed_event_to_legacy(event: CanonicalMarketEvent) -> MarketEvent:
             size=event.size,
             source="trade",
             metadata=metadata,
+            published_ts=event.published_ts,
+            available_ts=event.available_ts,
+            processed_ts=event.process_ts or event.available_ts,
+            observation_ts=event.observation_ts,
         )
     if isinstance(event, BarEvent):
         metadata = dict(event.metadata)
@@ -296,6 +319,10 @@ def typed_event_to_legacy(event: CanonicalMarketEvent) -> MarketEvent:
             size=event.volume,
             source="kline",
             metadata=metadata,
+            published_ts=event.published_ts,
+            available_ts=event.available_ts,
+            processed_ts=event.process_ts or event.available_ts,
+            observation_ts=event.observation_ts,
         )
     metadata = dict(event.metadata)
     metadata.setdefault("venue", event.venue)
@@ -318,6 +345,10 @@ def typed_event_to_legacy(event: CanonicalMarketEvent) -> MarketEvent:
         size=event.bid_size,
         source="book",
         metadata=metadata,
+        published_ts=event.published_ts,
+        available_ts=event.available_ts,
+        processed_ts=event.process_ts or event.available_ts,
+        observation_ts=event.observation_ts,
     )
 
 

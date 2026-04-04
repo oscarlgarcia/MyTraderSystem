@@ -1,15 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List
 
 from app.common.dto import FeatureVector, MarketEvent
-from app.features.materialization import FeatureMaterializer
-from app.features.offline_store import OfflineFeatureStore
+from app.features.batch_executor import BatchFeatureExecutor
 from app.features.online_store import OnlineFeatureStore
 from app.features.runtime import FeatureRuntimeEngine
-from app.features.serving import FeatureServingService, ServingPolicy
 
 
 @dataclass(frozen=True)
@@ -28,6 +26,28 @@ class ParityReport:
     mismatches: tuple[ParityMismatch, ...]
 
 
+def _event_ts(event):
+    ts = getattr(event, "event_ts", None)
+    if ts is None:
+        ts = getattr(event, "exchange_ts")
+    return ts
+
+
+def _available_ts(event):
+    ts = getattr(event, "available_ts", None)
+    if ts is None:
+        ts = _event_ts(event)
+    return ts
+
+
+def _feature_tolerances(feature_set, default_tolerance: float) -> Dict[str, float]:
+    tolerances: Dict[str, float] = {}
+    for feature in feature_set.feature_definitions:
+        parity_tolerance = feature.validation_policy.get("parity_tolerance", default_tolerance)
+        tolerances[feature.name] = float(parity_tolerance)
+    return tolerances
+
+
 def run_parity_check(
     events: Iterable[MarketEvent],
     *,
@@ -35,30 +55,59 @@ def run_parity_check(
     offline_store_path,
     online_store_path,
     tolerance: float = 1e-9,
+    runtime_mode: str = "research",
 ) -> ParityReport:
-    materializer = FeatureMaterializer()
-    offline_store = OfflineFeatureStore(offline_store_path)
+    sorted_events = sorted(list(events), key=lambda event: (event.symbol, _available_ts(event), _event_ts(event)))
+    offline_vectors = BatchFeatureExecutor().execute(sorted_events, feature_set=feature_set)
+    runtime = FeatureRuntimeEngine(feature_set=feature_set, runtime_mode=runtime_mode)
     online_store = OnlineFeatureStore(online_store_path)
-    offline_vectors = materializer.materialize(events, feature_set=feature_set, store=offline_store, run_id="parity")
-    runtime = FeatureRuntimeEngine(feature_set=feature_set)
-    online_vectors = runtime.update_batch(sorted(list(events), key=lambda e: (e.symbol, e.available_ts, e.event_ts)))
+    online_vectors = runtime.update_batch(sorted_events)
     for vector in online_vectors:
         online_store.upsert(vector)
     offline_by_key: Dict[tuple[str, datetime], FeatureVector] = {(fv.symbol, fv.ts): fv for fv in offline_vectors}
     online_by_key: Dict[tuple[str, datetime], FeatureVector] = {(fv.symbol, fv.ts): fv for fv in online_vectors}
+    tolerances = _feature_tolerances(feature_set, tolerance)
     mismatches: List[ParityMismatch] = []
     for key, offline in offline_by_key.items():
         online = online_by_key.get(key)
         if online is None:
-            mismatches.append(ParityMismatch(symbol=offline.symbol, ts=offline.ts, feature_name="*", offline_value=None, online_value=None, reason="missing_online"))
+            mismatches.append(
+                ParityMismatch(
+                    symbol=offline.symbol,
+                    ts=offline.ts,
+                    feature_name="*",
+                    offline_value=None,
+                    online_value=None,
+                    reason="missing_online",
+                )
+            )
             continue
         names = sorted(set(offline.values) | set(online.values))
         for name in names:
             ov = offline.values.get(name)
             lv = online.values.get(name)
             if ov is None or lv is None:
-                mismatches.append(ParityMismatch(symbol=offline.symbol, ts=offline.ts, feature_name=name, offline_value=ov, online_value=lv, reason="missing_value"))
+                mismatches.append(
+                    ParityMismatch(
+                        symbol=offline.symbol,
+                        ts=offline.ts,
+                        feature_name=name,
+                        offline_value=ov,
+                        online_value=lv,
+                        reason="missing_value",
+                    )
+                )
                 continue
-            if abs(float(ov) - float(lv)) > tolerance:
-                mismatches.append(ParityMismatch(symbol=offline.symbol, ts=offline.ts, feature_name=name, offline_value=float(ov), online_value=float(lv), reason="tolerance_exceeded"))
+            allowed = tolerances.get(name, tolerance)
+            if abs(float(ov) - float(lv)) > allowed:
+                mismatches.append(
+                    ParityMismatch(
+                        symbol=offline.symbol,
+                        ts=offline.ts,
+                        feature_name=name,
+                        offline_value=float(ov),
+                        online_value=float(lv),
+                        reason=f"tolerance_exceeded:{allowed}",
+                    )
+                )
     return ParityReport(pass_ok=not mismatches, mismatches=tuple(mismatches))

@@ -1,18 +1,20 @@
-﻿"""Estrategia mínima basada en retorno y SMA."""
+"""Estrategia m?nima basada en retorno y SMA."""
 
 from __future__ import annotations
 
 from typing import Iterable, List
 
 from app.common.dto import FeatureVector, Signal
+from app.features.views import build_basic_strategy_view
 
 
 def generate_signals(features: Iterable[FeatureVector]) -> List[Signal]:
     signals: List[Signal] = []
     for fv in features:
-        price = fv.values.get("price")
-        ret_1 = fv.values.get("ret_1")
-        sma3 = fv.values.get("sma_3")
+        view = build_basic_strategy_view(fv)
+        price = view.price
+        ret_1 = view.ret_1
+        sma3 = view.sma_3
         if price is None or sma3 is None or ret_1 is None:
             side = "flat"
         elif ret_1 > 0 and price > sma3:

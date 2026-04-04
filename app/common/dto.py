@@ -37,9 +37,15 @@ class MarketEvent:
     available_ts: Optional[datetime] = None
     processed_ts: Optional[datetime] = None
     observation_ts: Optional[datetime] = None
+    _explicit_published_ts: bool = field(init=False, repr=False)
+    _explicit_available_ts: bool = field(init=False, repr=False)
+    _explicit_processed_ts: bool = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.symbol = normalize_symbol(self.symbol)
+        self._explicit_published_ts = self.published_ts is not None
+        self._explicit_available_ts = self.available_ts is not None
+        self._explicit_processed_ts = self.processed_ts is not None
         if self.event_ts.tzinfo is None or self.event_ts.tzinfo.utcoffset(self.event_ts) is None:
             raise ValueError("event_ts must be timezone-aware (UTC)")
         if self.price < 0:
@@ -54,6 +60,10 @@ class MarketEvent:
             value = getattr(self, attr)
             if value is None or value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
                 raise ValueError(f"{attr} must be timezone-aware (UTC)")
+
+    @property
+    def has_explicit_available_ts(self) -> bool:
+        return self._explicit_available_ts or self._explicit_published_ts or self._explicit_processed_ts
 
 
 @dataclass(slots=True)

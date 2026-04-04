@@ -23,6 +23,8 @@ class FeatureEngine:
         feature_set: Optional[FeatureSetDefinition] = None,
         cache_capacity: int = 1000,
         out_of_order_policy: str = "reject",
+        strict_temporal_semantics: bool = False,
+        runtime_mode: str = "research",
     ) -> None:
         self.cache = FeatureCache(capacity_per_symbol=cache_capacity)
         feature_set = feature_set or build_legacy_runtime_feature_set(
@@ -31,7 +33,13 @@ class FeatureEngine:
             aggregators=aggregators,
             transformers=transformers,
         )
-        self.runtime = FeatureRuntimeEngine(feature_set=feature_set, cache=self.cache, out_of_order_policy=out_of_order_policy)
+        self.runtime = FeatureRuntimeEngine(
+            feature_set=feature_set,
+            cache=self.cache,
+            out_of_order_policy=out_of_order_policy,
+            strict_temporal_semantics=strict_temporal_semantics,
+            runtime_mode=runtime_mode,
+        )
         self.metrics = {
             "events_in": 0,
             "features_out": 0,

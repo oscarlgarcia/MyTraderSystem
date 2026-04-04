@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict
@@ -14,8 +14,12 @@ class FeatureMetrics:
     compute_latency_max: float = 0.0
     serving_requests: int = 0
     serving_failures: int = 0
+    serving_degraded: int = 0
+    invalid_serves: int = 0
     parity_mismatches: int = 0
     stale_serves: int = 0
+    serving_latency_total: float = 0.0
+    serving_latency_max: float = 0.0
 
     def as_dict(self) -> Dict[str, float | int]:
         return {
@@ -27,6 +31,10 @@ class FeatureMetrics:
             "compute_latency_max": self.compute_latency_max,
             "serving_requests": self.serving_requests,
             "serving_failures": self.serving_failures,
+            "serving_degraded": self.serving_degraded,
+            "invalid_serves": self.invalid_serves,
             "parity_mismatches": self.parity_mismatches,
             "stale_serves": self.stale_serves,
+            "serving_latency_total": self.serving_latency_total,
+            "serving_latency_max": self.serving_latency_max,
         }

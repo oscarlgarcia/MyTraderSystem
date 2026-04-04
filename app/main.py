@@ -62,9 +62,14 @@ def run_trading_cycle(
     recorder: Optional[List[str]] = None,
     trace_steps: bool = False,
     feature_audit_path: str | None = None,
+    mode: str = "dry",
 ):
+    if mode != "dry" and not feature_audit_path:
+        raise ValueError("feature_audit_path is required outside dry mode")
+
     _trace(logger, trace_steps, "features", "start")
-    feature_engine = FeatureEngine()
+    runtime_mode = "live" if mode == "live" else ("paper" if mode == "paper" else "research")
+    feature_engine = FeatureEngine(strict_temporal_semantics=mode != "dry", runtime_mode=runtime_mode)
     fvs = run_feature_pipeline(events, engine=feature_engine)
     _trace(logger, trace_steps, "features", "done", {"count": len(fvs)})
     _mark(recorder, "features")
@@ -264,6 +269,7 @@ def run_cycle(
         logger=logger,
         recorder=recorder,
         trace_steps=trace_steps,
+        mode=mode,
     )
 
 

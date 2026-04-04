@@ -117,6 +117,7 @@ def build_legacy_feature_set_definition(
             inputs=("price",),
             lookback=0,
             warmup=0,
+            validation_policy={"parity_tolerance": 0.0},
         ),
         FeatureDefinition(
             name="ret_1",
@@ -126,6 +127,7 @@ def build_legacy_feature_set_definition(
             inputs=("price",),
             lookback=1,
             warmup=1,
+            validation_policy={"parity_tolerance": 1e-12},
         ),
     ]
     node_defs = [
@@ -144,6 +146,7 @@ def build_legacy_feature_set_definition(
                     inputs=("price",),
                     lookback=window,
                     warmup=window,
+                    validation_policy={"parity_tolerance": 1e-9},
                 )
             )
             node_defs.append(
@@ -165,6 +168,7 @@ def build_legacy_feature_set_definition(
             lookback=max(win_tuple) if win_tuple else 0,
             warmup=0,
             dtype="int",
+            validation_policy={"parity_tolerance": 0.0},
         )
     )
     node_defs.append(
