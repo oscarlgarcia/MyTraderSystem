@@ -19,7 +19,7 @@ def _write_record(path: Path, payload: dict[str, object]) -> None:
 
 
 def test_list_quarantine_records_filters_by_trace_symbol_and_stream(tmp_path: Path) -> None:
-    dlq_path, schema_path = default_quarantine_paths(tmp_path)
+    dlq_path, schema_path, _anomaly_path = default_quarantine_paths(tmp_path)
     _write_record(
         dlq_path,
         {
@@ -54,7 +54,7 @@ def test_list_quarantine_records_filters_by_trace_symbol_and_stream(tmp_path: Pa
 
 
 def test_replay_quarantine_records_dry_run_reports_no_normalized_change(tmp_path: Path) -> None:
-    dlq_path, _schema_path = default_quarantine_paths(tmp_path)
+    dlq_path, _schema_path, _anomaly_path = default_quarantine_paths(tmp_path)
     _write_record(
         dlq_path,
         {
@@ -79,7 +79,7 @@ def test_replay_quarantine_records_dry_run_reports_no_normalized_change(tmp_path
 
 
 def test_replay_quarantine_records_can_write_normalized_and_persist_report(tmp_path: Path) -> None:
-    dlq_path, _schema_path = default_quarantine_paths(tmp_path)
+    dlq_path, _schema_path, _anomaly_path = default_quarantine_paths(tmp_path)
     report_path = tmp_path / "docs" / "validation" / "quarantine-replay-report.json"
     _write_record(
         dlq_path,
@@ -122,7 +122,7 @@ def test_replay_quarantine_records_can_write_normalized_and_persist_report(tmp_p
 
 
 def test_quarantine_cli_main_help_and_replay_exit_codes(tmp_path: Path, capsys) -> None:
-    dlq_path, _schema_path = default_quarantine_paths(tmp_path)
+    dlq_path, _schema_path, _anomaly_path = default_quarantine_paths(tmp_path)
     _write_record(
         dlq_path,
         {
@@ -143,3 +143,25 @@ def test_quarantine_cli_main_help_and_replay_exit_codes(tmp_path: Path, capsys) 
     assert main(["--base-dir", str(tmp_path), "replay", "--env", "dev", "--trace-id", "trace-cli"]) == 0
     replay_output = capsys.readouterr().out
     assert '"normalized_modified": false' in replay_output
+
+
+def test_list_quarantine_records_reads_marketdata_anomaly_quarantine_file(tmp_path: Path) -> None:
+    _dlq_path, _schema_path, anomaly_path = default_quarantine_paths(tmp_path)
+    _write_record(
+        anomaly_path,
+        {
+            "ts": "2026-04-02T12:00:00+00:00",
+            "error_category": "validation",
+            "error_severity": "permanent",
+            "error_type": "MarketdataAnomalyError",
+            "error_message": "marketdata anomaly",
+            "raw_message": '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1710000000000,"p":"170","q":"1","t":7}}',
+            "context": {"trace_id": "trace-anomaly", "stage": "stream", "stream_type": "trade", "symbol": "BTCUSDT"},
+            "incident": {"anomaly_action": "fail"},
+        },
+    )
+
+    rows = list_quarantine_records(base_dir=tmp_path, trace_id="trace-anomaly")
+
+    assert len(rows) == 1
+    assert rows[0]["error_type"] == "MarketdataAnomalyError"

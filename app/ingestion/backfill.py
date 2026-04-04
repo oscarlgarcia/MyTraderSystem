@@ -19,9 +19,10 @@ from app.common.dto import normalize_symbol
 from app.config import load_config
 from app.ingestion.client import normalize_kline_typed, normalize_trade_typed
 from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_market_events
-from app.ingestion.sinks import EventSink, ParquetEventSink
+from app.ingestion.sinks import EventSink, JsonlErrorSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
-from app.marketdata.anomaly_checks import detect_marketdata_anomalies, event_volume_value
+from app.marketdata.anomaly_checks import dominant_anomaly, detect_marketdata_anomalies, event_volume_value, stream_price_key
+from app.marketdata.errors import MarketdataAnomalyError
 from app.marketdata.instruments import persist_runtime_instrument_catalog_snapshot, use_instrument_catalog
 from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
@@ -33,6 +34,10 @@ SUPPORTED_HISTORICAL_BACKFILL_FEEDS = ("kline", "trade")
 HISTORICAL_BACKFILL_SCOPE = "bars-and-trades"
 HISTORICAL_TRADE_FEED_KIND = "aggregate_trade"
 HISTORICAL_TRADE_ENDPOINT = "aggTrades"
+
+
+def _marketdata_anomaly_quarantine_path(data_dir: Any) -> Any:
+    return data_dir / "errors" / "marketdata-anomaly-quarantine.jsonl"
 
 
 def supports_historical_backfill(feed_type: str) -> bool:
@@ -541,22 +546,35 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
 
     events.sort(key=_event_sort_key)
     raw_records.sort(key=_raw_sort_key)
-    for event in events:
+    event_record_pairs = list(zip(events, raw_records, strict=True))
+    for event, _record in event_record_pairs:
         _stamp_event_with_catalog_state(event, catalog_state)
 
+    error_sink_impl = None
     if not args.dry_run:
         raw_sink_impl = raw_sink or JsonlRawSink(base_dir=cfg.data_dir / "raw", env=cfg.env)
+        error_sink_impl = JsonlErrorSink(
+            cfg.data_dir / "errors" / "ingestion-dlq.jsonl",
+            schema_drift_path=cfg.data_dir / "errors" / "schema-drift-quarantine.jsonl",
+        )
         sink_impl = sink or ParquetEventSink(
             ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.batch, dedup=args.dedup)
         )
         for record in raw_records:
             raw_sink_impl.write(record)
-        for event, record in zip(events, raw_records, strict=True):
+        for event, record in event_record_pairs:
             _stamp_event_with_raw_lineage(event, record)
 
     duplicates_dropped = 0
     if args.dedup:
-        events, duplicates_dropped = deduplicate_events(events)
+        deduped_events, duplicates_dropped = deduplicate_events(events)
+        retained_event_ids = {id(event) for event in deduped_events}
+        event_record_pairs = [
+            (event, record)
+            for event, record in event_record_pairs
+            if id(event) in retained_event_ids
+        ]
+        events = deduped_events
         if duplicates_dropped:
             logger.info(
                 "backfill duplicates dropped",
@@ -571,17 +589,19 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
     previous_price: float | None = None
     previous_volume: float | None = None
     anomalies_detected = 0
-    for event in events:
+    accepted_events: list[IngestionEvent] = []
+    for event, record in event_record_pairs:
         anomalies = detect_marketdata_anomalies(
             event=event,
             previous_price=previous_price,
             previous_volume=previous_volume,
         )
-        previous_price = float(event.price)
-        current_volume = event_volume_value(event)
-        if current_volume is not None:
-            previous_volume = current_volume
         if not anomalies:
+            previous_price = float(event.price)
+            current_volume = event_volume_value(event)
+            if current_volume is not None:
+                previous_volume = current_volume
+            accepted_events.append(event)
             continue
         for anomaly in anomalies:
             anomalies_detected += 1
@@ -606,6 +626,49 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
                     "threshold": anomaly.threshold,
                 },
             )
+        dominant = dominant_anomaly(anomalies)
+        if dominant is None or dominant.action == "warn":
+            previous_price = float(event.price)
+            current_volume = event_volume_value(event)
+            if current_volume is not None:
+                previous_volume = current_volume
+            accepted_events.append(event)
+            continue
+        stream_key = stream_price_key(event)
+        anomaly_error = MarketdataAnomalyError(
+            stream_key=stream_key,
+            venue=getattr(event, "venue", "BINANCE"),
+            symbol=event.symbol,
+            stream_type=event.source,
+            anomaly_type=dominant.anomaly_type,
+            anomaly_severity=dominant.severity,
+            anomaly_action=dominant.action,
+            previous_price=dominant.previous_price,
+            current_price=dominant.current_price,
+            relative_jump=dominant.relative_jump,
+            previous_volume=dominant.previous_volume,
+            current_volume=dominant.current_volume,
+            volume_ratio=dominant.volume_ratio,
+            threshold=dominant.threshold,
+        )
+        if error_sink_impl is not None:
+            error_sink_impl.write(
+                record.payload,
+                anomaly_error,
+                context={
+                    "trace_id": trace_id,
+                    "env": cfg.env,
+                    "symbol": event.symbol,
+                    "stream_type": event.source,
+                    "stage": "backfill",
+                    "quarantine_reason": "marketdata_anomaly",
+                    "quarantine_path": str(_marketdata_anomaly_quarantine_path(cfg.data_dir)),
+                    **anomaly_error.as_context(),
+                },
+            )
+        if dominant.action == "fail":
+            raise anomaly_error
+    events = accepted_events
 
     if not args.dry_run:
         for event in events:

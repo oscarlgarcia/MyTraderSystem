@@ -12,7 +12,9 @@ from app.ingestion.circuit_breaker import CircuitBreaker
 from app.ingestion import pipeline
 from app.ingestion.errors import IngestionError
 from app.ingestion.resilience import ResilientRunner
+from app.ingestion.sinks import JsonlErrorSink
 from app.ingestion.sources import BinanceSource, StaticSource
+from app.marketdata.errors import MarketdataAnomalyError
 from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.models import TradeEvent
 from app.marketdata.temporal_state import TemporalPartitionKey
@@ -148,6 +150,70 @@ def test_binance_source_records_per_stream_raw_latency(tmp_path: Path):
     metric = source.stats.stream_metrics["BINANCE:BTCUSDT:trade"]
     assert metric["messages_in_total"] == 1
     assert metric["raw_write_latency"] >= 0.0
+
+
+def test_binance_source_warn_anomaly_keeps_event_flow(tmp_path: Path):
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
+
+    def fake_ws_stream(url: str, end_time=None):
+        del url, end_time
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","t":7}}'
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067201000,"p":"121","q":"1","t":8}}'
+
+    source = BinanceSource(
+        cfg,
+        ws_stream=fake_ws_stream,
+        error_sink=JsonlErrorSink(tmp_path / "errors" / "ingestion-dlq.jsonl"),
+    )
+    out = list(source.stream())
+
+    assert len(out) == 2
+    assert not (tmp_path / "errors" / "marketdata-anomaly-quarantine.jsonl").exists()
+
+
+def test_binance_source_quarantine_anomaly_drops_event_and_persists_quarantine(tmp_path: Path):
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
+
+    def fake_ws_stream(url: str, end_time=None):
+        del url, end_time
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","t":7}}'
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067201000,"p":"140","q":"1","t":8}}'
+
+    source = BinanceSource(
+        cfg,
+        ws_stream=fake_ws_stream,
+        error_sink=JsonlErrorSink(tmp_path / "errors" / "ingestion-dlq.jsonl"),
+    )
+    out = list(source.stream())
+
+    quarantine_path = tmp_path / "errors" / "marketdata-anomaly-quarantine.jsonl"
+    payloads = [json.loads(line) for line in quarantine_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert len(out) == 1
+    assert payloads[0]["incident"]["anomaly_action"] == "quarantine"
+    assert payloads[0]["context"]["quarantine_reason"] == "marketdata_anomaly"
+
+
+def test_binance_source_fail_anomaly_blocks_stream_and_persists_incident(tmp_path: Path):
+    cfg = mock.Mock(env="dev", ws_base="wss://stream.binance.com:9443", rest_base="https://api.binance.com", symbols=["BTCUSDT"], data_dir=tmp_path, log_level="INFO")
+
+    def fake_ws_stream(url: str, end_time=None):
+        del url, end_time
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","t":7}}'
+        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067201000,"p":"170","q":"1","t":8}}'
+
+    source = BinanceSource(
+        cfg,
+        ws_stream=fake_ws_stream,
+        error_sink=JsonlErrorSink(tmp_path / "errors" / "ingestion-dlq.jsonl"),
+    )
+
+    with pytest.raises(MarketdataAnomalyError):
+        list(source.stream())
+
+    quarantine_path = tmp_path / "errors" / "marketdata-anomaly-quarantine.jsonl"
+    payloads = [json.loads(line) for line in quarantine_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert payloads[0]["incident"]["anomaly_action"] == "fail"
 
 
 def test_stream_without_heartbeat_triggers_reconnect():

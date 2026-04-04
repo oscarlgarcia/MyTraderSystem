@@ -28,9 +28,9 @@ from app.ingestion.client import (
 )
 from app.ingestion.errors import IngestionError, classify_connector_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
-from app.marketdata.anomaly_checks import detect_marketdata_anomalies, event_volume_value, stream_price_key
+from app.marketdata.anomaly_checks import dominant_anomaly, detect_marketdata_anomalies, event_volume_value, stream_price_key
 from app.marketdata.connectors.binance import BINANCE_FEED_NORMALIZERS, normalize_binance_event, snapshot_payload_from_row
-from app.marketdata.errors import SchemaDriftError
+from app.marketdata.errors import MarketdataAnomalyError, SchemaDriftError
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
 from app.marketdata.instruments import (
     PersistedInstrumentCatalogSnapshot,
@@ -163,6 +163,10 @@ def _is_timestamp_validation_error(message: str) -> bool:
 
 def _schema_drift_quarantine_path(cfg: AppConfig) -> Path:
     return Path(cfg.data_dir) / "errors" / "schema-drift-quarantine.jsonl"
+
+
+def _marketdata_anomaly_quarantine_path(cfg: AppConfig) -> Path:
+    return Path(cfg.data_dir) / "errors" / "marketdata-anomaly-quarantine.jsonl"
 
 
 def heartbeat_policy_for_streams(stream_types: Iterable[str]) -> HeartbeatPolicy:
@@ -429,7 +433,13 @@ class BinanceSource:
             receive_process_skew,
         )
 
-    def _record_marketdata_anomaly(self, event: IngestionEvent) -> None:
+    def _record_marketdata_anomaly(
+        self,
+        event: IngestionEvent,
+        *,
+        raw_message: object,
+        context: dict[str, object],
+    ) -> bool:
         stream_key = stream_price_key(event)
         previous_price = self.last_prices.get(stream_key)
         previous_volume = self.last_volumes.get(stream_key)
@@ -438,12 +448,12 @@ class BinanceSource:
             previous_price=previous_price,
             previous_volume=previous_volume,
         )
-        self.last_prices[stream_key] = float(event.price)
-        current_volume = event_volume_value(event)
-        if current_volume is not None:
-            self.last_volumes[stream_key] = current_volume
         if not anomalies:
-            return
+            self.last_prices[stream_key] = float(event.price)
+            current_volume = event_volume_value(event)
+            if current_volume is not None:
+                self.last_volumes[stream_key] = current_volume
+            return True
         venue, symbol, stream_type = _event_stream_context(event)
         metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
         logger = logging.getLogger("ingest.source")
@@ -469,6 +479,44 @@ class BinanceSource:
                     "threshold": anomaly.threshold,
                 },
             )
+        dominant = dominant_anomaly(anomalies)
+        if dominant is None:
+            return True
+        if dominant.action == "warn":
+            self.last_prices[stream_key] = float(event.price)
+            current_volume = event_volume_value(event)
+            if current_volume is not None:
+                self.last_volumes[stream_key] = current_volume
+            return True
+
+        anomaly_error = MarketdataAnomalyError(
+            stream_key=stream_key,
+            venue=venue,
+            symbol=symbol,
+            stream_type=stream_type,
+            anomaly_type=dominant.anomaly_type,
+            anomaly_severity=dominant.severity,
+            anomaly_action=dominant.action,
+            previous_price=dominant.previous_price,
+            current_price=dominant.current_price,
+            relative_jump=dominant.relative_jump,
+            previous_volume=dominant.previous_volume,
+            current_volume=dominant.current_volume,
+            volume_ratio=dominant.volume_ratio,
+            threshold=dominant.threshold,
+        )
+        reject_context = {
+            **context,
+            "symbol": symbol,
+            "stream_type": stream_type,
+            "quarantine_reason": "marketdata_anomaly",
+            "quarantine_path": str(_marketdata_anomaly_quarantine_path(self.cfg)),
+            **anomaly_error.as_context(),
+        }
+        self._record_rejected(raw_message, anomaly_error, context=reject_context)
+        if dominant.action == "quarantine":
+            return False
+        raise anomaly_error
 
     def _record_rejected(self, raw_message: object, error: IngestionError, *, context: dict[str, object]) -> None:
         self.stats.events_invalid += 1
@@ -710,7 +758,12 @@ class BinanceSource:
                     )
                     metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
                     self._record_temporal_quality(event)
-                    self._record_marketdata_anomaly(event)
+                    if not self._record_marketdata_anomaly(
+                        event,
+                        raw_message=item,
+                        context={"stage": "stream", "url": url},
+                    ):
+                        continue
                     self._write_raw_record(
                         payload=payload,
                         event=event,
@@ -833,7 +886,12 @@ class BinanceSource:
                             metric = _ensure_stream_metric(self.stats, venue=getattr(event, "venue", "BINANCE"), symbol=event.symbol, stream_type=stream_type)
                             metric["messages_in_total"] = int(metric["messages_in_total"]) + 1
                             self._record_temporal_quality(event)
-                            self._record_marketdata_anomaly(event)
+                            if not self._record_marketdata_anomaly(
+                                event,
+                                raw_message=payload,
+                                context={"stage": "snapshot", "symbol": symbol, "stream_type": stream_type},
+                            ):
+                                continue
                             self._write_raw_record(
                                 payload=payload,
                                 event=event,

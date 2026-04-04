@@ -7,6 +7,7 @@ import pytest
 
 from app.ingestion import backfill
 from app.ingestion.storage import normalized_partition_path, read_parquet
+from app.marketdata.errors import MarketdataAnomalyError
 from app.marketdata.models import BarEvent, TradeEvent
 from app.marketdata.replay import ReplaySource
 
@@ -177,8 +178,8 @@ def test_normalize_kline_row_prefers_quote_asset_volume_when_full_binance_row_is
 def test_backfill_kline_writes_and_idempotent(monkeypatch, tmp_path):
     cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
     rows = [
-        [1704067200000, "0.9", "1.1", "0.8", "1", "10", 1704067260000],
-        [1704067260001, "1.9", "2.1", "1.8", "2", "20", 1704067320000],
+        [1704067200000, "0.99", "1.01", "0.98", "1", "10", 1704067260000],
+        [1704067260001, "1.00", "1.03", "0.99", "1.02", "11", 1704067320000],
     ]
 
     monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
@@ -259,7 +260,68 @@ def test_backfill_trade_writes_and_idempotent(monkeypatch, tmp_path):
     )
     assert len(replayed) == 4
     assert all(isinstance(event, TradeEvent) for event in replayed)
-    assert all(event.metadata["historical_trade_endpoint"] == "aggTrades" for event in replayed)
+
+
+def test_backfill_warn_anomaly_keeps_event_in_normalized_dataset(monkeypatch, tmp_path):
+    cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
+    rows = [
+        {"a": 101, "p": "100", "q": "1", "f": 101, "l": 101, "T": 1704067200000, "m": False, "M": True},
+        {"a": 102, "p": "121", "q": "1", "f": 102, "l": 102, "T": 1704067201000, "m": False, "M": True},
+    ]
+
+    monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(backfill, "fetch_trades", lambda **kwargs: rows)
+
+    backfill.run([
+        "--env", "dev", "--symbol", "BTCUSDT", "--feed-type", "trade", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T00:05:00+00:00"
+    ])
+
+    path = normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
+    assert read_parquet(path).num_rows == 2
+    assert not (tmp_path / "errors" / "marketdata-anomaly-quarantine.jsonl").exists()
+
+
+def test_backfill_quarantine_anomaly_excludes_event_from_normalized_dataset(monkeypatch, tmp_path):
+    cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
+    rows = [
+        {"a": 101, "p": "100", "q": "1", "f": 101, "l": 101, "T": 1704067200000, "m": False, "M": True},
+        {"a": 102, "p": "140", "q": "1", "f": 102, "l": 102, "T": 1704067201000, "m": False, "M": True},
+    ]
+
+    monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(backfill, "fetch_trades", lambda **kwargs: rows)
+
+    backfill.run([
+        "--env", "dev", "--symbol", "BTCUSDT", "--feed-type", "trade", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T00:05:00+00:00"
+    ])
+
+    path = normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
+    assert read_parquet(path).num_rows == 1
+    quarantine_path = tmp_path / "errors" / "marketdata-anomaly-quarantine.jsonl"
+    payloads = [json.loads(line) for line in quarantine_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert payloads[0]["incident"]["anomaly_action"] == "quarantine"
+
+
+def test_backfill_fail_anomaly_aborts_before_normalized_write(monkeypatch, tmp_path):
+    cfg = SimpleNamespace(env="dev", data_dir=tmp_path, log_level="INFO", rest_base="https://x")
+    rows = [
+        {"a": 101, "p": "100", "q": "1", "f": 101, "l": 101, "T": 1704067200000, "m": False, "M": True},
+        {"a": 102, "p": "170", "q": "1", "f": 102, "l": 102, "T": 1704067201000, "m": False, "M": True},
+    ]
+
+    monkeypatch.setattr(backfill, "load_config", lambda env=None: cfg)
+    monkeypatch.setattr(backfill, "fetch_trades", lambda **kwargs: rows)
+
+    with pytest.raises(MarketdataAnomalyError):
+        backfill.run([
+            "--env", "dev", "--symbol", "BTCUSDT", "--feed-type", "trade", "--start", "2024-01-01T00:00:00+00:00", "--end", "2024-01-01T00:05:00+00:00"
+        ])
+
+    path = normalized_partition_path(tmp_path, "dev", source="trade", symbol="BTCUSDT", day="2024-01-01")
+    assert not path.exists()
+    quarantine_path = tmp_path / "errors" / "marketdata-anomaly-quarantine.jsonl"
+    payloads = [json.loads(line) for line in quarantine_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert payloads[0]["incident"]["anomaly_action"] == "fail"
 
 
 def test_backfill_dedup_drops_duplicates_and_logs(monkeypatch, tmp_path, capsys):

@@ -8,6 +8,7 @@ from app.marketdata.models import IngestionEvent
 
 AnomalySeverity = Literal["warn", "quarantine", "fail"]
 FeedType = Literal["trade", "kline", "book"]
+ANOMALY_ACTION_PRIORITY = {"warn": 0, "quarantine": 1, "fail": 2}
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,3 +208,9 @@ def detect_marketdata_anomalies(
 def stream_price_key(event: IngestionEvent) -> str:
     venue = str(getattr(event, "venue", "BINANCE")).upper()
     return f"{venue}:{event.symbol}:{event.source}"
+
+
+def dominant_anomaly(anomalies: tuple[MarketdataAnomaly, ...]) -> MarketdataAnomaly | None:
+    if not anomalies:
+        return None
+    return max(anomalies, key=lambda anomaly: ANOMALY_ACTION_PRIORITY.get(anomaly.action, -1))

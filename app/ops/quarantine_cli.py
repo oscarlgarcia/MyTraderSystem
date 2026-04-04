@@ -16,6 +16,7 @@ from app.marketdata.validators import validate_ingestion_event
 
 DEFAULT_DQL_FILENAME = "ingestion-dlq.jsonl"
 DEFAULT_SCHEMA_DRIFT_FILENAME = "schema-drift-quarantine.jsonl"
+DEFAULT_MARKETDATA_ANOMALY_FILENAME = "marketdata-anomaly-quarantine.jsonl"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,7 @@ def default_quarantine_paths(base_dir: Path) -> tuple[Path, ...]:
     return (
         root / "errors" / DEFAULT_DQL_FILENAME,
         root / "errors" / DEFAULT_SCHEMA_DRIFT_FILENAME,
+        root / "errors" / DEFAULT_MARKETDATA_ANOMALY_FILENAME,
     )
 
 

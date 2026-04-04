@@ -269,3 +269,65 @@ class ShadowPromotionError(MarketdataIncidentError):
             **super().as_context(),
             "diffs": self.diffs,
         }
+
+
+class MarketdataAnomalyError(MarketdataIncidentError):
+    def __init__(
+        self,
+        *,
+        stream_key: str,
+        venue: str,
+        symbol: str,
+        stream_type: str,
+        anomaly_type: str,
+        anomaly_severity: str,
+        anomaly_action: str,
+        previous_price: float | None = None,
+        current_price: float | None = None,
+        relative_jump: float | None = None,
+        previous_volume: float | None = None,
+        current_volume: float | None = None,
+        volume_ratio: float | None = None,
+        threshold: float | None = None,
+    ) -> None:
+        self.stream_key = str(stream_key)
+        self.venue = str(venue).upper()
+        self.symbol = str(symbol).upper()
+        self.stream_type = str(stream_type)
+        self.anomaly_type = str(anomaly_type)
+        self.anomaly_severity = str(anomaly_severity)
+        self.anomaly_action = str(anomaly_action)
+        self.previous_price = None if previous_price is None else float(previous_price)
+        self.current_price = None if current_price is None else float(current_price)
+        self.relative_jump = None if relative_jump is None else float(relative_jump)
+        self.previous_volume = None if previous_volume is None else float(previous_volume)
+        self.current_volume = None if current_volume is None else float(current_volume)
+        self.volume_ratio = None if volume_ratio is None else float(volume_ratio)
+        self.threshold = None if threshold is None else float(threshold)
+        super().__init__(
+            "validation",
+            "permanent",
+            (
+                f"marketdata anomaly for {self.stream_key}: "
+                f"type={self.anomaly_type}, severity={self.anomaly_severity}, action={self.anomaly_action}"
+            ),
+        )
+
+    def as_context(self) -> dict[str, object]:
+        return {
+            **super().as_context(),
+            "stream_key": self.stream_key,
+            "venue": self.venue,
+            "symbol": self.symbol,
+            "stream_type": self.stream_type,
+            "anomaly_type": self.anomaly_type,
+            "anomaly_severity": self.anomaly_severity,
+            "anomaly_action": self.anomaly_action,
+            "previous_price": self.previous_price,
+            "current_price": self.current_price,
+            "relative_jump": self.relative_jump,
+            "previous_volume": self.previous_volume,
+            "current_volume": self.current_volume,
+            "volume_ratio": self.volume_ratio,
+            "threshold": self.threshold,
+        }
