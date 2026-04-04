@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -103,19 +104,35 @@ class MirroredEventSink:
         self.shadow = shadow
 
     def add(self, event: IngestionEvent | Iterable[IngestionEvent]) -> None:
+        if isinstance(event, list):
+            failures: list[Exception] = []
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(self.primary.add, event),
+                    executor.submit(self.shadow.add, event),
+                ]
+                for future in futures:
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        failures.append(exc)
+            if failures:
+                raise failures[0]
+            return
         self.primary.add(event)
         self.shadow.add(event)
 
     def close(self) -> None:
-        try:
-            self.primary.close()
-        except Exception:
-            try:
-                self.shadow.close()
-            except Exception:
-                pass
-            raise
-        self.shadow.close()
+        failures: list[Exception] = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(self.primary.close), executor.submit(self.shadow.close)]
+            for future in futures:
+                try:
+                    future.result()
+                except Exception as exc:
+                    failures.append(exc)
+        if failures:
+            raise failures[0]
 
     @property
     def persisted_count(self) -> int:

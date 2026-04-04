@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-03T10:23:46.268267+00:00",
+  "generated_at": "2026-04-04T09:03:47.897760+00:00",
   "pytest_target": "tests/ops/test_failure_injection.py",
   "critical_test_ids": [
     "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_stale_ws_artifact",
@@ -17,9 +17,9 @@
   ],
   "cwd": "/workspace",
   "python_executable": "/workspace/.venv/bin/python",
-  "duration_seconds": 4.898667500994634,
+  "duration_seconds": 4.393800282996381,
   "returncode": 0,
   "pass_ok": true,
-  "stdout": "...                                                                      [100%]\n3 passed in 3.86s\n",
+  "stdout": "...                                                                      [100%]\n3 passed in 3.33s\n",
   "stderr": ""
 }

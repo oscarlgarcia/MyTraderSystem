@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import gc
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,12 +24,18 @@ from app.ingestion.backfill import _interval_to_ms, fetch_klines, normalize_klin
 from app.ingestion.compaction import CompactionJobPolicy, run_compaction_job
 from app.ingestion.checkpoints import CheckpointStore
 from app.ingestion.pipeline import collect_events
-from app.ingestion.sinks import ParquetEventSink
+from app.ingestion.shadow import (
+    affected_shadow_partitions,
+    build_shadow_snapshot,
+    compare_shadow_snapshots,
+    persist_shadow_comparison,
+)
+from app.ingestion.sinks import MirroredEventSink, ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, heartbeat_policy_for_streams, StaticSource, _ws_stream
 from app.ingestion.storage import ParquetWriter, normalized_partition_path, read_parquet
 from app.ingestion.storage_health import collect_storage_health
 from app.marketdata.instruments import ensure_default_instruments, get_default_instrument_catalog
-from app.marketdata.models import BarEvent
+from app.marketdata.models import BarEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord
 from app.marketdata.replay import ReplaySource
 from app.observability.logger import get_logger
@@ -972,10 +980,10 @@ def _benchmark_trade_events(
     symbols: Sequence[str],
     bursts: int,
     events_per_symbol_per_burst: int,
-) -> list[MarketEvent]:
+) -> list[TradeEvent]:
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
     burst_window_seconds = max(2, events_per_symbol_per_burst + 1)
-    events: list[MarketEvent] = []
+    events: list[TradeEvent] = []
     for burst in range(bursts):
         for symbol_index, symbol in enumerate(symbols):
             for offset in range(events_per_symbol_per_burst):
@@ -984,16 +992,30 @@ def _benchmark_trade_events(
                 )
                 trade_id = symbol_index * 100_000 + burst * events_per_symbol_per_burst + offset + 1
                 events.append(
-                    MarketEvent(
+                    TradeEvent(
                         symbol=symbol,
-                        event_ts=event_ts,
+                        exchange_ts=event_ts,
+                        receive_ts=event_ts,
+                        process_ts=event_ts,
+                        venue="BINANCE",
+                        source_id=str(trade_id),
                         price=100.0 + symbol_index + burst,
                         size=1.0 + (offset / 10.0),
-                        source="trade",
+                        trade_id=str(trade_id),
+                        side="buy" if offset % 2 else "sell",
                         metadata={
-                            "trade_id": str(trade_id),
-                            "source_id": str(trade_id),
-                            "venue": "BINANCE",
+                            "instrument_catalog_version": "benchmark",
+                            "instrument_snapshot": json.dumps(
+                                {
+                                    "symbol": symbol,
+                                    "venue": "BINANCE",
+                                    "price_precision": 8,
+                                    "size_precision": 8,
+                                },
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            "metadata_source": "benchmark",
                         },
                     )
                 )
@@ -1189,7 +1211,105 @@ def run_storage_benchmark(
     max_shadow_elapsed_slo_value = float(slo["max_shadow_elapsed_seconds"])
 
     base_dir = Path(workspace_dir) if workspace_dir is not None else Path(tempfile.mkdtemp(prefix="ingestion-storage-benchmark-"))
+    extra_cleanup_dirs: list[Path] = []
     try:
+        def _run_shadow_case() -> StorageBenchmarkCase:
+            shadow_base_dir = (
+                Path(tempfile.mkdtemp(prefix="ingestion-shadow-benchmark-"))
+                if workspace_dir is None
+                else base_dir / "shadow-benchmark"
+            )
+            if workspace_dir is None:
+                extra_cleanup_dirs.append(shadow_base_dir)
+            shadow_bursts = max(2, min(3, bursts + 1))
+            shadow_events_per_symbol = max(12, min(24, events_per_symbol_per_burst * 2))
+            shadow_symbol_count = max(2, min(4, len(symbols)))
+            if target_profile == "live":
+                shadow_bursts = max(4, shadow_bursts)
+                shadow_events_per_symbol = max(48, shadow_events_per_symbol)
+                shadow_symbol_count = 1
+            shadow_symbols = [f"SHADOW{index:04d}USDT" for index in range(1, shadow_symbol_count + 1)]
+            shadow_events = _benchmark_trade_events(
+                symbols=shadow_symbols,
+                bursts=shadow_bursts,
+                events_per_symbol_per_burst=shadow_events_per_symbol,
+            )
+            gc.collect()
+            shadow_batch_size = 24 if target_profile != "live" else len(shadow_events)
+            shadow_partition_flush_size = shadow_bursts * shadow_events_per_symbol if target_profile == "live" else shadow_events_per_symbol
+            shadow_started = time.perf_counter()
+            primary_sink = ParquetEventSink(
+                ParquetWriter(
+                    base_dir=shadow_base_dir,
+                    env="test",
+                    flush_size=shadow_batch_size,
+                    partition_flush_size=shadow_partition_flush_size,
+                    dedup=True,
+                    schema_version="v2",
+                    max_parallel_partition_writes=8,
+                )
+            )
+            shadow_sink = ParquetEventSink(
+                ParquetWriter(
+                    base_dir=shadow_base_dir,
+                    env="test",
+                    flush_size=shadow_batch_size,
+                    partition_flush_size=shadow_partition_flush_size,
+                    dedup=True,
+                    schema_version="v1",
+                    max_parallel_partition_writes=8,
+                )
+            )
+            mirrored_sink = MirroredEventSink(primary_sink, shadow_sink)
+            mirrored_sink.add(shadow_events)
+            mirrored_sink.close()
+            shadow_partitions = affected_shadow_partitions(shadow_events)
+            primary_snapshot = build_shadow_snapshot(
+                shadow_base_dir,
+                env="test",
+                pipeline_version="v2",
+                gaps_total=0,
+                processing_latency_seconds=0.0,
+                write_latency_seconds=primary_sink.write_latency_seconds,
+                partition_keys=shadow_partitions or None,
+            )
+            shadow_snapshot = build_shadow_snapshot(
+                shadow_base_dir,
+                env="test",
+                pipeline_version="v1",
+                gaps_total=0,
+                processing_latency_seconds=0.0,
+                write_latency_seconds=shadow_sink.write_latency_seconds,
+                partition_keys=shadow_partitions or None,
+            )
+            shadow_comparison = compare_shadow_snapshots(primary_snapshot, shadow_snapshot)
+            persist_shadow_comparison(shadow_base_dir, env="test", comparison=shadow_comparison)
+            if shadow_comparison.significant:
+                raise AssertionError(f"shadow benchmark detected semantic diff: {shadow_comparison.diffs}")
+            shadow_elapsed = max(0.0, time.perf_counter() - shadow_started)
+            return _make_benchmark_case(
+                name="shadow_scoped_runtime",
+                dataset_kind="synthetic",
+                target_profile=target_profile,
+                requested_symbol_count=len({event.symbol for event in shadow_events}),
+                rows_in=len(shadow_events) * 2,
+                partitions=len({event.symbol for event in shadow_events}),
+                bursts=shadow_bursts,
+                batch_size=shadow_batch_size,
+                elapsed_seconds=shadow_elapsed,
+                max_write_latency_seconds=0.0,
+                compaction_elapsed_seconds=0.0,
+                shadow_elapsed_seconds=shadow_elapsed,
+                segments_pending_total=0,
+                segments_per_partition_max=0,
+                normalized_partition_row_count=0,
+                min_rows_per_second=min_rows_per_second_value,
+                max_write_latency_slo=max_write_latency_slo_value,
+                max_compaction_elapsed_slo=max_compaction_elapsed_slo_value,
+                max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
+            )
+
+        shadow_case = _run_shadow_case()
 
         synthetic_events = _benchmark_trade_events(
             symbols=symbols,
@@ -1237,6 +1357,7 @@ def run_storage_benchmark(
             max_compaction_elapsed_slo=max_compaction_elapsed_slo_value,
             max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
         )
+        del synthetic_events, writer, sink, synthetic_health
 
         replay_rows = _seed_replay_raw_dataset(
             base_dir,
@@ -1395,60 +1516,8 @@ def run_storage_benchmark(
             max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
         )
 
-        shadow_base_dir = base_dir / "shadow-benchmark"
-        shadow_bursts = max(2, min(3, bursts + 1))
-        shadow_events_per_symbol = max(12, min(24, events_per_symbol_per_burst * 2))
-        if target_profile == "live":
-            shadow_bursts = max(4, shadow_bursts)
-            shadow_events_per_symbol = max(96, shadow_events_per_symbol)
-        shadow_batch_size = 24 if target_profile != "live" else 64
-        shadow_events = _benchmark_trade_events(
-            symbols=symbols[: max(2, min(4, len(symbols)))],
-            bursts=shadow_bursts,
-            events_per_symbol_per_burst=shadow_events_per_symbol,
-        )
-        shadow_started = time.perf_counter()
-        shadow_buffer = io.StringIO()
-        collect_events(
-            mode="live",
-            cfg=_cfg(shadow_base_dir, symbols=list({event.symbol for event in shadow_events})),
-            max_events=len(shadow_events),
-            duration_s=0,
-            logger=get_logger(name="ops.storage.shadow", level="INFO", stream=shadow_buffer),
-            source=StaticSource(events=shadow_events),
-            sink=None,
-            snapshot_enabled=False,
-            summary_logging=True,
-            dedup_enabled=True,
-            batch_size=shadow_batch_size,
-            pipeline_version="v2",
-            shadow_mode=True,
-        )
-        shadow_elapsed = max(0.0, time.perf_counter() - shadow_started)
-        shadow_health = collect_storage_health(shadow_base_dir, "test")
-        shadow_case = _make_benchmark_case(
-            name="shadow_scoped_runtime",
-            dataset_kind="synthetic",
-            target_profile=target_profile,
-            requested_symbol_count=len({event.symbol for event in shadow_events}),
-            rows_in=len(shadow_events),
-            partitions=len({event.symbol for event in shadow_events}),
-            bursts=shadow_bursts,
-            batch_size=shadow_batch_size,
-            elapsed_seconds=shadow_elapsed,
-            max_write_latency_seconds=0.0,
-            compaction_elapsed_seconds=0.0,
-            shadow_elapsed_seconds=shadow_elapsed,
-            segments_pending_total=shadow_health.segments_pending_total,
-            segments_per_partition_max=shadow_health.segments_per_partition_max,
-            normalized_partition_row_count=shadow_health.normalized_partition_row_count,
-            min_rows_per_second=min_rows_per_second_value,
-            max_write_latency_slo=max_write_latency_slo_value,
-            max_compaction_elapsed_slo=max_compaction_elapsed_slo_value,
-            max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
-        )
-
         high_cardinality_cases: list[StorageBenchmarkCase] = []
+        gc.collect()
         for high_symbol_count in required_high_cardinality_symbol_counts:
             case_symbols = [f"HICARD{index:04d}USDT" for index in range(1, max(1, int(high_symbol_count)) + 1)]
             _ensure_benchmark_symbols_registered(case_symbols)
@@ -1462,20 +1531,22 @@ def run_storage_benchmark(
                 events_per_symbol_per_burst=high_events_per_symbol,
             )
             case_base_dir = base_dir / f"high-cardinality-{high_symbol_count}"
-            case_flush_size = max(192, high_events_per_symbol * 2)
-            case_batch_size = case_flush_size
+            chunk_symbol_count = min(len(case_symbols), max(8, min(32, len(case_symbols) // 8 or 1)))
             if target_profile == "live" and high_symbol_count >= 500:
-                case_flush_size = len(case_events)
-                case_batch_size = len(case_events)
+                chunk_symbol_count = min(len(case_symbols), 16)
+            case_batch_size = max(high_events_per_symbol, chunk_symbol_count * high_events_per_symbol)
+            case_flush_size = case_batch_size
             case_writer = ParquetWriter(
                 base_dir=case_base_dir,
                 env="test",
                 flush_size=case_flush_size,
                 partition_flush_size=high_events_per_symbol,
                 dedup=True,
+                max_parallel_partition_writes=32 if target_profile == "live" and high_symbol_count >= 500 else None,
             )
             case_started = time.perf_counter()
-            case_writer.add(case_events)
+            for chunk_start in range(0, len(case_events), case_batch_size):
+                case_writer.add(case_events[chunk_start : chunk_start + case_batch_size])
             case_writer.flush()
             case_elapsed = max(0.0, time.perf_counter() - case_started)
             case_health = collect_storage_health(case_base_dir, "test")
@@ -1529,3 +1600,5 @@ def run_storage_benchmark(
     finally:
         if cleanup and workspace_dir is None:
             shutil.rmtree(base_dir, ignore_errors=True)
+            for extra_dir in extra_cleanup_dirs:
+                shutil.rmtree(extra_dir, ignore_errors=True)

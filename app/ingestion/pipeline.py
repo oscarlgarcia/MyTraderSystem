@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -619,11 +620,14 @@ def collect_events(
 
         snapshot_fn = source_snapshot_fn(source_impl) if snapshot_enabled else None
         if sink is None:
+            sink_flush_size = max(1, max_events)
+            sink_partition_flush_size = max(1, batch_size)
             primary_sink = ParquetEventSink(
                 ParquetWriter(
                     base_dir=cfg.data_dir,
                     env=cfg.env,
-                    flush_size=max_events,
+                    flush_size=sink_flush_size,
+                    partition_flush_size=sink_partition_flush_size,
                     dedup=dedup_enabled,
                     schema_version=pipeline_version,
                 )
@@ -634,7 +638,8 @@ def collect_events(
                     ParquetWriter(
                         base_dir=cfg.data_dir,
                         env=cfg.env,
-                        flush_size=max_events,
+                        flush_size=sink_flush_size,
+                        partition_flush_size=sink_partition_flush_size,
                         dedup=dedup_enabled,
                         schema_version=shadow_version,
                     )
@@ -720,24 +725,29 @@ def collect_events(
         shadow_checksum_diff_total = 0
         if shadow_mode and shadow_sink_impl is not None:
             shadow_partitions = affected_shadow_partitions(handler.events)
-            primary_snapshot = build_shadow_snapshot(
-                Path(cfg.data_dir),
-                env=cfg.env,
-                pipeline_version=sink_pipeline_version,
-                gaps_total=runner.metrics.gaps_total,
-                processing_latency_seconds=runner.metrics.max_latency_seconds,
-                write_latency_seconds=write_latency_seconds,
-                partition_keys=shadow_partitions or None,
-            )
-            shadow_snapshot = build_shadow_snapshot(
-                Path(cfg.data_dir),
-                env=cfg.env,
-                pipeline_version="v1" if sink_pipeline_version == "v2" else "v2",
-                gaps_total=runner.metrics.gaps_total,
-                processing_latency_seconds=runner.metrics.max_latency_seconds,
-                write_latency_seconds=_safe_float(getattr(shadow_sink_impl, "write_latency_seconds", 0.0)),
-                partition_keys=shadow_partitions or None,
-            )
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                primary_future = executor.submit(
+                    build_shadow_snapshot,
+                    Path(cfg.data_dir),
+                    env=cfg.env,
+                    pipeline_version=sink_pipeline_version,
+                    gaps_total=runner.metrics.gaps_total,
+                    processing_latency_seconds=runner.metrics.max_latency_seconds,
+                    write_latency_seconds=write_latency_seconds,
+                    partition_keys=shadow_partitions or None,
+                )
+                shadow_future = executor.submit(
+                    build_shadow_snapshot,
+                    Path(cfg.data_dir),
+                    env=cfg.env,
+                    pipeline_version="v1" if sink_pipeline_version == "v2" else "v2",
+                    gaps_total=runner.metrics.gaps_total,
+                    processing_latency_seconds=runner.metrics.max_latency_seconds,
+                    write_latency_seconds=_safe_float(getattr(shadow_sink_impl, "write_latency_seconds", 0.0)),
+                    partition_keys=shadow_partitions or None,
+                )
+                primary_snapshot = primary_future.result()
+                shadow_snapshot = shadow_future.result()
             shadow_comparison = compare_shadow_snapshots(
                 primary_snapshot,
                 shadow_snapshot,

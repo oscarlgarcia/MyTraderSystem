@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from app.ingestion.dedup import identity_from_fields
+import pyarrow.parquet as pq
+
 from app.marketdata.errors import ShadowPromotionError
 from app.ingestion.storage import (
+    PARTITION_DATA_FILENAME,
     STREAM_TYPE_BY_FEED_TYPE,
     feed_type_for_source,
     legacy_partition_path,
     normalized_partition_path,
+    partition_segments_dir,
     read_parquet,
 )
 
@@ -69,7 +73,7 @@ def build_shadow_snapshot(
     max_event_ts: str | None = None
     row_count = 0
     partitions: dict[str, ShadowPartitionSnapshot] = {}
-    for partition_key, rows in _iter_partition_canonical_rows(
+    for partition_key, rows in _collect_partition_canonical_rows(
         base_dir=Path(base_dir),
         env=env,
         pipeline_version=pipeline_version,
@@ -252,6 +256,242 @@ def _shadow_paths(
     return sorted(paths)
 
 
+def _collect_partition_canonical_rows(
+    base_dir: Path,
+    *,
+    env: str,
+    pipeline_version: str,
+    partition_keys: tuple[str, ...] | None = None,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    paths = _shadow_paths(
+        base_dir,
+        env=env,
+        pipeline_version=pipeline_version,
+        partition_keys=partition_keys,
+    )
+    if len(paths) <= 1:
+        partition_rows: list[tuple[str, list[dict[str, Any]]]] = []
+        for path in paths:
+            partition_rows.extend(_partition_canonical_rows_from_path(path, partition_keys=partition_keys))
+        return sorted(partition_rows, key=lambda item: item[0])
+
+    collected: list[tuple[str, list[dict[str, Any]]]] = []
+    with ThreadPoolExecutor(max_workers=min(8, len(paths))) as executor:
+        future_map = {
+            executor.submit(_partition_canonical_rows_from_path, path, partition_keys=partition_keys): path for path in paths
+        }
+        for future in as_completed(future_map):
+            collected.extend(future.result())
+    return sorted(collected, key=lambda item: item[0])
+
+
+def _partition_canonical_rows_from_path(
+    path: Path,
+    *,
+    partition_keys: tuple[str, ...] | None = None,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    partition_rows: dict[str, list[dict[str, Any]]] = {}
+    table_paths: list[Path]
+    if path.is_dir():
+        table_paths = []
+        compacted = path / PARTITION_DATA_FILENAME
+        if compacted.exists():
+            table_paths.append(compacted)
+        table_paths.extend(sorted(partition_segments_dir(path).glob("*.parquet")))
+    else:
+        table_paths = [path]
+    for table_path in table_paths:
+        parquet_file = pq.ParquetFile(table_path)
+        for batch in parquet_file.iter_batches(batch_size=4096):
+            for canonical in _iter_batch_canonical_rows(batch):
+                if partition_keys and canonical["partition_key"] not in partition_keys:
+                    continue
+                partition_rows.setdefault(canonical["partition_key"], []).append(canonical)
+    results: list[tuple[str, list[dict[str, Any]]]] = []
+    for partition_key, rows in sorted(partition_rows.items()):
+        rows.sort(key=lambda row: (row["event_ts"], row["identity"], row["row_hash"]))
+        results.append((partition_key, rows))
+    return results
+
+
+def _iter_batch_canonical_rows(batch: Any) -> Iterable[dict[str, Any]]:
+    names = set(batch.schema.names)
+    row_count = batch.num_rows
+
+    def _column_values(name: str) -> list[Any]:
+        if name not in names:
+            return [None] * row_count
+        return batch.column(batch.schema.get_field_index(name)).to_pylist()
+
+    symbol_values = _column_values("symbol")
+    source_values = _column_values("source")
+    feed_type_values = _column_values("feed_type")
+    venue_values = _column_values("venue")
+    event_ts_values = _column_values("event_ts")
+    exchange_ts_values = _column_values("exchange_ts")
+    receive_ts_values = _column_values("receive_ts")
+    process_ts_values = _column_values("process_ts")
+    provider_ts_values = _column_values("provider_ts")
+    source_id_values = _column_values("source_id")
+    trade_id_values = _column_values("trade_id")
+    side_values = _column_values("side")
+    price_values = _column_values("price")
+    size_values = _column_values("size")
+    open_values = _column_values("open")
+    high_values = _column_values("high")
+    low_values = _column_values("low")
+    close_values = _column_values("close")
+    volume_values = _column_values("volume")
+    interval_values = _column_values("interval")
+    open_ts_values = _column_values("open_ts")
+    close_ts_values = _column_values("close_ts")
+    metadata_values = _column_values("metadata")
+
+    for index in range(row_count):
+        metadata = _metadata_mapping(metadata_values[index])
+        yield _canonical_row_from_values(
+            symbol=symbol_values[index],
+            source=source_values[index],
+            feed_type=feed_type_values[index],
+            venue=venue_values[index],
+            event_ts=event_ts_values[index],
+            exchange_ts=exchange_ts_values[index],
+            receive_ts=receive_ts_values[index],
+            process_ts=process_ts_values[index],
+            provider_ts=provider_ts_values[index],
+            source_id=source_id_values[index],
+            trade_id=trade_id_values[index],
+            side=side_values[index],
+            price=price_values[index],
+            size=size_values[index],
+            open_value=open_values[index],
+            high_value=high_values[index],
+            low_value=low_values[index],
+            close_value=close_values[index],
+            volume_value=volume_values[index],
+            interval=interval_values[index],
+            open_ts=open_ts_values[index],
+            close_ts=close_ts_values[index],
+            metadata=metadata,
+        )
+
+
+def _canonical_row_from_values(
+    *,
+    symbol: Any,
+    source: Any,
+    feed_type: Any,
+    venue: Any,
+    event_ts: Any,
+    exchange_ts: Any,
+    receive_ts: Any,
+    process_ts: Any,
+    provider_ts: Any,
+    source_id: Any,
+    trade_id: Any,
+    side: Any,
+    price: Any,
+    size: Any,
+    open_value: Any,
+    high_value: Any,
+    low_value: Any,
+    close_value: Any,
+    volume_value: Any,
+    interval: Any,
+    open_ts: Any,
+    close_ts: Any,
+    metadata: dict[str, str],
+) -> dict[str, Any]:
+    source_value = str(source or metadata.get("source", "unknown"))
+    feed_type_value = str(feed_type or feed_type_for_source(source_value))
+    venue_value = str(venue or metadata.get("venue", "BINANCE")).upper()
+    symbol_value = str(symbol)
+    event_ts_value = _iso_ts(event_ts or exchange_ts)
+    exchange_ts_value = _iso_ts(exchange_ts or event_ts)
+    receive_ts_value = _iso_ts(receive_ts or metadata.get("receive_ts"))
+    process_ts_value = _iso_ts(process_ts or metadata.get("process_ts"))
+    source_id_value = _string_or_none(source_id or metadata.get("source_id"))
+    trade_id_value = _string_or_none(trade_id or metadata.get("trade_id"))
+    side_value = _string_or_none(side or metadata.get("side"))
+    price_value = _float_or_none(price if price not in (None, "") else close_value)
+    size_value = _float_or_none(size if size not in (None, "") else volume_value)
+    open_numeric = _float_or_none(open_value if open_value not in (None, "") else metadata.get("open"))
+    high_numeric = _float_or_none(high_value if high_value not in (None, "") else metadata.get("high"))
+    low_numeric = _float_or_none(low_value if low_value not in (None, "") else metadata.get("low"))
+    close_numeric = _float_or_none(close_value if close_value not in (None, "") else metadata.get("close", price))
+    volume_numeric = _float_or_none(volume_value if volume_value not in (None, "") else metadata.get("volume", size))
+    interval_value = _string_or_none(interval or metadata.get("interval"))
+    open_ts_value = _iso_ts(open_ts or metadata.get("open_ts"))
+    close_ts_value = _iso_ts(close_ts or metadata.get("close_ts"))
+    day = event_ts_value[:10]
+    identity = _checksum_components(
+        [
+            feed_type_value,
+            venue_value,
+            symbol_value,
+            event_ts_value,
+            source_value,
+            source_id_value,
+            trade_id_value,
+            side_value,
+            _number_text(price_value if price_value is not None else close_numeric),
+            _number_text(size_value if size_value is not None else volume_numeric),
+            interval_value,
+            open_ts_value,
+            close_ts_value,
+        ]
+    )
+    canonical = {
+        "partition_key": f"{feed_type_value}:{venue_value}:{symbol_value}:{day}",
+        "venue": venue_value,
+        "feed_type": feed_type_value,
+        "symbol": symbol_value,
+        "source": source_value,
+        "event_ts": event_ts_value,
+        "exchange_ts": exchange_ts_value,
+        "receive_ts": receive_ts_value,
+        "process_ts": process_ts_value,
+        "price": price_value,
+        "size": size_value,
+        "source_id": source_id_value,
+        "trade_id": trade_id_value,
+        "side": side_value,
+        "open": open_numeric,
+        "high": high_numeric,
+        "low": low_numeric,
+        "close": close_numeric,
+        "volume": volume_numeric,
+        "interval": interval_value,
+        "open_ts": open_ts_value,
+        "close_ts": close_ts_value,
+        "identity": identity,
+    }
+    canonical["row_hash"] = _checksum_components(
+        [
+            canonical["partition_key"],
+            canonical["event_ts"],
+            canonical["exchange_ts"],
+            canonical["receive_ts"],
+            canonical["process_ts"],
+            canonical["source"],
+            canonical["source_id"],
+            canonical["trade_id"],
+            canonical["side"],
+            _number_text(canonical["price"]),
+            _number_text(canonical["size"]),
+            _number_text(canonical["open"]),
+            _number_text(canonical["high"]),
+            _number_text(canonical["low"]),
+            _number_text(canonical["close"]),
+            _number_text(canonical["volume"]),
+            canonical["interval"],
+            canonical["open_ts"],
+            canonical["close_ts"],
+        ]
+    )
+    return canonical
+
+
 def _iter_partition_canonical_rows(
     base_dir: Path,
     *,
@@ -259,22 +499,13 @@ def _iter_partition_canonical_rows(
     pipeline_version: str,
     partition_keys: tuple[str, ...] | None = None,
 ) -> Iterable[tuple[str, list[dict[str, Any]]]]:
-    for path in _shadow_paths(
+    for partition_key, rows in _collect_partition_canonical_rows(
         base_dir,
         env=env,
         pipeline_version=pipeline_version,
         partition_keys=partition_keys,
     ):
-        table = read_parquet(path)
-        partition_rows: dict[str, list[dict[str, Any]]] = {}
-        for row in _iter_table_rows(table):
-            canonical = _canonical_row(row)
-            if partition_keys and canonical["partition_key"] not in partition_keys:
-                continue
-            partition_rows.setdefault(canonical["partition_key"], []).append(canonical)
-        for partition_key, rows in sorted(partition_rows.items()):
-            rows.sort(key=lambda row: (row["event_ts"], row["identity"], row["row_hash"]))
-            yield partition_key, rows
+        yield partition_key, rows
 
 
 def _iter_table_rows(table: Any, *, batch_size: int = 4096) -> Iterable[dict[str, Any]]:
@@ -407,6 +638,19 @@ def _checksum_payload(value: dict[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
+
+
+def _checksum_components(values: list[Any]) -> str:
+    digest = hashlib.sha256()
+    for value in values:
+        _checksum_update(digest, "" if value is None else value)
+    return digest.hexdigest()
+
+
+def _number_text(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    return f"{float(value):.10f}"
 
 
 def _metadata_mapping(value: Any) -> dict[str, str]:

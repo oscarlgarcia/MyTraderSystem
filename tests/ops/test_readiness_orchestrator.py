@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -145,11 +146,11 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
     )
     shadow_path = base_dir / "shadow" / "env=dev" / "comparisons.jsonl"
     shadow_path.parent.mkdir(parents=True, exist_ok=True)
-    shadow_path.write_text(json.dumps({"significant": False, "diffs": {}, "ts": "2026-04-03T00:00:00+00:00"}) + "\n", encoding="utf-8")
+    now = datetime.now(timezone.utc).isoformat()
+    shadow_path.write_text(json.dumps({"significant": False, "diffs": {}, "ts": now}) + "\n", encoding="utf-8")
 
     artifact_dir = tmp_path / "artifacts"
     artifact_dir.mkdir()
-    now = "2026-04-03T00:00:00+00:00"
     for name, payload in {
         "rest.json": {"generated_at": now, "pass_ok": True, "diffs": {}, "comparison_reason": "semantic_match"},
         "ws.json": {"report_generated_at": now, "pass_ok": True, "continuity": {"reconnects": 1, "duplicates": 0, "gaps": 0}, "reconnects_observed": 1, "reconnects_target": 1, "symbol": "BTCUSDT", "stream_type": "kline"},

@@ -2,9 +2,9 @@
   "target": "live",
   "env": "dev",
   "base_dir": "data/dev",
-  "generated_at": "2026-04-04T00:39:00.016138+00:00",
-  "overall_status": "FAIL",
-  "pass_ok": false,
+  "generated_at": "2026-04-04T09:03:56.277401+00:00",
+  "overall_status": "PASS",
+  "pass_ok": true,
   "blocks": [
     {
       "name": "support_matrix",
@@ -14321,7 +14321,7 @@
         "pass_ok": true,
         "generated_at": null,
         "comparison_reason": "semantic_match",
-        "artifact_age_seconds": 22356.956208
+        "artifact_age_seconds": 937.94898
       }
     },
     {
@@ -14334,26 +14334,24 @@
       "details": {
         "path": "docs/validation/ingestion_ws_canary_report.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T18:27:28.593638+00:00",
+        "generated_at": "2026-04-04T08:50:44.669848+00:00",
         "comparison_reason": "continuity_ok",
-        "artifact_age_seconds": 22280.911725
+        "artifact_age_seconds": 790.95353
       }
     },
     {
       "name": "storage_benchmark",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "reasons": [
-        "pass_ok is not true",
-        "shadow_scoped_case.pass_ok is not true",
-        "high_cardinality_500.pass_ok is not true"
+        "artifact validated"
       ],
       "details": {
         "path": "docs/validation/ingestion_storage_benchmark.json",
-        "pass_ok": false,
-        "generated_at": "2026-04-03T21:55:35.666822+00:00",
+        "pass_ok": true,
+        "generated_at": "2026-04-04T08:51:47.059996+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 9794.122781
+        "artifact_age_seconds": 728.578231
       }
     },
     {
@@ -14366,9 +14364,9 @@
       "details": {
         "path": "docs/validation/ingestion_replay_parity.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T18:26:09.654341+00:00",
+        "generated_at": "2026-04-04T08:48:14.964852+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 22360.349382
+        "artifact_age_seconds": 940.687097
       }
     },
     {
@@ -14381,9 +14379,9 @@
       "details": {
         "path": "docs/validation/ingestion_soak_evidence.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T18:31:52.747890+00:00",
+        "generated_at": "2026-04-04T09:03:40.324936+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 22017.373599
+        "artifact_age_seconds": 15.341584
       }
     },
     {
@@ -14396,9 +14394,9 @@
       "details": {
         "path": "docs/validation/ingestion_vendor_contracts.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T18:29:03.660035+00:00",
+        "generated_at": "2026-04-04T08:51:53.961554+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 22186.620439
+        "artifact_age_seconds": 721.719786
       }
     },
     {
@@ -14411,9 +14409,9 @@
       "details": {
         "path": "docs/validation/ingestion_failure_injection.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:23:46.268267+00:00",
+        "generated_at": "2026-04-04T09:03:47.897760+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 51304.170792
+        "artifact_age_seconds": 7.798249
       }
     },
     {
@@ -14585,9 +14583,9 @@
       "details": {
         "path": "docs/validation/ingestion_live_drill_report.json",
         "pass_ok": false,
-        "generated_at": "2026-04-03T10:23:51.084836+00:00",
+        "generated_at": "2026-04-04T09:03:53.216714+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 51299.433592
+        "artifact_age_seconds": 2.494003
       }
     },
     {

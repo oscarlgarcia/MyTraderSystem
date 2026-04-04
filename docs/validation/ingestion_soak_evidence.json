@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-03T18:31:52.747890+00:00",
+  "generated_at": "2026-04-04T09:03:40.324936+00:00",
   "mode": "ws-live",
   "vendor": "BINANCE",
   "symbol": "BTCUSDT",
@@ -10,12 +10,12 @@
   "duration_seconds": 130.0,
   "reconnects_target": 5,
   "reconnects_observed": 5,
-  "elapsed_seconds": 714.9898578080174,
-  "max_processing_latency_seconds": 112.048725,
-  "max_write_latency_seconds": 0.044486441009212285,
-  "total_events_persisted": 10,
+  "elapsed_seconds": 704.3600236540078,
+  "max_processing_latency_seconds": 135.96757,
+  "max_write_latency_seconds": 0.017190968996146694,
+  "total_events_persisted": 11,
   "max_allowed_gaps": 5,
-  "max_gaps": 1,
+  "max_gaps": 2,
   "max_allowed_gap_irreparable": 0,
   "max_gap_irreparable": 0,
   "max_allowed_compaction_failures": 0,
@@ -32,8 +32,8 @@
       "gaps": 1,
       "gap_irreparable": 0,
       "reconnects": 1,
-      "processing_latency_seconds": 82.547099,
-      "write_latency_seconds": 0.028538282989757136,
+      "processing_latency_seconds": 76.40485,
+      "write_latency_seconds": 0.011370703025022522,
       "streams_degraded": [
         "BINANCE:BTCUSDT:kline"
       ],
@@ -49,8 +49,8 @@
       "gaps": 1,
       "gap_irreparable": 0,
       "reconnects": 1,
-      "processing_latency_seconds": 106.307194,
-      "write_latency_seconds": 0.044486441009212285,
+      "processing_latency_seconds": 95.477147,
+      "write_latency_seconds": 0.007370811013970524,
       "streams_degraded": [
         "BINANCE:BTCUSDT:kline"
       ],
@@ -66,8 +66,25 @@
       "gaps": 1,
       "gap_irreparable": 0,
       "reconnects": 1,
-      "processing_latency_seconds": 66.890053,
-      "write_latency_seconds": 0.018610839993925765,
+      "processing_latency_seconds": 115.908713,
+      "write_latency_seconds": 0.006852546997833997,
+      "streams_degraded": [
+        "BINANCE:BTCUSDT:kline"
+      ],
+      "result": "ok"
+    },
+    {
+      "mode": "live",
+      "pipeline_version": "v2",
+      "shadow_mode": false,
+      "events_in": 7,
+      "events_persisted": 3,
+      "duplicates": 2,
+      "gaps": 2,
+      "gap_irreparable": 0,
+      "reconnects": 1,
+      "processing_latency_seconds": 135.96757,
+      "write_latency_seconds": 0.013073890004307032,
       "streams_degraded": [
         "BINANCE:BTCUSDT:kline"
       ],
@@ -83,25 +100,8 @@
       "gaps": 1,
       "gap_irreparable": 0,
       "reconnects": 1,
-      "processing_latency_seconds": 90.538784,
-      "write_latency_seconds": 0.04135046000010334,
-      "streams_degraded": [
-        "BINANCE:BTCUSDT:kline"
-      ],
-      "result": "ok"
-    },
-    {
-      "mode": "live",
-      "pipeline_version": "v2",
-      "shadow_mode": false,
-      "events_in": 4,
-      "events_persisted": 2,
-      "duplicates": 1,
-      "gaps": 1,
-      "gap_irreparable": 0,
-      "reconnects": 1,
-      "processing_latency_seconds": 112.048725,
-      "write_latency_seconds": 0.041568723012460396,
+      "processing_latency_seconds": 99.774456,
+      "write_latency_seconds": 0.017190968996146694,
       "streams_degraded": [
         "BINANCE:BTCUSDT:kline"
       ],

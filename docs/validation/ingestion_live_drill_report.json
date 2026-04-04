@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-03T10:23:51.084836+00:00",
+  "generated_at": "2026-04-04T09:03:53.216714+00:00",
   "env": "dev",
   "target": "live",
   "overall_status": "PASS",
@@ -23,7 +23,7 @@
         "overall_status": "PASS",
         "pass_ok": true,
         "target": "live",
-        "artifact_age_seconds": 1.889487
+        "artifact_age_seconds": 1.91226
       }
     },
     {
@@ -34,7 +34,7 @@
         "path": "docs/validation/ingestion_canary_report.json",
         "pass_ok": true,
         "comparison_reason": "semantic_match",
-        "artifact_age_seconds": 174.766345
+        "artifact_age_seconds": 935.519274
       }
     },
     {
@@ -45,7 +45,7 @@
         "path": "docs/validation/ingestion_ws_canary_report.json",
         "pass_ok": true,
         "comparison_reason": "continuity_ok",
-        "artifact_age_seconds": 99.838046
+        "artifact_age_seconds": 788.515766
       }
     },
     {
@@ -56,12 +56,17 @@
         "path": "docs/validation/ingestion_storage_benchmark.json",
         "pass_ok": true,
         "slo": {
-          "min_rows_per_second": 1.0,
+          "target_profile": "live",
+          "min_rows_per_second": 100.0,
           "max_write_latency_seconds": 2.0,
           "max_compaction_elapsed_seconds": 5.0,
-          "max_shadow_elapsed_seconds": 5.0
+          "max_shadow_elapsed_seconds": 5.0,
+          "required_high_cardinality_symbol_counts": [
+            100,
+            500
+          ]
         },
-        "artifact_age_seconds": 96.256621
+        "artifact_age_seconds": 726.125649
       }
     },
     {
@@ -76,7 +81,7 @@
           "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot",
           "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch"
         ],
-        "artifact_age_seconds": 4.794523
+        "artifact_age_seconds": 5.287897
       }
     },
     {

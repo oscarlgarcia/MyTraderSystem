@@ -2,7 +2,7 @@
   "target": "live",
   "env": "dev",
   "base_dir": "data/dev",
-  "generated_at": "2026-04-03T10:23:49.168584+00:00",
+  "generated_at": "2026-04-04T09:03:51.267590+00:00",
   "overall_status": "PASS",
   "pass_ok": true,
   "blocks": [
@@ -14321,7 +14321,7 @@
         "pass_ok": true,
         "generated_at": null,
         "comparison_reason": "semantic_match",
-        "artifact_age_seconds": 172.166379
+        "artifact_age_seconds": 932.704489
       }
     },
     {
@@ -14334,9 +14334,9 @@
       "details": {
         "path": "docs/validation/ingestion_ws_canary_report.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:22:11.224712+00:00",
+        "generated_at": "2026-04-04T08:50:44.669848+00:00",
         "comparison_reason": "continuity_ok",
-        "artifact_age_seconds": 97.245501
+        "artifact_age_seconds": 785.709286
       }
     },
     {
@@ -14349,9 +14349,9 @@
       "details": {
         "path": "docs/validation/ingestion_storage_benchmark.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:22:14.806157+00:00",
+        "generated_at": "2026-04-04T08:51:47.059996+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 93.67414
+        "artifact_age_seconds": 723.339399
       }
     },
     {
@@ -14364,9 +14364,9 @@
       "details": {
         "path": "docs/validation/ingestion_replay_parity.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:20:52.847396+00:00",
+        "generated_at": "2026-04-04T08:48:14.964852+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 175.642033
+        "artifact_age_seconds": 935.448615
       }
     },
     {
@@ -14379,9 +14379,9 @@
       "details": {
         "path": "docs/validation/ingestion_soak_evidence.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:23:39.018494+00:00",
+        "generated_at": "2026-04-04T09:03:40.324936+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 9.48359
+        "artifact_age_seconds": 10.101068
       }
     },
     {
@@ -14394,9 +14394,9 @@
       "details": {
         "path": "docs/validation/ingestion_vendor_contracts.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:22:21.772828+00:00",
+        "generated_at": "2026-04-04T08:51:53.961554+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 86.741526
+        "artifact_age_seconds": 716.476262
       }
     },
     {
@@ -14409,9 +14409,9 @@
       "details": {
         "path": "docs/validation/ingestion_failure_injection.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:23:46.268267+00:00",
+        "generated_at": "2026-04-04T09:03:47.897760+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 2.258518
+        "artifact_age_seconds": 2.553242
       }
     },
     {
@@ -14575,13 +14575,17 @@
     },
     {
       "name": "live_drill",
-      "status": "warn",
+      "status": "pass",
       "required": false,
       "reasons": [
-        "missing artifact: docs/validation/ingestion_live_drill_report.json"
+        "artifact validated"
       ],
       "details": {
-        "path": "docs/validation/ingestion_live_drill_report.json"
+        "path": "docs/validation/ingestion_live_drill_report.json",
+        "pass_ok": false,
+        "generated_at": "2026-04-04T08:58:39.953472+00:00",
+        "comparison_reason": null,
+        "artifact_age_seconds": 310.515207
       }
     },
     {

@@ -110,6 +110,26 @@ def test_partition_flush_size_flushes_hot_partition_without_flushing_all_buffers
     assert not _out_path(tmp_path, symbol="ETHUSDT", day="2024-01-01").exists()
 
 
+def test_partition_flush_size_triggers_during_iterable_batch_add(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=100, partition_flush_size=2)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    writer.add(
+        [
+            make_event("BTCUSDT", ts),
+            make_event("BTCUSDT", ts + timedelta(seconds=1)),
+            make_event("ETHUSDT", ts),
+        ]
+    )
+
+    btc_table = read_parquet(_out_path(tmp_path, symbol="BTCUSDT", day="2024-01-01"))
+
+    assert btc_table.num_rows == 2
+    assert writer.persisted_events == 2
+    assert writer.buffered_events == 1
+    assert not _out_path(tmp_path, symbol="ETHUSDT", day="2024-01-01").exists()
+
+
 def test_schema_stable_across_writer_instances(tmp_path):
     ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
     writer1 = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)

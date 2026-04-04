@@ -138,6 +138,7 @@ def _event_metadata_for_row(
             metadata_cache[cache_key] = dict(cached)
     if cached:
         metadata.update({key: value for key, value in cached.items() if key not in metadata})
+    metadata.pop("instrument_catalog_snapshot_json", None)
     return metadata
 
 
@@ -623,20 +624,26 @@ class ParquetWriter:
 
     def add(self, event: IngestionEvent | Iterable[IngestionEvent]) -> None:
         if isinstance(event, (MarketEvent, BaseMarketEvent)):
-            self._buffer_event(event)
+            if self._buffer_event(event):
+                self._flush_ready_partitions()
         else:
-            batch = list(event)
-            for item in batch:
-                self._buffer_event(item)
+            for item in event:
+                if self._buffer_event(item):
+                    self._flush_ready_partitions()
         self._flush_ready_partitions()
 
     def flush(self) -> None:
         self._flush_partitions(tuple(self.partition_buffers))
 
-    def _buffer_event(self, event: IngestionEvent) -> None:
+    def _buffer_event(self, event: IngestionEvent) -> bool:
         self.accepted_events += 1
         partition_key = _partition_key_for_event(event)
-        self.partition_buffers.setdefault(partition_key, []).append(event)
+        partition_events = self.partition_buffers.setdefault(partition_key, [])
+        partition_events.append(event)
+        return (
+            len(partition_events) >= int(self.partition_flush_size or self.flush_size)
+            or (self.accepted_events - self.persisted_events) >= self.flush_size
+        )
 
     def _flush_ready_partitions(self) -> None:
         if not self.partition_buffers:
@@ -868,10 +875,6 @@ def _table_schema_metadata(
     )
     instrument_snapshot = next(
         (value for value in (event_instrument_snapshot(event) for event in events) if value),
-        None,
-    )
-    instrument_catalog_snapshot = next(
-        (value for value in (event_instrument_catalog_snapshot_json(event) for event in events) if value),
         None,
     )
     metadata_source = next(
