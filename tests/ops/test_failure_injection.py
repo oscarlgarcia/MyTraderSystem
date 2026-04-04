@@ -43,12 +43,17 @@ def test_failure_injection_release_gate_fails_with_stale_ws_artifact(tmp_path: P
         tmp_path / "benchmark.json",
         {
             "generated_at": NOW.isoformat(),
+            "target_profile": "paper",
             "pass_ok": True,
+            "required_high_cardinality_symbol_counts": [100],
             "slo": {"min_rows_per_second": 1.0},
-            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "replay_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "replay_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 4},
+            "high_cardinality_cases": [
+                {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100}
+            ],
         },
     )
     _write_json(
@@ -188,12 +193,17 @@ def test_failure_injection_release_gate_fails_with_manifest_mismatch(tmp_path: P
         tmp_path / "benchmark.json",
         {
             "generated_at": NOW.isoformat(),
+            "target_profile": "paper",
             "pass_ok": True,
+            "required_high_cardinality_symbol_counts": [100],
             "slo": {"min_rows_per_second": 1.0},
-            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "replay_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "replay_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 4},
+            "high_cardinality_cases": [
+                {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100}
+            ],
         },
     )
     _write_json(

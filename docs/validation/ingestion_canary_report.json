@@ -5,7 +5,7 @@
   "symbol": "BTCUSDT",
   "interval": "1m",
   "bars": 5,
-  "baseline_hash": "a09840d24e7d7649852a48736e0311c1f55bdcc63906d57921a399ad7fada168",
+  "baseline_hash": "90ceeb4fbf6292c78f8c3c8fdc49f0f2f87ce95894179da96ce35d2dcb043ca4",
   "baseline": {
     "mode": "canary",
     "pipeline_version": "v1",
@@ -17,7 +17,7 @@
     "gap_irreparable": 0,
     "reconnects": 0,
     "processing_latency_seconds": 0.0,
-    "write_latency_seconds": 0.009832063980866224,
+    "write_latency_seconds": 0.09518997999839485,
     "streams_degraded": [],
     "result": "ok"
   },
@@ -32,7 +32,7 @@
     "gap_irreparable": 0,
     "reconnects": 0,
     "processing_latency_seconds": 0.0,
-    "write_latency_seconds": 0.0048390000010840595,
+    "write_latency_seconds": 0.034177756984718144,
     "streams_degraded": [],
     "result": "ok"
   },
@@ -43,9 +43,9 @@
     "row_count": 0,
     "baseline_matches_vendor": true,
     "candidate_matches_vendor": true,
-    "vendor_projection_checksum": "2cb1436faeb16e09b67608dbd75e299be29179ef15b71c2738b1a865d1b273d5",
-    "baseline_projection_checksum": "2cb1436faeb16e09b67608dbd75e299be29179ef15b71c2738b1a865d1b273d5",
-    "candidate_projection_checksum": "2cb1436faeb16e09b67608dbd75e299be29179ef15b71c2738b1a865d1b273d5",
+    "vendor_projection_checksum": "4324cdb3defe5a5f5415a6dbf7efeac46b210e29f752069bd2a3d40ff4288d93",
+    "baseline_projection_checksum": "4324cdb3defe5a5f5415a6dbf7efeac46b210e29f752069bd2a3d40ff4288d93",
+    "candidate_projection_checksum": "4324cdb3defe5a5f5415a6dbf7efeac46b210e29f752069bd2a3d40ff4288d93",
     "projection_checksum_match": true
   },
   "pass_ok": true,

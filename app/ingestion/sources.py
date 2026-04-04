@@ -28,7 +28,7 @@ from app.ingestion.client import (
 )
 from app.ingestion.errors import IngestionError, classify_connector_error
 from app.ingestion.sinks import ErrorSink, JsonlErrorSink, NullErrorSink
-from app.marketdata.anomaly_checks import detect_price_jump, stream_price_key
+from app.marketdata.anomaly_checks import detect_marketdata_anomalies, event_volume_value, stream_price_key
 from app.marketdata.connectors.binance import BINANCE_FEED_NORMALIZERS, normalize_binance_event, snapshot_payload_from_row
 from app.marketdata.errors import SchemaDriftError
 from app.marketdata.models import BaseMarketEvent, IngestionEvent
@@ -266,6 +266,7 @@ class BinanceSource:
     snapshot_breaker: CircuitBreaker | None = None
     stats: SourceStats = field(default_factory=SourceStats)
     last_prices: dict[str, float] = field(default_factory=dict)
+    last_volumes: dict[str, float] = field(default_factory=dict)
     catalog_state: PersistedInstrumentCatalogSnapshot | None = None
 
     def __post_init__(self) -> None:
@@ -431,27 +432,43 @@ class BinanceSource:
     def _record_marketdata_anomaly(self, event: IngestionEvent) -> None:
         stream_key = stream_price_key(event)
         previous_price = self.last_prices.get(stream_key)
-        anomaly = detect_price_jump(previous_price=previous_price, current_price=event.price)
+        previous_volume = self.last_volumes.get(stream_key)
+        anomalies = detect_marketdata_anomalies(
+            event=event,
+            previous_price=previous_price,
+            previous_volume=previous_volume,
+        )
         self.last_prices[stream_key] = float(event.price)
-        if anomaly is None:
+        current_volume = event_volume_value(event)
+        if current_volume is not None:
+            self.last_volumes[stream_key] = current_volume
+        if not anomalies:
             return
         venue, symbol, stream_type = _event_stream_context(event)
         metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
-        metric["marketdata_anomaly_total"] = int(metric.get("marketdata_anomaly_total", 0)) + 1
-        emit_operational_alert(
-            logging.getLogger("ingest.source"),
-            alert_type="marketdata_anomaly_detected",
-            observed=int(metric["marketdata_anomaly_total"]),
-            extra={
-                "venue": venue,
-                "symbol": symbol,
-                "stream_type": stream_type,
-                "anomaly_type": anomaly.anomaly_type,
-                "previous_price": anomaly.previous_price,
-                "current_price": anomaly.current_price,
-                "relative_jump": anomaly.relative_jump,
-            },
-        )
+        logger = logging.getLogger("ingest.source")
+        for anomaly in anomalies:
+            metric["marketdata_anomaly_total"] = int(metric.get("marketdata_anomaly_total", 0)) + 1
+            emit_operational_alert(
+                logger,
+                alert_type="marketdata_anomaly_detected",
+                observed=int(metric["marketdata_anomaly_total"]),
+                extra={
+                    "venue": venue,
+                    "symbol": symbol,
+                    "stream_type": stream_type,
+                    "anomaly_type": anomaly.anomaly_type,
+                    "anomaly_severity": anomaly.severity,
+                    "anomaly_action": anomaly.action,
+                    "previous_price": anomaly.previous_price,
+                    "current_price": anomaly.current_price,
+                    "relative_jump": anomaly.relative_jump,
+                    "previous_volume": anomaly.previous_volume,
+                    "current_volume": anomaly.current_volume,
+                    "volume_ratio": anomaly.volume_ratio,
+                    "threshold": anomaly.threshold,
+                },
+            )
 
     def _record_rejected(self, raw_message: object, error: IngestionError, *, context: dict[str, object]) -> None:
         self.stats.events_invalid += 1

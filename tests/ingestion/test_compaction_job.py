@@ -57,6 +57,24 @@ def test_select_compaction_candidates_respects_batch_limit_and_priority(tmp_path
     assert candidates[0].symbol == "BTCUSDT"
 
 
+def test_select_compaction_candidates_can_be_scoped_to_partition_paths(tmp_path: Path):
+    btc_partition = _seed_partition(tmp_path, symbol="BTCUSDT", rows=3)
+    _seed_partition(tmp_path, symbol="ETHUSDT", rows=3)
+
+    candidates = select_compaction_candidates(
+        tmp_path,
+        "dev",
+        batch_limit=10,
+        min_segments_pending=2,
+        min_compaction_lag_seconds=0.0,
+        partition_paths=(btc_partition,),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].symbol == "BTCUSDT"
+    assert candidates[0].partition_path == str(btc_partition.resolve())
+
+
 def test_run_compaction_job_dry_run_does_not_remove_segments(tmp_path: Path):
     partition_path = _seed_partition(tmp_path, rows=2)
 
@@ -69,6 +87,29 @@ def test_run_compaction_job_dry_run_does_not_remove_segments(tmp_path: Path):
     assert report.planned_partitions == 1
     assert report.results[0].status == "planned"
     assert len(sorted(partition_segments_dir(partition_path).glob("*.parquet"))) == 2
+
+
+def test_run_compaction_job_scopes_work_to_requested_partitions(tmp_path: Path):
+    btc_partition = _seed_partition(tmp_path, symbol="BTCUSDT", rows=3)
+    eth_partition = _seed_partition(tmp_path, symbol="ETHUSDT", rows=3)
+
+    report = run_compaction_job(
+        tmp_path,
+        "dev",
+        partition_paths=(btc_partition,),
+        policy=CompactionJobPolicy(
+            batch_limit=10,
+            retry_attempts=0,
+            min_segments_pending=2,
+            min_compaction_lag_seconds=0.0,
+        ),
+    )
+
+    assert report.compacted_partitions == 1
+    assert report.failed_partitions == 0
+    assert report.results[0].symbol == "BTCUSDT"
+    assert not partition_segments_dir(btc_partition).exists()
+    assert partition_segments_dir(eth_partition).exists()
 
 
 def test_run_compaction_job_archives_retained_segments_without_breaking_reads(tmp_path: Path):

@@ -2,9 +2,9 @@
   "target": "live",
   "env": "dev",
   "base_dir": "data/dev",
-  "generated_at": "2026-04-03T10:23:54.038483+00:00",
-  "overall_status": "PASS",
-  "pass_ok": true,
+  "generated_at": "2026-04-04T00:39:00.016138+00:00",
+  "overall_status": "FAIL",
+  "pass_ok": false,
   "blocks": [
     {
       "name": "support_matrix",
@@ -14321,7 +14321,7 @@
         "pass_ok": true,
         "generated_at": null,
         "comparison_reason": "semantic_match",
-        "artifact_age_seconds": 176.957772
+        "artifact_age_seconds": 22356.956208
       }
     },
     {
@@ -14334,24 +14334,26 @@
       "details": {
         "path": "docs/validation/ingestion_ws_canary_report.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:22:11.224712+00:00",
+        "generated_at": "2026-04-03T18:27:28.593638+00:00",
         "comparison_reason": "continuity_ok",
-        "artifact_age_seconds": 102.041461
+        "artifact_age_seconds": 22280.911725
       }
     },
     {
       "name": "storage_benchmark",
-      "status": "pass",
+      "status": "fail",
       "required": true,
       "reasons": [
-        "artifact validated"
+        "pass_ok is not true",
+        "shadow_scoped_case.pass_ok is not true",
+        "high_cardinality_500.pass_ok is not true"
       ],
       "details": {
         "path": "docs/validation/ingestion_storage_benchmark.json",
-        "pass_ok": true,
-        "generated_at": "2026-04-03T10:22:14.806157+00:00",
+        "pass_ok": false,
+        "generated_at": "2026-04-03T21:55:35.666822+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 98.478597
+        "artifact_age_seconds": 9794.122781
       }
     },
     {
@@ -14364,9 +14366,9 @@
       "details": {
         "path": "docs/validation/ingestion_replay_parity.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:20:52.847396+00:00",
+        "generated_at": "2026-04-03T18:26:09.654341+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 180.453957
+        "artifact_age_seconds": 22360.349382
       }
     },
     {
@@ -14379,9 +14381,9 @@
       "details": {
         "path": "docs/validation/ingestion_soak_evidence.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:23:39.018494+00:00",
+        "generated_at": "2026-04-03T18:31:52.747890+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 14.299706
+        "artifact_age_seconds": 22017.373599
       }
     },
     {
@@ -14394,9 +14396,9 @@
       "details": {
         "path": "docs/validation/ingestion_vendor_contracts.json",
         "pass_ok": true,
-        "generated_at": "2026-04-03T10:22:21.772828+00:00",
+        "generated_at": "2026-04-03T18:29:03.660035+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 91.557486
+        "artifact_age_seconds": 22186.620439
       }
     },
     {
@@ -14411,7 +14413,7 @@
         "pass_ok": true,
         "generated_at": "2026-04-03T10:23:46.268267+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 7.077133
+        "artifact_age_seconds": 51304.170792
       }
     },
     {
@@ -14585,7 +14587,7 @@
         "pass_ok": false,
         "generated_at": "2026-04-03T10:23:51.084836+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 2.278974
+        "artifact_age_seconds": 51299.433592
       }
     },
     {

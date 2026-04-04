@@ -76,7 +76,7 @@ def run_ingestion_readiness(
     benchmark_high_cardinality_symbol_counts: tuple[int, ...] = (100, 500),
     benchmark_bursts: int = 4,
     benchmark_events_per_symbol_per_burst: int = 12,
-    benchmark_min_rows_per_second: float = 100.0,
+    benchmark_min_rows_per_second: float | None = None,
     soak_mode: Literal["deterministic", "ws-live"] = "ws-live",
     soak_iterations: int = 5,
     soak_events_per_iteration: int = 500,
@@ -121,6 +121,34 @@ def run_ingestion_readiness(
     gate_base_dir_args: tuple[str, ...] = ()
     if runtime_base_dir is not None:
         gate_base_dir_args = ("--base-dir", str(runtime_base_dir))
+
+    storage_benchmark_command = [
+        sys.executable,
+        "scripts/ingestion_storage_benchmark.py",
+        "--target-profile",
+        "live" if target == "live" else "paper",
+        "--symbol-count",
+        str(benchmark_symbol_count),
+        "--high-cardinality-symbol-counts",
+        high_cardinality_arg,
+        "--bursts",
+        str(benchmark_bursts),
+        "--events-per-symbol-per-burst",
+        str(benchmark_events_per_symbol_per_burst),
+    ]
+    if benchmark_min_rows_per_second is not None:
+        storage_benchmark_command.extend(
+            [
+                "--min-rows-per-second",
+                str(benchmark_min_rows_per_second),
+            ]
+        )
+    storage_benchmark_command.extend(
+        [
+            "--output",
+            str(benchmark_path),
+        ]
+    )
 
     steps: list[tuple[str, tuple[str, ...], str | None]] = [
         (
@@ -188,22 +216,7 @@ def run_ingestion_readiness(
         ),
         (
             "storage_benchmark",
-            (
-                sys.executable,
-                "scripts/ingestion_storage_benchmark.py",
-                "--symbol-count",
-                str(benchmark_symbol_count),
-                "--high-cardinality-symbol-counts",
-                high_cardinality_arg,
-                "--bursts",
-                str(benchmark_bursts),
-                "--events-per-symbol-per-burst",
-                str(benchmark_events_per_symbol_per_burst),
-                "--min-rows-per-second",
-                str(benchmark_min_rows_per_second),
-                "--output",
-                str(benchmark_path),
-            ),
+            tuple(storage_benchmark_command),
             str(benchmark_path),
         ),
         (

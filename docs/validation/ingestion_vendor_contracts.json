@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-03T10:22:21.772828+00:00",
+  "generated_at": "2026-04-03T18:29:03.660035+00:00",
   "pytest_target": "tests/network/test_binance_contracts.py",
   "command": [
     "/workspace/.venv/bin/python",
@@ -12,9 +12,9 @@
   ],
   "cwd": "/workspace",
   "python_executable": "/workspace/.venv/bin/python",
-  "duration_seconds": 4.507896005990915,
+  "duration_seconds": 4.6539910519786645,
   "returncode": 0,
   "pass_ok": true,
-  "stdout": "...                                                                      [100%]\n3 passed in 3.46s\n",
+  "stdout": "...                                                                      [100%]\n3 passed in 3.87s\n",
   "stderr": ""
 }

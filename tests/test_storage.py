@@ -9,7 +9,7 @@ from app.common.dto import MarketEvent
 from app.ingestion.sinks import ParquetEventSink
 from app.ingestion.compaction import compact_partition
 from app.marketdata import NORMALIZER_VERSION
-from app.marketdata.instruments import instrument_catalog_snapshot_json, instrument_catalog_version
+from app.marketdata.instruments import instrument_catalog_version
 from app.marketdata.models import BarEvent, BookEvent, TradeEvent
 from app.ingestion.storage import (
     ParquetWriter,
@@ -52,7 +52,6 @@ def test_flush_writes_partition_and_preserves_order(tmp_path):
     assert table.schema.metadata[b"normalizer_version"] == NORMALIZER_VERSION.encode("utf-8")
     assert table.schema.metadata[b"instrument_catalog_version"] == instrument_catalog_version().encode("utf-8")
     assert table.schema.metadata[b"instrument_catalog_snapshot_hash"] == instrument_catalog_version().encode("utf-8")
-    assert table.schema.metadata[b"instrument_catalog_snapshot"] == instrument_catalog_snapshot_json().encode("utf-8")
     assert table.schema.metadata[b"instrument_metadata_source"] in {b"venue_snapshot", b"venue_runtime_snapshot"}
 
 
@@ -93,6 +92,22 @@ def test_flush_manual_without_threshold(tmp_path):
     writer.add(make_event("BTCUSDT", ts))
     writer.flush()
     assert _out_path(tmp_path, symbol="BTCUSDT", day="2024-01-01").exists()
+
+
+def test_partition_flush_size_flushes_hot_partition_without_flushing_all_buffers(tmp_path):
+    writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=100, partition_flush_size=2)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    writer.add(make_event("BTCUSDT", ts))
+    writer.add(make_event("BTCUSDT", ts + timedelta(seconds=1)))
+    writer.add(make_event("ETHUSDT", ts))
+
+    btc_table = read_parquet(_out_path(tmp_path, symbol="BTCUSDT", day="2024-01-01"))
+
+    assert btc_table.num_rows == 2
+    assert writer.persisted_events == 2
+    assert writer.buffered_events == 1
+    assert not _out_path(tmp_path, symbol="ETHUSDT", day="2024-01-01").exists()
 
 
 def test_schema_stable_across_writer_instances(tmp_path):

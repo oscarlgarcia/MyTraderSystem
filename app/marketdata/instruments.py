@@ -9,6 +9,7 @@ import json
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import lru_cache
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from decimal import Decimal
@@ -292,7 +293,15 @@ def instrument_catalog_snapshot(*, catalog: InstrumentCatalog | None = None) -> 
 
 
 def instrument_catalog_snapshot_json(*, catalog: InstrumentCatalog | None = None) -> str:
+    if catalog is None:
+        return _cached_default_instrument_catalog_snapshot_json(instrument_catalog_version())
     return json.dumps(instrument_catalog_snapshot(catalog=catalog), sort_keys=True, separators=(",", ":"))
+
+
+@lru_cache(maxsize=16)
+def _cached_default_instrument_catalog_snapshot_json(catalog_version: str) -> str:
+    del catalog_version
+    return json.dumps(instrument_catalog_snapshot(), sort_keys=True, separators=(",", ":"))
 
 
 def detect_instrument_catalog_drift(

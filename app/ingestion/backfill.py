@@ -21,7 +21,7 @@ from app.ingestion.client import normalize_kline_typed, normalize_trade_typed
 from app.ingestion.dedup import Deduplicator, deduplicate_events as deduplicate_market_events
 from app.ingestion.sinks import EventSink, ParquetEventSink
 from app.ingestion.storage import ParquetWriter
-from app.marketdata.anomaly_checks import detect_price_jump
+from app.marketdata.anomaly_checks import detect_marketdata_anomalies, event_volume_value
 from app.marketdata.instruments import persist_runtime_instrument_catalog_snapshot, use_instrument_catalog
 from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord, RawSink
@@ -569,28 +569,43 @@ def run(argv: Optional[list[str]] = None, sink: Optional[EventSink] = None, raw_
             )
 
     previous_price: float | None = None
+    previous_volume: float | None = None
     anomalies_detected = 0
     for event in events:
-        anomaly = detect_price_jump(previous_price=previous_price, current_price=event.price)
-        previous_price = float(event.price)
-        if anomaly is None:
-            continue
-        anomalies_detected += 1
-        emit_operational_alert(
-            logger,
-            alert_type="marketdata_anomaly_detected",
-            observed=anomalies_detected,
-            extra={
-                "trace_id": trace_id,
-                "env": cfg.env,
-                "symbol": event.symbol,
-                "feed_type": event.source,
-                "anomaly_type": anomaly.anomaly_type,
-                "previous_price": anomaly.previous_price,
-                "current_price": anomaly.current_price,
-                "relative_jump": anomaly.relative_jump,
-            },
+        anomalies = detect_marketdata_anomalies(
+            event=event,
+            previous_price=previous_price,
+            previous_volume=previous_volume,
         )
+        previous_price = float(event.price)
+        current_volume = event_volume_value(event)
+        if current_volume is not None:
+            previous_volume = current_volume
+        if not anomalies:
+            continue
+        for anomaly in anomalies:
+            anomalies_detected += 1
+            emit_operational_alert(
+                logger,
+                alert_type="marketdata_anomaly_detected",
+                observed=anomalies_detected,
+                extra={
+                    "trace_id": trace_id,
+                    "env": cfg.env,
+                    "symbol": event.symbol,
+                    "feed_type": event.source,
+                    "anomaly_type": anomaly.anomaly_type,
+                    "anomaly_severity": anomaly.severity,
+                    "anomaly_action": anomaly.action,
+                    "previous_price": anomaly.previous_price,
+                    "current_price": anomaly.current_price,
+                    "relative_jump": anomaly.relative_jump,
+                    "previous_volume": anomaly.previous_volume,
+                    "current_volume": anomaly.current_volume,
+                    "volume_ratio": anomaly.volume_ratio,
+                    "threshold": anomaly.threshold,
+                },
+            )
 
     if not args.dry_run:
         for event in events:

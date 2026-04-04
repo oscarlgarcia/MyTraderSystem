@@ -103,9 +103,20 @@ def run_release_gates(
             name="storage_benchmark",
             path=Path(benchmark_path or "docs/validation/ingestion_storage_benchmark.json"),
             required=True,
-            expected_keys=("pass_ok", "generated_at", "slo", "synthetic_case", "replay_case", "concurrent_compaction_case", "shadow_scoped_case"),
+            expected_keys=(
+                "pass_ok",
+                "generated_at",
+                "target_profile",
+                "slo",
+                "required_high_cardinality_symbol_counts",
+                "synthetic_case",
+                "replay_case",
+                "concurrent_compaction_case",
+                "shadow_scoped_case",
+                "high_cardinality_cases",
+            ),
             bool_paths=(("pass_ok",),),
-            extra_checks=_validate_storage_benchmark_payload,
+            extra_checks=lambda payload: _validate_storage_benchmark_payload(payload, target=target),
             max_age=timedelta(days=7),
         ),
         _canary_block(
@@ -342,8 +353,11 @@ def _validate_replay_parity_payload(payload: dict[str, object]) -> list[str]:
     return reasons
 
 
-def _validate_storage_benchmark_payload(payload: dict[str, object]) -> list[str]:
+def _validate_storage_benchmark_payload(payload: dict[str, object], *, target: ReleaseTarget) -> list[str]:
     reasons: list[str] = []
+    target_profile = payload.get("target_profile")
+    if target_profile != target:
+        reasons.append(f"benchmark target_profile {target_profile!r} does not match gate target {target!r}")
     for key in ("synthetic_case", "replay_case", "concurrent_compaction_case", "shadow_scoped_case"):
         case = payload.get(key)
         if not isinstance(case, dict):
@@ -356,6 +370,34 @@ def _validate_storage_benchmark_payload(payload: dict[str, object]) -> list[str]
     slo = payload.get("slo")
     if not isinstance(slo, dict) or "min_rows_per_second" not in slo:
         reasons.append("slo.min_rows_per_second missing")
+    required_counts = payload.get("required_high_cardinality_symbol_counts")
+    if not isinstance(required_counts, list):
+        reasons.append("required_high_cardinality_symbol_counts missing")
+        required_values: list[int] = []
+    else:
+        try:
+            required_values = sorted(int(value) for value in required_counts)
+        except (TypeError, ValueError):
+            reasons.append("required_high_cardinality_symbol_counts invalid")
+            required_values = []
+    cases = payload.get("high_cardinality_cases")
+    if not isinstance(cases, list):
+        reasons.append("high_cardinality_cases missing")
+        cases = []
+    available_counts: set[int] = set()
+    for case in cases:
+        if not isinstance(case, dict):
+            reasons.append("high_cardinality_cases entry invalid")
+            continue
+        if case.get("pass_ok") is not True:
+            reasons.append(f"{case.get('name', 'high_cardinality_case')}.pass_ok is not true")
+        try:
+            available_counts.add(int(case.get("requested_symbol_count")))
+        except (TypeError, ValueError):
+            reasons.append(f"{case.get('name', 'high_cardinality_case')}.requested_symbol_count invalid")
+    missing_counts = [count for count in required_values if count not in available_counts]
+    if missing_counts:
+        reasons.append(f"missing high-cardinality cases for symbol counts: {missing_counts}")
     return reasons
 
 

@@ -89,12 +89,17 @@ def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tup
         benchmark_path,
         {
             "generated_at": NOW.isoformat(),
+            "target_profile": "paper",
             "pass_ok": True,
+            "required_high_cardinality_symbol_counts": [100],
             "slo": {"min_rows_per_second": 1.0},
-            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "replay_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0},
-            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0},
+            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "replay_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 4},
+            "high_cardinality_cases": [
+                {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100}
+            ],
         },
     )
     _write_json(
@@ -237,6 +242,14 @@ def test_release_gates_fail_when_required_artifact_is_stale(tmp_path: Path):
 
 def test_release_gates_live_requires_runtime_metadata_and_live_drill(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    benchmark_payload = json.loads(benchmark_path.read_text(encoding="utf-8"))
+    benchmark_payload["target_profile"] = "live"
+    benchmark_payload["required_high_cardinality_symbol_counts"] = [100, 500]
+    benchmark_payload["high_cardinality_cases"] = [
+        {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100},
+        {"name": "high_cardinality_500", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 500},
+    ]
+    _write_json(benchmark_path, benchmark_payload)
     _write_shadow_comparison(tmp_path / "shadow" / "env=dev" / "comparisons.jsonl", significant=False)
     _write_metadata_snapshot(tmp_path, env="dev", mode="fallback")
 
@@ -294,6 +307,37 @@ def test_release_gates_fail_when_vendor_contract_artifact_is_incomplete(tmp_path
     assert any("pytest_target" in reason or "command" in reason or "duration_seconds" in reason for reason in block.reasons)
 
 
+def test_release_gates_fail_when_benchmark_target_profile_or_high_cardinality_cases_do_not_match(tmp_path: Path):
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    benchmark_payload = json.loads(benchmark_path.read_text(encoding="utf-8"))
+    benchmark_payload["target_profile"] = "paper"
+    benchmark_payload["required_high_cardinality_symbol_counts"] = [100, 500]
+    benchmark_payload["high_cardinality_cases"] = [
+        {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100}
+    ]
+    _write_json(benchmark_path, benchmark_payload)
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="live",
+        stream_types=("kline",),
+        rest_canary_path=rest_path,
+        ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+    )
+
+    block = next(block for block in report.blocks if block.name == "storage_benchmark")
+    assert block.status == "fail"
+    assert any("target_profile" in reason or "high-cardinality" in reason for reason in block.reasons)
+
+
 def test_release_gates_fail_when_soak_records_compaction_failures(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
     _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
@@ -335,6 +379,14 @@ def test_release_gates_fail_when_soak_records_compaction_failures(tmp_path: Path
 
 def test_release_gates_live_fail_when_failure_injection_artifact_is_missing(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, _failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    benchmark_payload = json.loads(benchmark_path.read_text(encoding="utf-8"))
+    benchmark_payload["target_profile"] = "live"
+    benchmark_payload["required_high_cardinality_symbol_counts"] = [100, 500]
+    benchmark_payload["high_cardinality_cases"] = [
+        {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100},
+        {"name": "high_cardinality_500", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 500},
+    ]
+    _write_json(benchmark_path, benchmark_payload)
     _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
     _write_shadow_comparison(tmp_path / "shadow" / "env=dev" / "comparisons.jsonl", significant=False)
     missing_failure_injection_path = tmp_path / "missing-failure-injection.json"

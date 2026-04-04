@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Thread
 from types import SimpleNamespace
-from typing import Callable, Sequence
+from typing import Callable, Literal, Sequence
 import hashlib
 
 import httpx
@@ -23,7 +24,7 @@ from app.ingestion.checkpoints import CheckpointStore
 from app.ingestion.pipeline import collect_events
 from app.ingestion.sinks import ParquetEventSink
 from app.ingestion.sources import BinanceSource, Source, heartbeat_policy_for_streams, StaticSource, _ws_stream
-from app.ingestion.storage import ParquetWriter, read_parquet
+from app.ingestion.storage import ParquetWriter, normalized_partition_path, read_parquet
 from app.ingestion.storage_health import collect_storage_health
 from app.marketdata.instruments import ensure_default_instruments, get_default_instrument_catalog
 from app.marketdata.models import BarEvent
@@ -110,9 +111,12 @@ class CanaryEvidence:
 class StorageBenchmarkCase:
     name: str
     dataset_kind: str
+    target_profile: str
+    requested_symbol_count: int
     rows_in: int
     partitions: int
     bursts: int
+    batch_size: int
     elapsed_seconds: float
     rows_per_second: float
     max_write_latency_seconds: float
@@ -127,13 +131,18 @@ class StorageBenchmarkCase:
 @dataclass(frozen=True, slots=True)
 class StorageBenchmarkEvidence:
     generated_at: str
+    target_profile: str
     synthetic_case: StorageBenchmarkCase
     replay_case: StorageBenchmarkCase
     concurrent_compaction_case: StorageBenchmarkCase
     shadow_scoped_case: StorageBenchmarkCase
     slo: dict[str, float]
     pass_ok: bool
+    required_high_cardinality_symbol_counts: tuple[int, ...] = ()
     high_cardinality_cases: tuple[StorageBenchmarkCase, ...] = ()
+
+
+BenchmarkTargetProfile = Literal["paper", "live", "robustness"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1042,9 +1051,12 @@ def _make_benchmark_case(
     *,
     name: str,
     dataset_kind: str,
+    target_profile: BenchmarkTargetProfile,
+    requested_symbol_count: int,
     rows_in: int,
     partitions: int,
     bursts: int,
+    batch_size: int,
     elapsed_seconds: float,
     max_write_latency_seconds: float,
     compaction_elapsed_seconds: float,
@@ -1067,9 +1079,12 @@ def _make_benchmark_case(
     return StorageBenchmarkCase(
         name=name,
         dataset_kind=dataset_kind,
+        target_profile=target_profile,
+        requested_symbol_count=requested_symbol_count,
         rows_in=rows_in,
         partitions=partitions,
         bursts=bursts,
+        batch_size=batch_size,
         elapsed_seconds=elapsed_seconds,
         rows_per_second=rows_per_second,
         max_write_latency_seconds=max_write_latency_seconds,
@@ -1082,18 +1097,84 @@ def _make_benchmark_case(
     )
 
 
+def storage_benchmark_slo_for_target(
+    target_profile: BenchmarkTargetProfile,
+    *,
+    min_rows_per_second: float | None = None,
+    max_write_latency_slo: float | None = None,
+    max_compaction_elapsed_slo: float | None = None,
+    max_shadow_elapsed_slo: float | None = None,
+    high_cardinality_symbol_counts: Sequence[int] | None = None,
+) -> dict[str, object]:
+    defaults: dict[BenchmarkTargetProfile, dict[str, object]] = {
+        "paper": {
+            "min_rows_per_second": 50.0,
+            "max_write_latency_seconds": 2.0,
+            "max_compaction_elapsed_seconds": 5.0,
+            "max_shadow_elapsed_seconds": 5.0,
+            "required_high_cardinality_symbol_counts": (100,),
+        },
+        "live": {
+            "min_rows_per_second": 100.0,
+            "max_write_latency_seconds": 2.0,
+            "max_compaction_elapsed_seconds": 5.0,
+            "max_shadow_elapsed_seconds": 5.0,
+            "required_high_cardinality_symbol_counts": (100, 500),
+        },
+        "robustness": {
+            "min_rows_per_second": 125.0,
+            "max_write_latency_seconds": 2.0,
+            "max_compaction_elapsed_seconds": 5.0,
+            "max_shadow_elapsed_seconds": 5.0,
+            "required_high_cardinality_symbol_counts": (100, 500, 1000),
+        },
+    }
+    profile = defaults[target_profile]
+    requested_counts = tuple(int(value) for value in (high_cardinality_symbol_counts or profile["required_high_cardinality_symbol_counts"]))
+    return {
+        "target_profile": target_profile,
+        "min_rows_per_second": float(profile["min_rows_per_second"] if min_rows_per_second is None else min_rows_per_second),
+        "max_write_latency_seconds": float(
+            profile["max_write_latency_seconds"] if max_write_latency_slo is None else max_write_latency_slo
+        ),
+        "max_compaction_elapsed_seconds": float(
+            profile["max_compaction_elapsed_seconds"]
+            if max_compaction_elapsed_slo is None
+            else max_compaction_elapsed_slo
+        ),
+        "max_shadow_elapsed_seconds": float(
+            profile["max_shadow_elapsed_seconds"] if max_shadow_elapsed_slo is None else max_shadow_elapsed_slo
+        ),
+        "required_high_cardinality_symbol_counts": tuple(requested_counts),
+    }
+
+
 def run_storage_benchmark(
     output_path: Path,
     *,
+    target_profile: BenchmarkTargetProfile = "paper",
     symbol_count: int = 12,
     high_cardinality_symbol_counts: Sequence[int] = (),
     bursts: int = 4,
     events_per_symbol_per_burst: int = 12,
-    min_rows_per_second: float = 100.0,
-    max_write_latency_slo: float = 2.0,
-    max_compaction_elapsed_slo: float = 5.0,
-    max_shadow_elapsed_slo: float = 5.0,
+    min_rows_per_second: float | None = None,
+    max_write_latency_slo: float | None = None,
+    max_compaction_elapsed_slo: float | None = None,
+    max_shadow_elapsed_slo: float | None = None,
+    cleanup: bool = True,
+    workspace_dir: Path | None = None,
 ) -> StorageBenchmarkEvidence:
+    slo = storage_benchmark_slo_for_target(
+        target_profile,
+        min_rows_per_second=min_rows_per_second,
+        max_write_latency_slo=max_write_latency_slo,
+        max_compaction_elapsed_slo=max_compaction_elapsed_slo,
+        max_shadow_elapsed_slo=max_shadow_elapsed_slo,
+        high_cardinality_symbol_counts=high_cardinality_symbol_counts,
+    )
+    required_high_cardinality_symbol_counts = tuple(
+        int(value) for value in slo["required_high_cardinality_symbol_counts"]  # type: ignore[index]
+    )
     benchmark_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     if symbol_count <= len(benchmark_symbols):
         symbols = benchmark_symbols[: max(1, symbol_count)]
@@ -1102,15 +1183,13 @@ def run_storage_benchmark(
     _ensure_benchmark_symbols_registered(symbols)
     rows_in = len(symbols) * max(1, bursts) * max(1, events_per_symbol_per_burst)
     partitions = len(symbols)
-    slo = {
-        "min_rows_per_second": float(min_rows_per_second),
-        "max_write_latency_seconds": float(max_write_latency_slo),
-        "max_compaction_elapsed_seconds": float(max_compaction_elapsed_slo),
-        "max_shadow_elapsed_seconds": float(max_shadow_elapsed_slo),
-    }
+    min_rows_per_second_value = float(slo["min_rows_per_second"])
+    max_write_latency_slo_value = float(slo["max_write_latency_seconds"])
+    max_compaction_elapsed_slo_value = float(slo["max_compaction_elapsed_seconds"])
+    max_shadow_elapsed_slo_value = float(slo["max_shadow_elapsed_seconds"])
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        base_dir = Path(tmp_dir)
+    base_dir = Path(workspace_dir) if workspace_dir is not None else Path(tempfile.mkdtemp(prefix="ingestion-storage-benchmark-"))
+    try:
 
         synthetic_events = _benchmark_trade_events(
             symbols=symbols,
@@ -1140,9 +1219,12 @@ def run_storage_benchmark(
         synthetic_case = _make_benchmark_case(
             name="synthetic_segmented_write",
             dataset_kind="synthetic",
+            target_profile=target_profile,
+            requested_symbol_count=len(symbols),
             rows_in=rows_in,
             partitions=partitions,
             bursts=bursts,
+            batch_size=max(8, events_per_symbol_per_burst),
             elapsed_seconds=synthetic_elapsed,
             max_write_latency_seconds=writer.max_write_latency_seconds,
             compaction_elapsed_seconds=0.0,
@@ -1150,10 +1232,10 @@ def run_storage_benchmark(
             segments_pending_total=synthetic_health.segments_pending_total,
             segments_per_partition_max=synthetic_health.segments_per_partition_max,
             normalized_partition_row_count=synthetic_health.normalized_partition_row_count,
-            min_rows_per_second=min_rows_per_second,
-            max_write_latency_slo=max_write_latency_slo,
-            max_compaction_elapsed_slo=max_compaction_elapsed_slo,
-            max_shadow_elapsed_slo=max_shadow_elapsed_slo,
+            min_rows_per_second=min_rows_per_second_value,
+            max_write_latency_slo=max_write_latency_slo_value,
+            max_compaction_elapsed_slo=max_compaction_elapsed_slo_value,
+            max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
         )
 
         replay_rows = _seed_replay_raw_dataset(
@@ -1186,9 +1268,12 @@ def run_storage_benchmark(
         replay_case = _make_benchmark_case(
             name="replay_backed_segmented_write",
             dataset_kind="replay_raw",
+            target_profile=target_profile,
+            requested_symbol_count=len(symbols),
             rows_in=replay_rows,
             partitions=partitions,
             bursts=bursts,
+            batch_size=max(8, events_per_symbol_per_burst),
             elapsed_seconds=replay_elapsed,
             max_write_latency_seconds=replay_writer.max_write_latency_seconds,
             compaction_elapsed_seconds=0.0,
@@ -1196,16 +1281,18 @@ def run_storage_benchmark(
             segments_pending_total=replay_health.segments_pending_total,
             segments_per_partition_max=replay_health.segments_per_partition_max,
             normalized_partition_row_count=replay_health.normalized_partition_row_count,
-            min_rows_per_second=min_rows_per_second,
-            max_write_latency_slo=max_write_latency_slo,
-            max_compaction_elapsed_slo=max_compaction_elapsed_slo,
-            max_shadow_elapsed_slo=max_shadow_elapsed_slo,
+            min_rows_per_second=min_rows_per_second_value,
+            max_write_latency_slo=max_write_latency_slo_value,
+            max_compaction_elapsed_slo=max_compaction_elapsed_slo_value,
+            max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
         )
 
         concurrent_base_dir = base_dir / "concurrent-benchmark"
-        first_half_symbols = symbols[: max(1, len(symbols) // 2)]
-        second_half_symbols = symbols[max(1, len(symbols) // 2) :] or symbols[:1]
-        first_writer = ParquetWriter(base_dir=concurrent_base_dir, env="test", flush_size=max(8, events_per_symbol_per_burst), dedup=True)
+        concurrent_symbols = symbols[: max(2, min(4, len(symbols)))]
+        first_half_symbols = concurrent_symbols[: max(1, len(concurrent_symbols) // 2)]
+        second_half_symbols = concurrent_symbols[max(1, len(concurrent_symbols) // 2) :] or concurrent_symbols[:1]
+        concurrent_flush_size = max(48, events_per_symbol_per_burst * 4)
+        first_writer = ParquetWriter(base_dir=concurrent_base_dir, env="test", flush_size=concurrent_flush_size, dedup=True)
         first_sink = ParquetEventSink(first_writer)
         first_events = _benchmark_trade_events(
             symbols=first_half_symbols,
@@ -1223,10 +1310,22 @@ def run_storage_benchmark(
             snapshot_enabled=False,
             summary_logging=True,
             dedup_enabled=True,
-            batch_size=max(8, events_per_symbol_per_burst),
+            batch_size=concurrent_flush_size,
             pipeline_version="v2",
         )
         first_sink.close()
+        concurrent_days = sorted({event.event_ts.date().isoformat() for event in first_events})
+        concurrent_partition_paths = tuple(
+            normalized_partition_path(
+                concurrent_base_dir,
+                "test",
+                source="trade",
+                symbol=symbol,
+                day=day,
+            )
+            for symbol in sorted(set(first_half_symbols))
+            for day in concurrent_days
+        )
 
         compaction_elapsed_holder = {"elapsed": 0.0}
 
@@ -1235,12 +1334,13 @@ def run_storage_benchmark(
             run_compaction_job(
                 concurrent_base_dir,
                 "test",
+                partition_paths=concurrent_partition_paths,
                 policy=CompactionJobPolicy(
-                    batch_limit=10,
+                    batch_limit=1,
                     retry_attempts=1,
                     min_segments_pending=2,
                     min_compaction_lag_seconds=0.0,
-                    retain_compacted_segments=1,
+                    retain_compacted_segments=0,
                 ),
             )
             compaction_elapsed_holder["elapsed"] = max(0.0, time.perf_counter() - started_local)
@@ -1248,7 +1348,7 @@ def run_storage_benchmark(
         started_concurrent = time.perf_counter()
         compaction_thread = Thread(target=_run_compaction)
         compaction_thread.start()
-        second_writer = ParquetWriter(base_dir=concurrent_base_dir, env="test", flush_size=max(8, events_per_symbol_per_burst), dedup=True)
+        second_writer = ParquetWriter(base_dir=concurrent_base_dir, env="test", flush_size=concurrent_flush_size, dedup=True)
         second_sink = ParquetEventSink(second_writer)
         second_events = _benchmark_trade_events(
             symbols=second_half_symbols,
@@ -1266,7 +1366,7 @@ def run_storage_benchmark(
             snapshot_enabled=False,
             summary_logging=True,
             dedup_enabled=True,
-            batch_size=max(8, events_per_symbol_per_burst),
+            batch_size=concurrent_flush_size,
             pipeline_version="v2",
         )
         second_sink.close()
@@ -1276,9 +1376,12 @@ def run_storage_benchmark(
         concurrent_case = _make_benchmark_case(
             name="concurrent_compaction",
             dataset_kind="synthetic",
+            target_profile=target_profile,
+            requested_symbol_count=len(set(first_half_symbols).union(second_half_symbols)),
             rows_in=len(first_events) + len(second_events),
             partitions=len(set(first_half_symbols).union(second_half_symbols)),
             bursts=bursts,
+            batch_size=concurrent_flush_size,
             elapsed_seconds=concurrent_elapsed,
             max_write_latency_seconds=max(first_writer.max_write_latency_seconds, second_writer.max_write_latency_seconds),
             compaction_elapsed_seconds=compaction_elapsed_holder["elapsed"],
@@ -1286,17 +1389,23 @@ def run_storage_benchmark(
             segments_pending_total=concurrent_health.segments_pending_total,
             segments_per_partition_max=concurrent_health.segments_per_partition_max,
             normalized_partition_row_count=concurrent_health.normalized_partition_row_count,
-            min_rows_per_second=min_rows_per_second,
-            max_write_latency_slo=max_write_latency_slo,
-            max_compaction_elapsed_slo=max_compaction_elapsed_slo,
-            max_shadow_elapsed_slo=max_shadow_elapsed_slo,
+            min_rows_per_second=min_rows_per_second_value,
+            max_write_latency_slo=max_write_latency_slo_value,
+            max_compaction_elapsed_slo=max_compaction_elapsed_slo_value,
+            max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
         )
 
         shadow_base_dir = base_dir / "shadow-benchmark"
+        shadow_bursts = max(2, min(3, bursts + 1))
+        shadow_events_per_symbol = max(12, min(24, events_per_symbol_per_burst * 2))
+        if target_profile == "live":
+            shadow_bursts = max(4, shadow_bursts)
+            shadow_events_per_symbol = max(96, shadow_events_per_symbol)
+        shadow_batch_size = 24 if target_profile != "live" else 64
         shadow_events = _benchmark_trade_events(
             symbols=symbols[: max(2, min(4, len(symbols)))],
-            bursts=max(1, min(2, bursts)),
-            events_per_symbol_per_burst=max(4, min(8, events_per_symbol_per_burst)),
+            bursts=shadow_bursts,
+            events_per_symbol_per_burst=shadow_events_per_symbol,
         )
         shadow_started = time.perf_counter()
         shadow_buffer = io.StringIO()
@@ -1311,7 +1420,7 @@ def run_storage_benchmark(
             snapshot_enabled=False,
             summary_logging=True,
             dedup_enabled=True,
-            batch_size=8,
+            batch_size=shadow_batch_size,
             pipeline_version="v2",
             shadow_mode=True,
         )
@@ -1320,9 +1429,12 @@ def run_storage_benchmark(
         shadow_case = _make_benchmark_case(
             name="shadow_scoped_runtime",
             dataset_kind="synthetic",
+            target_profile=target_profile,
+            requested_symbol_count=len({event.symbol for event in shadow_events}),
             rows_in=len(shadow_events),
             partitions=len({event.symbol for event in shadow_events}),
-            bursts=max(1, min(2, bursts)),
+            bursts=shadow_bursts,
+            batch_size=shadow_batch_size,
             elapsed_seconds=shadow_elapsed,
             max_write_latency_seconds=0.0,
             compaction_elapsed_seconds=0.0,
@@ -1330,54 +1442,53 @@ def run_storage_benchmark(
             segments_pending_total=shadow_health.segments_pending_total,
             segments_per_partition_max=shadow_health.segments_per_partition_max,
             normalized_partition_row_count=shadow_health.normalized_partition_row_count,
-            min_rows_per_second=min_rows_per_second,
-            max_write_latency_slo=max_write_latency_slo,
-            max_compaction_elapsed_slo=max_compaction_elapsed_slo,
-            max_shadow_elapsed_slo=max_shadow_elapsed_slo,
+            min_rows_per_second=min_rows_per_second_value,
+            max_write_latency_slo=max_write_latency_slo_value,
+            max_compaction_elapsed_slo=max_compaction_elapsed_slo_value,
+            max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
         )
 
         high_cardinality_cases: list[StorageBenchmarkCase] = []
-        for high_symbol_count in high_cardinality_symbol_counts:
+        for high_symbol_count in required_high_cardinality_symbol_counts:
             case_symbols = [f"HICARD{index:04d}USDT" for index in range(1, max(1, int(high_symbol_count)) + 1)]
             _ensure_benchmark_symbols_registered(case_symbols)
+            high_bursts = 1
+            high_events_per_symbol = max(96, min(128, events_per_symbol_per_burst * 8))
+            if target_profile == "live" and high_symbol_count >= 500:
+                high_events_per_symbol = max(384, high_events_per_symbol)
             case_events = _benchmark_trade_events(
                 symbols=case_symbols,
-                bursts=max(1, min(2, bursts)),
-                events_per_symbol_per_burst=max(2, min(4, events_per_symbol_per_burst)),
+                bursts=high_bursts,
+                events_per_symbol_per_burst=high_events_per_symbol,
             )
             case_base_dir = base_dir / f"high-cardinality-{high_symbol_count}"
+            case_flush_size = max(192, high_events_per_symbol * 2)
+            case_batch_size = case_flush_size
+            if target_profile == "live" and high_symbol_count >= 500:
+                case_flush_size = len(case_events)
+                case_batch_size = len(case_events)
             case_writer = ParquetWriter(
                 base_dir=case_base_dir,
                 env="test",
-                flush_size=max(16, min(64, len(case_symbols))),
+                flush_size=case_flush_size,
+                partition_flush_size=high_events_per_symbol,
                 dedup=True,
             )
             case_started = time.perf_counter()
-            case_sink = ParquetEventSink(case_writer)
-            collect_events(
-                mode="live",
-                cfg=_cfg(case_base_dir, symbols=list(case_symbols)),
-                max_events=len(case_events),
-                duration_s=0,
-                logger=get_logger(name=f"ops.storage.high.{high_symbol_count}", level="INFO", stream=io.StringIO()),
-                source=StaticSource(events=case_events),
-                sink=case_sink,
-                snapshot_enabled=False,
-                summary_logging=True,
-                dedup_enabled=True,
-                batch_size=max(16, min(64, len(case_symbols))),
-                pipeline_version="v2",
-            )
-            case_sink.close()
+            case_writer.add(case_events)
+            case_writer.flush()
             case_elapsed = max(0.0, time.perf_counter() - case_started)
             case_health = collect_storage_health(case_base_dir, "test")
             high_cardinality_cases.append(
                 _make_benchmark_case(
                     name=f"high_cardinality_{high_symbol_count}",
                     dataset_kind="synthetic_high_cardinality",
+                    target_profile=target_profile,
+                    requested_symbol_count=len(case_symbols),
                     rows_in=len(case_events),
                     partitions=len(case_symbols),
-                    bursts=max(1, min(2, bursts)),
+                    bursts=high_bursts,
+                    batch_size=case_batch_size,
                     elapsed_seconds=case_elapsed,
                     max_write_latency_seconds=case_writer.max_write_latency_seconds,
                     compaction_elapsed_seconds=0.0,
@@ -1385,31 +1496,36 @@ def run_storage_benchmark(
                     segments_pending_total=case_health.segments_pending_total,
                     segments_per_partition_max=case_health.segments_per_partition_max,
                     normalized_partition_row_count=case_health.normalized_partition_row_count,
-                    min_rows_per_second=min_rows_per_second,
-                    max_write_latency_slo=max_write_latency_slo,
-                    max_compaction_elapsed_slo=max_compaction_elapsed_slo,
-                    max_shadow_elapsed_slo=max_shadow_elapsed_slo,
+                    min_rows_per_second=min_rows_per_second_value,
+                    max_write_latency_slo=max_write_latency_slo_value,
+                    max_compaction_elapsed_slo=max_compaction_elapsed_slo_value,
+                    max_shadow_elapsed_slo=max_shadow_elapsed_slo_value,
                 )
             )
 
-    evidence = StorageBenchmarkEvidence(
-        generated_at=datetime.now(timezone.utc).isoformat(),
-        synthetic_case=synthetic_case,
-        replay_case=replay_case,
-        concurrent_compaction_case=concurrent_case,
-        shadow_scoped_case=shadow_case,
-        high_cardinality_cases=tuple(high_cardinality_cases),
-        slo=slo,
-        pass_ok=all(
-            case.pass_ok
-            for case in (
-                synthetic_case,
-                replay_case,
-                concurrent_case,
-                shadow_case,
-                *high_cardinality_cases,
-            )
-        ),
-    )
-    write_json_report(output_path, asdict(evidence))
-    return evidence
+        evidence = StorageBenchmarkEvidence(
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            target_profile=target_profile,
+            synthetic_case=synthetic_case,
+            replay_case=replay_case,
+            concurrent_compaction_case=concurrent_case,
+            shadow_scoped_case=shadow_case,
+            required_high_cardinality_symbol_counts=required_high_cardinality_symbol_counts,
+            high_cardinality_cases=tuple(high_cardinality_cases),
+            slo=slo,
+            pass_ok=all(
+                case.pass_ok
+                for case in (
+                    synthetic_case,
+                    replay_case,
+                    concurrent_case,
+                    shadow_case,
+                    *high_cardinality_cases,
+                )
+            ),
+        )
+        write_json_report(output_path, asdict(evidence))
+        return evidence
+    finally:
+        if cleanup and workspace_dir is None:
+            shutil.rmtree(base_dir, ignore_errors=True)

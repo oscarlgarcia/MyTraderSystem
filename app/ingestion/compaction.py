@@ -143,10 +143,11 @@ def compact_environment(
     *,
     remove_segments: bool = True,
     retain_compacted_segments: int = 0,
+    partition_paths: Iterable[Path | str] | None = None,
 ) -> list[Path]:
     base = Path(base_dir)
     outputs: list[Path] = []
-    for candidate in select_compaction_candidates(base, env):
+    for candidate in select_compaction_candidates(base, env, partition_paths=partition_paths):
         outputs.append(
             compact_partition(
                 base,
@@ -169,13 +170,21 @@ def select_compaction_candidates(
     batch_limit: int | None = None,
     min_segments_pending: int = 2,
     min_compaction_lag_seconds: float = 300.0,
+    partition_paths: Iterable[Path | str] | None = None,
 ) -> list[CompactionCandidate]:
-    report = collect_storage_health(base_dir, env)
+    allowed_partition_paths = _normalize_partition_paths(partition_paths)
+    report = collect_storage_health(base_dir, env, partition_paths=allowed_partition_paths)
     candidates = [
         CompactionCandidate.from_health(item)
         for item in report.partitions
-        if item.segments_pending >= max(1, int(min_segments_pending))
-        or item.compaction_lag_seconds >= max(0.0, float(min_compaction_lag_seconds))
+        if (
+            allowed_partition_paths is None
+            or str(Path(item.partition_path).resolve()) in allowed_partition_paths
+        )
+        and (
+            item.segments_pending >= max(1, int(min_segments_pending))
+            or item.compaction_lag_seconds >= max(0.0, float(min_compaction_lag_seconds))
+        )
     ]
     candidates.sort(
         key=lambda item: (
@@ -195,6 +204,7 @@ def run_compaction_job(
     env: str,
     *,
     policy: CompactionJobPolicy | None = None,
+    partition_paths: Iterable[Path | str] | None = None,
 ) -> CompactionJobReport:
     effective_policy = policy or CompactionJobPolicy()
     candidates = tuple(
@@ -204,6 +214,7 @@ def run_compaction_job(
             batch_limit=effective_policy.batch_limit,
             min_segments_pending=effective_policy.min_segments_pending,
             min_compaction_lag_seconds=effective_policy.min_compaction_lag_seconds,
+            partition_paths=partition_paths,
         )
     )
     results: list[CompactionAttemptResult] = []
@@ -315,6 +326,13 @@ def _clear_compaction_failures(partition_path: Path) -> None:
     failure_path = partition_compaction_failure_path(partition_path)
     if failure_path.exists():
         failure_path.unlink()
+
+
+def _normalize_partition_paths(partition_paths: Iterable[Path | str] | None) -> set[str] | None:
+    if partition_paths is None:
+        return None
+    normalized = {str(Path(path).resolve()) for path in partition_paths}
+    return normalized or set()
 
 
 def _source_for_feed_type(feed_type: str) -> str:

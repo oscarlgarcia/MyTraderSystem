@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--benchmark-high-cardinality-symbol-counts", type=_parse_counts, default=(100, 500))
     parser.add_argument("--benchmark-bursts", type=int, default=4)
     parser.add_argument("--benchmark-events-per-symbol-per-burst", type=int, default=12)
-    parser.add_argument("--benchmark-min-rows-per-second", type=float, default=100.0)
+    parser.add_argument("--benchmark-min-rows-per-second", type=float, default=None)
     parser.add_argument("--soak-mode", choices=["deterministic", "ws-live"], default="ws-live")
     parser.add_argument("--soak-iterations", type=int, default=5)
     parser.add_argument("--soak-events-per-iteration", type=int, default=500)

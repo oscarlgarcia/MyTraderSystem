@@ -49,11 +49,13 @@ def collect_storage_health(
     env: str,
     *,
     now: datetime | None = None,
+    partition_paths: Iterable[Path | str] | None = None,
 ) -> StorageHealthReport:
     observed_at = now or datetime.now(timezone.utc)
+    selected_partition_paths = _resolve_partition_paths(base_dir, env, partition_paths=partition_paths)
     partition_reports = tuple(
         partition_storage_health(partition_path, now=observed_at)
-        for partition_path in list_normalized_partition_paths(Path(base_dir), env)
+        for partition_path in selected_partition_paths
     )
     return StorageHealthReport(
         env=env,
@@ -174,3 +176,14 @@ def _jsonl_line_count(path: Path) -> int:
         return 0
     with path.open("r", encoding="utf-8") as handle:
         return sum(1 for line in handle if line.strip())
+
+
+def _resolve_partition_paths(
+    base_dir: Path,
+    env: str,
+    *,
+    partition_paths: Iterable[Path | str] | None = None,
+) -> list[Path]:
+    if partition_paths is None:
+        return list_normalized_partition_paths(Path(base_dir), env)
+    return [Path(path).resolve() for path in partition_paths]

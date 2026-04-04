@@ -13,7 +13,9 @@ Legacy v1 reader compatibility is kept for files under:
 from __future__ import annotations
 
 import json
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,7 +35,7 @@ from app.marketdata.models import (
     ensure_legacy_market_event,
     is_supported_marketdata_source,
 )
-from app.marketdata.instruments import instrument_catalog_snapshot_json, instrument_metadata
+from app.marketdata.instruments import instrument_metadata
 from app.marketdata.normalization import NORMALIZER_VERSION, resolve_normalizer_version
 
 FEED_TYPE_BY_SOURCE = {
@@ -113,6 +115,29 @@ def event_metadata(event: IngestionEvent) -> dict[str, str]:
             )
         except KeyError:
             pass
+    return metadata
+
+
+def _event_metadata_for_row(
+    event: IngestionEvent,
+    *,
+    metadata_cache: dict[tuple[str, str], dict[str, str]] | None = None,
+) -> dict[str, str]:
+    metadata = _metadata_mapping(getattr(event, "metadata", None))
+    if "instrument_catalog_version" in metadata or not is_supported_marketdata_source(getattr(event, "source", "")):
+        return metadata
+    venue = str(getattr(event, "venue", metadata.get("venue", "BINANCE"))).upper()
+    cache_key = (event.symbol, venue)
+    cached = metadata_cache.get(cache_key) if metadata_cache is not None else None
+    if cached is None:
+        try:
+            cached = instrument_metadata(event.symbol, venue=venue)
+        except KeyError:
+            cached = {}
+        if metadata_cache is not None:
+            metadata_cache[cache_key] = dict(cached)
+    if cached:
+        metadata.update({key: value for key, value in cached.items() if key not in metadata})
     return metadata
 
 
@@ -313,49 +338,67 @@ class TradeParquetWriter:
     @classmethod
     def to_table(cls, events: list[IngestionEvent]) -> pa.Table:
         events_sorted = sorted(events, key=_event_storage_sort_key)
+        metadata_cache: dict[tuple[str, str], dict[str, str]] = {}
         rows = []
         for event in events_sorted:
-            metadata = event_metadata(event)
-            metadata.setdefault("venue", event_venue(event))
-            metadata.setdefault("normalizer_version", event_normalizer_version(event))
-            if event_provider_ts(event) is not None:
-                metadata.setdefault("provider_ts", event_provider_ts(event).isoformat())
-            if event_receive_ts(event) is not None:
-                metadata.setdefault("receive_ts", event_receive_ts(event).isoformat())
-            if event_process_ts(event) is not None:
-                metadata.setdefault("process_ts", event_process_ts(event).isoformat())
-            if event_source_id(event) is not None:
-                metadata.setdefault("source_id", str(event_source_id(event)))
-            if event_trade_id(event) is not None:
-                metadata.setdefault("trade_id", str(event_trade_id(event)))
-            if event_trade_side(event) is not None:
-                metadata.setdefault("side", str(event_trade_side(event)))
-            if event_historical_feed_kind(event) is not None:
-                metadata.setdefault("historical_feed_kind", str(event_historical_feed_kind(event)))
-            if event_raw_run_id(event) is not None:
-                metadata.setdefault("raw_run_id", str(event_raw_run_id(event)))
-            if event_raw_ingestion_seq(event) is not None:
-                metadata.setdefault("raw_ingestion_seq", str(event_raw_ingestion_seq(event)))
+            metadata = _event_metadata_for_row(event, metadata_cache=metadata_cache)
+            venue = event.venue if isinstance(event, BaseMarketEvent) else str(metadata.get("venue", "BINANCE")).upper()
+            normalizer_version = (
+                event_normalizer_version(event)
+                if isinstance(event, BaseMarketEvent)
+                else resolve_normalizer_version(metadata.get("normalizer_version"))
+            )
+            exchange_ts = event.exchange_ts if isinstance(event, BaseMarketEvent) else event.event_ts
+            provider_ts = event.provider_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("provider_ts"))
+            receive_ts = event.receive_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("receive_ts"))
+            process_ts = event.process_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("process_ts"))
+            source_id = event.source_id if isinstance(event, BaseMarketEvent) else metadata.get("source_id")
+            trade_id = event.trade_id if isinstance(event, TradeEvent) else metadata.get("trade_id")
+            side = event.side if isinstance(event, TradeEvent) else metadata.get("side")
+            historical_feed_kind = metadata.get("historical_feed_kind")
+            raw_run_id = metadata.get("raw_run_id")
+            raw_ingestion_seq = _coerce_optional_int(metadata.get("raw_ingestion_seq"))
+
+            metadata.setdefault("venue", venue)
+            metadata.setdefault("normalizer_version", normalizer_version)
+            if provider_ts is not None:
+                metadata.setdefault("provider_ts", provider_ts.isoformat())
+            if receive_ts is not None:
+                metadata.setdefault("receive_ts", receive_ts.isoformat())
+            if process_ts is not None:
+                metadata.setdefault("process_ts", process_ts.isoformat())
+            if source_id is not None:
+                metadata.setdefault("source_id", str(source_id))
+            if trade_id is not None:
+                metadata.setdefault("trade_id", str(trade_id))
+            if side is not None:
+                metadata.setdefault("side", str(side))
+            if historical_feed_kind is not None:
+                metadata.setdefault("historical_feed_kind", str(historical_feed_kind))
+            if raw_run_id is not None:
+                metadata.setdefault("raw_run_id", str(raw_run_id))
+            if raw_ingestion_seq is not None:
+                metadata.setdefault("raw_ingestion_seq", str(raw_ingestion_seq))
             rows.append(
                 {
-                    "venue": event_venue(event),
+                    "venue": venue,
                     "feed_type": feed_type_for_source(event.source),
-                    "normalizer_version": event_normalizer_version(event),
+                    "normalizer_version": normalizer_version,
                     "symbol": event.symbol,
-                    "exchange_ts": event_exchange_ts(event),
-                    "provider_ts": event_provider_ts(event),
-                    "receive_ts": event_receive_ts(event),
-                    "process_ts": event_process_ts(event),
+                    "exchange_ts": exchange_ts,
+                    "provider_ts": provider_ts,
+                    "receive_ts": receive_ts,
+                    "process_ts": process_ts,
                     "event_ts": event.event_ts,
                     "price": event.price,
                     "size": event.size,
                     "source": event.source,
-                    "source_id": event_source_id(event),
-                    "trade_id": event_trade_id(event),
-                    "side": event_trade_side(event),
-                    "historical_feed_kind": event_historical_feed_kind(event),
-                    "raw_run_id": event_raw_run_id(event),
-                    "raw_ingestion_seq": event_raw_ingestion_seq(event),
+                    "source_id": source_id,
+                    "trade_id": trade_id,
+                    "side": side,
+                    "historical_feed_kind": historical_feed_kind,
+                    "raw_run_id": raw_run_id,
+                    "raw_ingestion_seq": raw_ingestion_seq,
                     "metadata": metadata,
                 }
             )
@@ -396,54 +439,79 @@ class BarParquetWriter:
     @classmethod
     def to_table(cls, events: list[IngestionEvent]) -> pa.Table:
         events_sorted = sorted(events, key=_event_storage_sort_key)
+        metadata_cache: dict[tuple[str, str], dict[str, str]] = {}
         rows = []
         for event in events_sorted:
-            metadata = event_metadata(event)
-            metadata.setdefault("venue", event_venue(event))
-            metadata.setdefault("normalizer_version", event_normalizer_version(event))
-            metadata.setdefault("interval", event_bar_interval(event))
-            metadata.setdefault("open", str(event_bar_open(event)))
-            metadata.setdefault("high", str(event_bar_high(event)))
-            metadata.setdefault("low", str(event_bar_low(event)))
-            if event_provider_ts(event) is not None:
-                metadata.setdefault("provider_ts", event_provider_ts(event).isoformat())
-            if event_receive_ts(event) is not None:
-                metadata.setdefault("receive_ts", event_receive_ts(event).isoformat())
-            if event_process_ts(event) is not None:
-                metadata.setdefault("process_ts", event_process_ts(event).isoformat())
-            if event_bar_open_ts(event) is not None:
-                metadata.setdefault("open_ts", event_bar_open_ts(event).isoformat())
-            if event_bar_close_ts(event) is not None:
-                metadata.setdefault("close_ts", event_bar_close_ts(event).isoformat())
-            if event_source_id(event) is not None:
-                metadata.setdefault("source_id", str(event_source_id(event)))
-            if event_raw_run_id(event) is not None:
-                metadata.setdefault("raw_run_id", str(event_raw_run_id(event)))
-            if event_raw_ingestion_seq(event) is not None:
-                metadata.setdefault("raw_ingestion_seq", str(event_raw_ingestion_seq(event)))
+            metadata = _event_metadata_for_row(event, metadata_cache=metadata_cache)
+            venue = event.venue if isinstance(event, BaseMarketEvent) else str(metadata.get("venue", "BINANCE")).upper()
+            normalizer_version = (
+                event_normalizer_version(event)
+                if isinstance(event, BaseMarketEvent)
+                else resolve_normalizer_version(metadata.get("normalizer_version"))
+            )
+            exchange_ts = event.exchange_ts if isinstance(event, BaseMarketEvent) else event.event_ts
+            provider_ts = event.provider_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("provider_ts"))
+            receive_ts = event.receive_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("receive_ts"))
+            process_ts = event.process_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("process_ts"))
+            source_id = event.source_id if isinstance(event, BaseMarketEvent) else metadata.get("source_id")
+            raw_run_id = metadata.get("raw_run_id")
+            raw_ingestion_seq = _coerce_optional_int(metadata.get("raw_ingestion_seq"))
+            interval = event.interval if isinstance(event, BarEvent) else metadata.get("interval", "1m")
+            open_price = event.open if isinstance(event, BarEvent) else float(metadata.get("open", event.price))
+            high_price = event.high if isinstance(event, BarEvent) else float(metadata.get("high", event.price))
+            low_price = event.low if isinstance(event, BarEvent) else float(metadata.get("low", event.price))
+            close_price = event.close if isinstance(event, BarEvent) else event.price
+            volume = event.volume if isinstance(event, BarEvent) else event.size
+            open_ts = event.open_ts if isinstance(event, BarEvent) else _optional_ts(metadata.get("open_ts"))
+            close_ts = (
+                event.close_ts if isinstance(event, BarEvent) else (_optional_ts(metadata.get("close_ts")) or event.event_ts)
+            )
+
+            metadata.setdefault("venue", venue)
+            metadata.setdefault("normalizer_version", normalizer_version)
+            metadata.setdefault("interval", interval)
+            metadata.setdefault("open", str(open_price))
+            metadata.setdefault("high", str(high_price))
+            metadata.setdefault("low", str(low_price))
+            if provider_ts is not None:
+                metadata.setdefault("provider_ts", provider_ts.isoformat())
+            if receive_ts is not None:
+                metadata.setdefault("receive_ts", receive_ts.isoformat())
+            if process_ts is not None:
+                metadata.setdefault("process_ts", process_ts.isoformat())
+            if open_ts is not None:
+                metadata.setdefault("open_ts", open_ts.isoformat())
+            if close_ts is not None:
+                metadata.setdefault("close_ts", close_ts.isoformat())
+            if source_id is not None:
+                metadata.setdefault("source_id", str(source_id))
+            if raw_run_id is not None:
+                metadata.setdefault("raw_run_id", str(raw_run_id))
+            if raw_ingestion_seq is not None:
+                metadata.setdefault("raw_ingestion_seq", str(raw_ingestion_seq))
             rows.append(
                 {
-                    "venue": event_venue(event),
+                    "venue": venue,
                     "feed_type": feed_type_for_source(event.source),
-                    "normalizer_version": event_normalizer_version(event),
+                    "normalizer_version": normalizer_version,
                     "symbol": event.symbol,
-                    "exchange_ts": event_exchange_ts(event),
-                    "provider_ts": event_provider_ts(event),
-                    "receive_ts": event_receive_ts(event),
-                    "process_ts": event_process_ts(event),
+                    "exchange_ts": exchange_ts,
+                    "provider_ts": provider_ts,
+                    "receive_ts": receive_ts,
+                    "process_ts": process_ts,
                     "event_ts": event.event_ts,
-                    "open": event_bar_open(event),
-                    "high": event_bar_high(event),
-                    "low": event_bar_low(event),
-                    "close": event_bar_close(event),
-                    "volume": event_bar_volume(event),
-                    "interval": event_bar_interval(event),
-                    "open_ts": event_bar_open_ts(event),
-                    "close_ts": event_bar_close_ts(event),
+                    "open": open_price,
+                    "high": high_price,
+                    "low": low_price,
+                    "close": close_price,
+                    "volume": volume,
+                    "interval": interval,
+                    "open_ts": open_ts,
+                    "close_ts": close_ts,
                     "source": event.source,
-                    "source_id": event_source_id(event),
-                    "raw_run_id": event_raw_run_id(event),
-                    "raw_ingestion_seq": event_raw_ingestion_seq(event),
+                    "source_id": source_id,
+                    "raw_run_id": raw_run_id,
+                    "raw_ingestion_seq": raw_ingestion_seq,
                     "metadata": metadata,
                 }
             )
@@ -530,10 +598,13 @@ class ParquetWriter:
     base_dir: Path
     env: str
     flush_size: int = 500
+    partition_flush_size: int | None = None
     max_dedup_rows: int = 200_000
     schema_version: str = "v2"
     dedup: bool = False
+    max_parallel_partition_writes: int | None = None
     buffer: List[IngestionEvent] = field(default_factory=list)
+    partition_buffers: dict[tuple[str, str, str, str], list[IngestionEvent]] = field(default_factory=dict)
     accepted_events: int = 0
     persisted_events: int = 0
     flush_count: int = 0
@@ -544,30 +615,59 @@ class ParquetWriter:
 
     def __post_init__(self) -> None:
         self.base_dir = validate_output_path(self.base_dir)
+        self.flush_size = max(1, int(self.flush_size))
+        configured_partition_flush_size = self.partition_flush_size if self.partition_flush_size is not None else self.flush_size
+        self.partition_flush_size = max(1, int(configured_partition_flush_size))
+        configured_parallelism = self.max_parallel_partition_writes if self.max_parallel_partition_writes is not None else min(8, max(2, os.cpu_count() or 2))
+        self.max_parallel_partition_writes = max(1, int(configured_parallelism))
 
     def add(self, event: IngestionEvent | Iterable[IngestionEvent]) -> None:
         if isinstance(event, (MarketEvent, BaseMarketEvent)):
-            self.buffer.append(event)
-            self.accepted_events += 1
+            self._buffer_event(event)
         else:
             batch = list(event)
-            self.buffer.extend(batch)
-            self.accepted_events += len(batch)
-        if len(self.buffer) >= self.flush_size:
-            self.flush()
+            for item in batch:
+                self._buffer_event(item)
+        self._flush_ready_partitions()
 
     def flush(self) -> None:
-        if not self.buffer:
+        self._flush_partitions(tuple(self.partition_buffers))
+
+    def _buffer_event(self, event: IngestionEvent) -> None:
+        self.accepted_events += 1
+        partition_key = _partition_key_for_event(event)
+        self.partition_buffers.setdefault(partition_key, []).append(event)
+
+    def _flush_ready_partitions(self) -> None:
+        if not self.partition_buffers:
+            return
+        ready_partition_keys = [
+            partition_key
+            for partition_key, events in self.partition_buffers.items()
+            if len(events) >= int(self.partition_flush_size or self.flush_size)
+        ]
+        if ready_partition_keys:
+            self._flush_partitions(tuple(ready_partition_keys))
+            return
+        if self.buffered_events >= self.flush_size:
+            self._flush_partitions(tuple(self.partition_buffers))
+
+    def _flush_partitions(self, partition_keys: tuple[tuple[str, str, str, str], ...]) -> None:
+        if not partition_keys:
             return
         started = time.perf_counter()
-        grouped = list(_group_events_by_partition(self.buffer).items())
-        remaining: list[IngestionEvent] = []
         persisted_now = 0
+        max_partition_duration = 0.0
+        failures: list[Exception] = []
         try:
-            for index, (partition_key, events) in enumerate(grouped):
-                try:
-                    partition_started = time.perf_counter()
-                    _write_partition(
+            partitions_to_flush = [
+                (partition_key, list(events))
+                for partition_key in partition_keys
+                if (events := self.partition_buffers.get(partition_key))
+            ]
+            if len(partitions_to_flush) <= 1 or int(self.max_parallel_partition_writes or 1) <= 1:
+                for partition_key, events in partitions_to_flush:
+                    partition_duration = _persist_partition_events(
                         base_dir=self.base_dir,
                         env=self.env,
                         partition_key=partition_key,
@@ -576,27 +676,67 @@ class ParquetWriter:
                         dedup=self.dedup,
                         max_dedup_rows=self.max_dedup_rows,
                     )
-                    self._record_stream_write_metric(partition_key, time.perf_counter() - partition_started)
+                    self._record_stream_write_metric(partition_key, partition_duration)
+                    max_partition_duration = max(max_partition_duration, partition_duration)
                     persisted_now += len(events)
-                except Exception:
-                    remaining.extend(events)
-                    for _, later_events in grouped[index + 1 :]:
-                        remaining.extend(later_events)
-                    self.buffer = remaining
-                    raise
-            self.buffer.clear()
+                    del self.partition_buffers[partition_key]
+            else:
+                completed_keys: list[tuple[str, str, str, str]] = []
+                worker_count = min(len(partitions_to_flush), int(self.max_parallel_partition_writes or 1))
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    future_map = {
+                        executor.submit(
+                            _persist_partition_events,
+                            base_dir=self.base_dir,
+                            env=self.env,
+                            partition_key=partition_key,
+                            events=events,
+                            schema_version=self.schema_version,
+                            dedup=self.dedup,
+                            max_dedup_rows=self.max_dedup_rows,
+                        ): (partition_key, len(events))
+                        for partition_key, events in partitions_to_flush
+                    }
+                    for future in as_completed(future_map):
+                        partition_key, event_count = future_map[future]
+                        try:
+                            partition_duration = future.result()
+                        except Exception as exc:
+                            failures.append(exc)
+                            continue
+                        self._record_stream_write_metric(partition_key, partition_duration)
+                        max_partition_duration = max(max_partition_duration, partition_duration)
+                        persisted_now += event_count
+                        completed_keys.append(partition_key)
+                for partition_key in completed_keys:
+                    self.partition_buffers.pop(partition_key, None)
+                if failures:
+                    raise failures[0]
             self.persisted_events += persisted_now
-            self.flush_count += 1
+            if persisted_now > 0:
+                self.flush_count += 1
         finally:
-            duration = max(0.0, time.perf_counter() - started)
-            self.last_write_latency_seconds = duration
-            self.total_write_latency_seconds += duration
-            if duration > self.max_write_latency_seconds:
-                self.max_write_latency_seconds = duration
+            self._sync_flat_buffer()
+            total_duration = max(0.0, time.perf_counter() - started)
+            self.last_write_latency_seconds = total_duration
+            self.total_write_latency_seconds += total_duration
+            observed_write_latency = max_partition_duration if max_partition_duration > 0.0 else total_duration
+            if observed_write_latency > self.max_write_latency_seconds:
+                self.max_write_latency_seconds = observed_write_latency
 
     @property
     def buffered_events(self) -> int:
-        return len(self.buffer)
+        return sum(len(events) for events in self.partition_buffers.values())
+
+    def _sync_flat_buffer(self) -> None:
+        buffered_events = self.buffered_events
+        if buffered_events == 0:
+            self.buffer = []
+            return
+        if buffered_events <= 1024:
+            self.buffer = [event for events in self.partition_buffers.values() for event in events]
+            return
+        self.buffer = []
 
     def _record_stream_write_metric(self, partition_key: tuple[str, str, str, str], duration: float) -> None:
         feed_type, venue, symbol, _day = partition_key
@@ -617,11 +757,38 @@ class ParquetWriter:
 def _group_events_by_partition(events: List[IngestionEvent]) -> dict[tuple[str, str, str, str], list[IngestionEvent]]:
     grouped: dict[tuple[str, str, str, str], list[IngestionEvent]] = {}
     for ev in events:
-        _assert_supported_storage_source(ev.source)
-        day = ev.event_ts.date().isoformat()
-        key = (feed_type_for_source(ev.source), event_venue(ev), ev.symbol, day)
+        key = _partition_key_for_event(ev)
         grouped.setdefault(key, []).append(ev)
     return grouped
+
+
+def _partition_key_for_event(event: IngestionEvent) -> tuple[str, str, str, str]:
+    _assert_supported_storage_source(event.source)
+    day = event.event_ts.date().isoformat()
+    return (feed_type_for_source(event.source), event_venue(event), event.symbol, day)
+
+
+def _persist_partition_events(
+    *,
+    base_dir: Path,
+    env: str,
+    partition_key: tuple[str, str, str, str],
+    events: list[IngestionEvent],
+    schema_version: str,
+    dedup: bool,
+    max_dedup_rows: int,
+) -> float:
+    started = time.perf_counter()
+    _write_partition(
+        base_dir=base_dir,
+        env=env,
+        partition_key=partition_key,
+        events=events,
+        schema_version=schema_version,
+        dedup=dedup,
+        max_dedup_rows=max_dedup_rows,
+    )
+    return max(0.0, time.perf_counter() - started)
 
 
 def _to_table(events: List[IngestionEvent]) -> pa.Table:
@@ -726,9 +893,6 @@ def _table_schema_metadata(
     if catalog_version:
         metadata[b"instrument_catalog_version"] = catalog_version.encode("utf-8")
         metadata[b"instrument_catalog_snapshot_hash"] = catalog_version.encode("utf-8")
-        metadata[b"instrument_catalog_snapshot"] = (
-            instrument_catalog_snapshot or instrument_catalog_snapshot_json()
-        ).encode("utf-8")
     if instrument_snapshot:
         metadata[b"instrument_snapshot"] = instrument_snapshot.encode("utf-8")
     if metadata_source:
@@ -1086,7 +1250,7 @@ def _read_existing_table_for_merge(out_path: Path, target_schema: pa.Schema) -> 
     if version == "v2":
         rows = []
         for row in _iter_table_rows(table):
-            metadata_row = row.get("metadata") or {}
+            metadata_row = _metadata_mapping(row.get("metadata"))
             adapted = {
                 "venue": row.get("venue") or str(metadata_row.get("venue", "BINANCE")).upper(),
                 "feed_type": row.get("feed_type") or feed_type_for_source(row["source"]),
@@ -1105,7 +1269,7 @@ def _read_existing_table_for_merge(out_path: Path, target_schema: pa.Schema) -> 
 
     rows = []
     for row in _iter_table_rows(table):
-        metadata = row.get("metadata") or {}
+        metadata = _metadata_mapping(row.get("metadata"))
         adapted = {
             "venue": str(metadata.get("venue", "BINANCE")).upper(),
             "feed_type": feed_type_for_source(row["source"]),

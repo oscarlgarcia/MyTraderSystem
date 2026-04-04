@@ -60,6 +60,9 @@ def test_readiness_orchestrator_runs_paper_steps_in_order(tmp_path: Path):
     assert str(tmp_path / "data" / "dev") in commands[-1]
     assert "--stream-types" in commands[-1]
     assert "kline" in commands[-1]
+    assert "--target-profile" in commands[3]
+    assert "paper" in commands[3]
+    assert "--min-rows-per-second" not in commands[3]
     written = json.loads((tmp_path / "docs" / "validation" / "paper.json").read_text(encoding="utf-8"))
     assert written["overall_status"] == "PASS"
     assert written["dataset_env"] == "papercand"
@@ -104,6 +107,7 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
     drill = commands[8]
     final_gate = commands[9]
     assert "--phase" in predrill and "predrill" in predrill
+    assert "--target-profile" in commands[3] and "live" in commands[3]
     assert "--release-gates-path" in drill
     assert str(tmp_path / "docs" / "validation" / "ingestion_release_gates_pre_drill.json") in drill
     assert "--phase" in final_gate and "final" in final_gate
@@ -149,7 +153,7 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
     for name, payload in {
         "rest.json": {"generated_at": now, "pass_ok": True, "diffs": {}, "comparison_reason": "semantic_match"},
         "ws.json": {"report_generated_at": now, "pass_ok": True, "continuity": {"reconnects": 1, "duplicates": 0, "gaps": 0}, "reconnects_observed": 1, "reconnects_target": 1, "symbol": "BTCUSDT", "stream_type": "kline"},
-        "benchmark.json": {"generated_at": now, "pass_ok": True, "slo": {"min_rows_per_second": 1.0}, "synthetic_case": {"pass_ok": True, "rows_per_second": 1.0}, "replay_case": {"pass_ok": True, "rows_per_second": 1.0}, "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 1.0}, "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 1.0}},
+        "benchmark.json": {"generated_at": now, "target_profile": "live", "pass_ok": True, "required_high_cardinality_symbol_counts": [100, 500], "slo": {"min_rows_per_second": 1.0}, "synthetic_case": {"pass_ok": True, "rows_per_second": 1.0, "requested_symbol_count": 12}, "replay_case": {"pass_ok": True, "rows_per_second": 1.0, "requested_symbol_count": 12}, "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 1.0, "requested_symbol_count": 12}, "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 1.0, "requested_symbol_count": 4}, "high_cardinality_cases": [{"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 1.0, "requested_symbol_count": 100}, {"name": "high_cardinality_500", "pass_ok": True, "rows_per_second": 1.0, "requested_symbol_count": 500}]},
         "parity.json": {"generated_at": now, "pass_ok": True, "order_match": True, "manifest_ok": True, "normalized_path": str(tmp_path / "normalized"), "symbol": "BTCUSDT", "stream_type": "kline", "manifest_missing_files": [], "manifest_mismatches": []},
         "soak.json": {"generated_at": now, "pass_ok": True, "max_allowed_gaps": 0, "max_gaps": 0, "max_allowed_gap_irreparable": 0, "max_gap_irreparable": 0, "max_allowed_compaction_failures": 0, "compaction_failures_total": 0, "reconnects_observed": 1, "reconnects_target": 1},
         "vendor.json": {"generated_at": now, "pass_ok": True, "pytest_target": "tests/network/test_binance_contracts.py", "command": ["python", "-m", "pytest"], "returncode": 0, "duration_seconds": 1.0},
@@ -192,3 +196,32 @@ def test_ingestion_readiness_script_help_runs():
     assert "--runtime-env" in result.stdout
     assert "--runtime-base-dir" in result.stdout
     assert "--gate-stream-types" in result.stdout
+
+
+def test_readiness_orchestrator_includes_benchmark_override_when_requested(tmp_path: Path):
+    commands: list[tuple[str, ...]] = []
+    raw_base_dir = tmp_path / "raw"
+    normalized_path = tmp_path / "normalized"
+    raw_base_dir.mkdir()
+    normalized_path.mkdir()
+
+    report = run_ingestion_readiness(
+        workspace=tmp_path,
+        target="paper",
+        env="papercand",
+        raw_base_dir=raw_base_dir,
+        normalized_path=normalized_path,
+        symbol="BTCUSDT",
+        stream_type="trade",
+        interval="1m",
+        runtime_env="dev",
+        runtime_base_dir=tmp_path / "data" / "dev",
+        validation_dir=tmp_path / "docs" / "validation",
+        output_path=tmp_path / "docs" / "validation" / "paper.json",
+        benchmark_min_rows_per_second=55.0,
+        executor=_success_executor(commands),
+    )
+
+    assert report.pass_ok is True
+    assert "--min-rows-per-second" in commands[3]
+    assert "55.0" in commands[3]
