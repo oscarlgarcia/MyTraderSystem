@@ -219,3 +219,18 @@ class FeatureServingService:
             start_ts=start_ts,
             end_ts=end_ts,
         )
+
+    def get_snapshot_before(
+        self,
+        *,
+        symbol: str,
+        cutoff_ts: datetime,
+        feature_set_name: str,
+        feature_set_version: str,
+    ) -> FeatureVector | None:
+        return self.online_store.get_snapshot_before(
+            symbol=symbol,
+            cutoff_ts=cutoff_ts,
+            feature_set_name=feature_set_name,
+            feature_set_version=feature_set_version,
+        )

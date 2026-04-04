@@ -470,15 +470,16 @@ def collect_events(
     production_mode: bool = False,
 ) -> List[IngestionEvent]:
     logger = logger or logging.getLogger("ingest")
+    effective_mode = "live" if mode == "paper" else mode
     effective_error_policy = resolve_error_policy(error_policy, allow_live_fallback=allow_live_fallback)
-    if mode == "live":
+    if effective_mode == "live":
         validate_live_feed_support(
             stream_types,
             require_exact_recovery=production_mode,
             require_exact_verified=production_mode,
             require_handoff=production_mode,
         )
-    if mode == "dry":
+    if effective_mode == "dry":
         events_out = _synthetic_events(max_events)
         source_rejected = getattr(source, "stats", None)
         stream_metrics = _merge_stream_metrics(getattr(source_rejected, "stream_metrics", {}))
@@ -488,7 +489,7 @@ def collect_events(
         if summary_logging:
             _emit_ingestion_summary(
                 logger,
-                mode="dry",
+                mode=mode,
                 cfg=cfg,
                 events_in=len(events_out),
                 events_out=len(events_out),
@@ -538,7 +539,7 @@ def collect_events(
             )
             _emit_health_summary(
                 logger,
-                mode="dry",
+                mode=mode,
                 cfg=cfg,
                 result="ok",
                 source_events_in=getattr(source_rejected, "source_events_in", len(events_out)),
@@ -588,14 +589,14 @@ def collect_events(
                 event_type="checkpoint_applied",
                 trace_id=get_trace_id(),
                 state=checkpoint_state,
-                extra={"mode": "live"},
+                extra={"mode": mode},
             )
         except ValueError as exc:
             checkpoint_store_impl.record_checkpoint_event(
                 event_type="checkpoint_load_failed",
                 trace_id=get_trace_id(),
                 state=None,
-                extra={"mode": "live", "error": str(exc)},
+                extra={"mode": mode, "error": str(exc)},
             )
             logger.warning(
                 "checkpoint recovery using empty state",
@@ -679,7 +680,7 @@ def collect_events(
             checkpoint_to_save = runner.export_checkpoint(
                 metadata={
                     "env": cfg.env,
-                    "mode": "live",
+                    "mode": mode,
                     "saved_at": datetime.now(timezone.utc).isoformat(),
                     "events_in": runner.metrics.events_in,
                     "events_out": len(handler.events),
@@ -701,7 +702,7 @@ def collect_events(
                 event_type="checkpoint_saved",
                 trace_id=get_trace_id(),
                 state=checkpoint_to_save,
-                extra={"mode": "live"},
+                extra={"mode": mode},
             )
             for recovery_event in runner.recovery_audit_events:
                 checkpoint_store_impl.append_audit_event(
@@ -838,7 +839,7 @@ def collect_events(
             )
             _emit_ingestion_summary(
                 logger,
-                mode="live",
+                mode=mode,
                 cfg=cfg,
                 events_in=runner.metrics.events_in,
                 events_out=len(handler.events),
@@ -890,7 +891,7 @@ def collect_events(
             )
             _emit_health_summary(
                 logger,
-                mode="live",
+                mode=mode,
                 cfg=cfg,
                 result="ok",
                 source_events_in=source_events_in,
@@ -980,7 +981,7 @@ def collect_events(
             if summary_logging:
                 _emit_ingestion_summary(
                     logger,
-                    mode="live",
+                    mode=mode,
                     cfg=cfg,
                     events_in=int(getattr(runner, "metrics", None).events_in if runner else 0),
                     events_out=len(handler.events) if handler is not None else 0,
@@ -1033,7 +1034,7 @@ def collect_events(
                 )
                 _emit_health_summary(
                     logger,
-                    mode="live",
+                    mode=mode,
                     cfg=cfg,
                     result="failed",
                     source_events_in=source_events_in,
@@ -1072,7 +1073,7 @@ def collect_events(
             if summary_logging:
                 _emit_ingestion_summary(
                     logger,
-                    mode="live",
+                    mode=mode,
                     cfg=cfg,
                     events_in=0,
                     events_out=0,
@@ -1125,7 +1126,7 @@ def collect_events(
                 )
                 _emit_health_summary(
                     logger,
-                    mode="live",
+                    mode=mode,
                     cfg=cfg,
                     result="degraded",
                     source_events_in=source_events_in,

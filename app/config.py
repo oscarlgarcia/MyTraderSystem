@@ -173,9 +173,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["dry", "live"],
+        choices=["dry", "paper", "live"],
         default="dry",
-        help="Pipeline mode: dry (deterministic, sin IO) o live (WS/REST + Parquet acotado)",
+        help="Pipeline mode: dry (deterministic), paper (live market data + paper execution) o live (strict runtime path).",
     )
     parser.add_argument(
         "--max-events",
@@ -193,6 +193,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--feature-audit-path",
         default=None,
         help="Ruta del audit trail de features requerido fuera de dry mode.",
+    )
+    parser.add_argument(
+        "--feature-release-action",
+        choices=["publish", "rollback"],
+        default=None,
+        help="Ejecuta la operacion oficial de governance de feature versions y termina.",
+    )
+    parser.add_argument(
+        "--feature-release-registry",
+        default="docs/validation/feature_releases.json",
+        help="Registry persistido de versiones activas de features.",
+    )
+    parser.add_argument(
+        "--feature-release-name",
+        default=None,
+        help="Nombre del feature set a publicar o revertir.",
+    )
+    parser.add_argument(
+        "--feature-release-version",
+        default=None,
+        help="Version a activar cuando feature-release-action=publish.",
+    )
+    parser.add_argument(
+        "--feature-release-target",
+        choices=["paper", "live"],
+        default="paper",
+        help="Objetivo operativo del release de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gate-input",
+        default=None,
+        help="JSON con parity/latency/staleness para evaluar el gate antes de publish.",
     )
     parser.add_argument(
         "--trace-steps",

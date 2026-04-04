@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import warnings
 from datetime import datetime
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -18,10 +19,19 @@ AggregatorFn = Callable[[str, Sequence[float], int, Dict[Tuple[str, str, int], f
 AGGREGATORS: Dict[str, AggregatorFn] = {}
 TransformerFn = Callable[[FeatureVector], FeatureVector]
 TRANSFORMERS: Dict[str, TransformerFn] = {}
+LEGACY_ENV_VAR = "APP_ALLOW_LEGACY_FEATURES_V1"
 
 
 def _warn_legacy_api(name: str) -> None:
     warnings.warn(f"app.features.store.{name} is legacy; migrate to V2 runtime/materialization/store APIs", DeprecationWarning, stacklevel=2)
+
+
+def _require_legacy_opt_in(name: str) -> None:
+    if os.getenv(LEGACY_ENV_VAR) != "1":
+        raise RuntimeError(
+            f"app.features.store.{name} is blocked by default; set {LEGACY_ENV_VAR}=1 only for explicit compatibility work"
+        )
+    _warn_legacy_api(name)
 
 
 def _is_finite_price(price: float) -> bool:
@@ -31,7 +41,7 @@ def _is_finite_price(price: float) -> bool:
 
 
 def register_aggregator(name: str, fn: AggregatorFn) -> None:
-    _warn_legacy_api("register_aggregator")
+    _require_legacy_opt_in("register_aggregator")
     AGGREGATORS[name] = fn
 
 
@@ -48,7 +58,7 @@ class FeatureState:
         feature_set: FeatureSetDefinition | None = None,
         out_of_order_policy: str = "reject",
     ) -> None:
-        _warn_legacy_api("FeatureState")
+        _require_legacy_opt_in("FeatureState")
         self.cache = cache or FeatureCache()
         self.feature_set = feature_set or build_legacy_runtime_feature_set(
             window=window,
@@ -98,7 +108,7 @@ def compute_features(
     feature_set: Optional[FeatureSetDefinition] = None,
     cache: Optional[FeatureCache] = None,
 ) -> List[FeatureVector]:
-    _warn_legacy_api("compute_features")
+    _require_legacy_opt_in("compute_features")
     if not events:
         return []
     if feature_set is None:
@@ -206,10 +216,10 @@ def _t_drop_keys(keys: Iterable[str]) -> TransformerFn:
     return _inner
 
 
-register_aggregator("sma", _agg_sma)
-register_aggregator("ema", _agg_ema)
-register_aggregator("max", _agg_max)
-register_aggregator("min", _agg_min)
+AGGREGATORS["sma"] = _agg_sma
+AGGREGATORS["ema"] = _agg_ema
+AGGREGATORS["max"] = _agg_max
+AGGREGATORS["min"] = _agg_min
 
 TRANSFORMERS["clip_non_finite"] = _t_clip_non_finite
 TRANSFORMERS["scale_price_2x"] = lambda fv: _t_scale_price(fv, factor=2.0)

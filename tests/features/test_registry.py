@@ -1,45 +1,36 @@
 import pytest
 
-from app.features.registry import FeatureRegistry
+from app.features.definition_registry import DefinitionRegistry, DefinitionRegistryError
+from app.features.definitions import build_legacy_feature_set_definition
 
 
-def test_register_and_get():
-    reg = FeatureRegistry()
-    fs = reg.register_feature_set(
+def _feature_set(version: str, windows, aggregators, transformers):
+    return build_legacy_feature_set_definition(
         name="default",
-        version="1.0.0",
+        version=version,
         description="baseline features",
-        windows=[3, 5],
-        aggregators=["sma", "ema"],
-        transformers=["clip_non_finite"],
+        windows=windows,
+        aggregators=aggregators,
+        transformers=transformers,
     )
+
+
+def test_register_and_get(tmp_path):
+    reg = DefinitionRegistry(storage_dir=tmp_path)
+    fs = reg.register(_feature_set("1.0.0", [3, 5], ["sma", "ema"], ["clip_non_finite"]))
     assert reg.get("default", "1.0.0") == fs
 
 
-def test_duplicate_raises():
-    reg = FeatureRegistry()
-    reg.register_feature_set(
-        name="default",
-        version="1.0.0",
-        description="baseline features",
-        windows=[3],
-        aggregators=["sma"],
-        transformers=[],
-    )
-    with pytest.raises(ValueError):
-        reg.register_feature_set(
-            name="default",
-            version="1.0.0",
-            description="baseline features copy",
-            windows=[5],
-            aggregators=["ema"],
-            transformers=[],
-        )
+def test_duplicate_raises(tmp_path):
+    reg = DefinitionRegistry(storage_dir=tmp_path)
+    reg.register(_feature_set("1.0.0", [3], ["sma"], []))
+    with pytest.raises(DefinitionRegistryError):
+        reg.register(_feature_set("1.0.0", [5], ["ema"], []))
 
 
-def test_multiple_versions_coexist():
-    reg = FeatureRegistry()
-    reg.register_feature_set("default", "1.0.0", "baseline", [3], ["sma"], [])
-    reg.register_feature_set("default", "1.1.0", "tuned", [3, 5], ["sma", "ema"], ["clip_non_finite"])
+def test_multiple_versions_coexist(tmp_path):
+    reg = DefinitionRegistry(storage_dir=tmp_path)
+    reg.register(_feature_set("1.0.0", [3], ["sma"], []))
+    reg.register(_feature_set("1.1.0", [3, 5], ["sma", "ema"], ["clip_non_finite"]))
     versions = reg.list_versions("default")
     assert set(versions.keys()) == {"1.0.0", "1.1.0"}

@@ -3,7 +3,7 @@ import math
 import time
 
 from app.common.dto import MarketEvent
-from app.features.store import FeatureState, register_aggregator
+from app.features.engine import FeatureEngine
 
 
 def _ev(ts_offset: int, price: float, sym: str = "BTCUSDT") -> MarketEvent:
@@ -16,31 +16,19 @@ def _ev(ts_offset: int, price: float, sym: str = "BTCUSDT") -> MarketEvent:
     )
 
 
-def test_custom_variance_aggregator():
-    def var_agg(symbol, prices, window, state):
-        data = prices if isinstance(prices, list) else list(prices)
-        if len(data) < window:
-            return None, state
-        tail = data[-window:]
-        mean = sum(tail) / window
-        var = sum((x - mean) ** 2 for x in tail) / window
-        return var, state
-
-    register_aggregator("var", var_agg)
-    state = FeatureState(window=3, aggregators=["sma", "var"])
-    events = [_ev(i * 60, p) for i, p in enumerate([1, 2, 3])]
-    out = [state.update(ev) for ev in events]
+def test_builtin_rolling_aggregators_compute_expected_values():
+    engine = FeatureEngine(window=3, windows=[3], aggregators=["sma", "ema"])
+    out = engine.update_batch([_ev(i * 60, p) for i, p in enumerate([1, 2, 3])])
     assert out[-1] is not None
-    assert "var_3" in out[-1].values
-    assert math.isclose(out[-1].values["var_3"], 2 / 3, rel_tol=1e-9)
+    assert math.isclose(out[-1].values["sma_3"], 2.0, rel_tol=1e-9)
+    assert "ema_3" in out[-1].values
 
 
-def test_performance_basic():
-    state = FeatureState(window=3)
+def test_engine_performance_basic():
+    engine = FeatureEngine(window=3)
     events = [_ev(i, 100 + i % 5) for i in range(1000)]
     t0 = time.perf_counter()
-    out = [state.update(ev) for ev in events]
+    out = engine.update_batch(events)
     elapsed = time.perf_counter() - t0
     assert len(out) == 1000
-    # umbral laxo para unit: 0.5s en 1000 eventos
     assert elapsed < 0.5

@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
-import math
 
-from app.features.store import FeatureState, TRANSFORMERS, register_aggregator
 from app.common.dto import MarketEvent
+from app.features.engine import FeatureEngine
 
 
 def _ev(ts_offset: int, price: float) -> MarketEvent:
@@ -15,27 +14,23 @@ def _ev(ts_offset: int, price: float) -> MarketEvent:
     )
 
 
-def test_pipeline_clip_and_scale():
-    state = FeatureState(window=2, transformers=["clip_non_finite", "scale_price_2x"])
-    ev = _ev(0, 100)
-    fv = state.update(ev)
-    assert fv is not None
-    assert fv.values["price"] == 200  # scaled
+def test_engine_exposes_latest_and_temporal_lookup():
+    engine = FeatureEngine(window=2, cache_capacity=4)
+    events = [_ev(0, 100), _ev(60, 101)]
+    out = engine.update_batch(events)
+    latest = engine.get_latest("BTCUSDT")
+    at_first = engine.get_at("BTCUSDT", events[0].event_ts)
+    assert latest is not None and latest.values["price"] == 101
+    assert at_first is not None and at_first.values["price"] == out[0].values["price"]
 
 
-def test_invalid_transformer_raises():
-    state = FeatureState(window=2, transformers=["missing_one"])
-    ev = _ev(0, 100)
-    try:
-        state.update(ev)
-        assert False, "Expected ValueError"
-    except ValueError:
-        pass
+def test_engine_handles_empty_batch():
+    engine = FeatureEngine(window=2)
+    assert engine.update_batch([]) == []
 
 
-def test_empty_transformers_leaves_values():
-    state = FeatureState(window=2, transformers=[])
-    ev = _ev(0, 100)
-    fv = state.update(ev)
-    assert fv is not None
-    assert fv.values["price"] == 100
+def test_engine_metrics_count_outputs():
+    engine = FeatureEngine(window=2)
+    out = engine.update_batch([_ev(0, 100), _ev(60, 101)])
+    assert len(out) == 2
+    assert engine.metrics["features_out"] == 2

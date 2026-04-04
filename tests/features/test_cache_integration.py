@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
 
-from app.features.cache import FeatureCache
-from app.features.store import FeatureState
 from app.common.dto import MarketEvent
+from app.features.engine import FeatureEngine
 
 
 def _ev(ts_offset: int, price: float) -> MarketEvent:
@@ -15,11 +14,10 @@ def _ev(ts_offset: int, price: float) -> MarketEvent:
     )
 
 
-def test_state_puts_into_cache():
-    cache = FeatureCache(capacity_per_symbol=2)
-    state = FeatureState(window=2, cache=cache)
-    state.update(_ev(0, 100))
-    state.update(_ev(60, 101))
-    latest = cache.get_latest("BTCUSDT")
+def test_engine_cache_exposes_latest_feature_vector():
+    engine = FeatureEngine(window=2, cache_capacity=2)
+    engine.update(_ev(0, 100))
+    engine.update(_ev(60, 101))
+    latest = engine.get_latest("BTCUSDT")
     assert latest is not None
     assert latest.values["price"] == 101

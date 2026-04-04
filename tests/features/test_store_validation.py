@@ -1,11 +1,8 @@
 import math
 from datetime import datetime, timezone
 
-import pytest
-
 from app.common.dto import MarketEvent
-from app.features import store
-from app.features.store import compute_features
+from app.features.engine import FeatureEngine
 
 
 def _ev(ts_offset: int, price: float) -> MarketEvent:
@@ -18,35 +15,25 @@ def _ev(ts_offset: int, price: float) -> MarketEvent:
     )
 
 
-def test_valid_series_keeps_length(caplog):
-    events = [_ev(i * 60, 100 + i) for i in range(10)]
-    fvs = compute_features(events, window=3)
+def test_valid_series_keeps_length_and_window_marker():
+    engine = FeatureEngine(window=3)
+    fvs = engine.update_batch([_ev(i * 60, 100 + i) for i in range(10)])
     assert len(fvs) == 10
     assert all("price" in fv.values for fv in fvs)
     assert all(math.isfinite(fv.values["price"]) for fv in fvs)
     assert all("window_max" in fv.values for fv in fvs)
 
 
-def test_nan_is_dropped_and_logged(caplog):
-    caplog.set_level("INFO")
-    events = [_ev(0, 100), _ev(60, float("nan")), _ev(120, 102)]
-    fvs = compute_features(events, window=2)
-    assert len(fvs) == 2  # nan descartado
-    assert any("features discarded" in rec.message for rec in caplog.records)
+def test_nan_is_dropped_and_counted():
+    engine = FeatureEngine(window=2)
+    fvs = engine.update_batch([_ev(0, 100), _ev(60, float("nan")), _ev(120, 102)])
+    assert len(fvs) == 2
+    assert engine.metrics["dropped_non_finite"] == 1
 
 
-def test_missing_required_key_drops_feature(caplog, monkeypatch):
-    caplog.set_level("INFO")
-    monkeypatch.setattr(store, "REQUIRED_KEYS", {"price", "sma_5"})
-    events = [_ev(i * 60, 100 + i) for i in range(5)]
-    fvs = compute_features(events, window=2)
-    assert len(fvs) == 0  # faltó sma_5
-    assert any("features discarded" in rec.message for rec in caplog.records)
-
-
-def test_non_finite_price_discards_and_counts(caplog):
-    caplog.set_level("INFO")
-    events = [_ev(0, float("inf")), _ev(60, 100)]
-    fvs = compute_features(events, window=2)
+def test_non_finite_price_discards_and_keeps_following_values():
+    engine = FeatureEngine(window=2)
+    fvs = engine.update_batch([_ev(0, float("inf")), _ev(60, 100)])
     assert len(fvs) == 1
-    assert any("features discarded" in rec.message for rec in caplog.records)
+    assert engine.metrics["dropped_non_finite"] == 1
+    assert fvs[0].values["price"] == 100

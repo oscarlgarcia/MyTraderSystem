@@ -1,9 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -12,9 +11,17 @@ from app.features.pit import feature_vector_is_servable_at
 
 
 class OnlineFeatureStore:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        history_max_rows_per_scope: int | None = None,
+        history_retention_seconds: float | None = None,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.history_max_rows_per_scope = history_max_rows_per_scope
+        self.history_retention_seconds = history_retention_seconds
         self._init_db()
 
     def _connect(self):
@@ -104,6 +111,7 @@ class OnlineFeatureStore:
                 ),
             )
             conn.commit()
+        self.prune_history(symbol=fv.symbol, feature_set_name=fv.feature_set_name, feature_set_version=fv.feature_set_version)
 
     def get_latest(self, *, symbol: str, feature_set_name: str, feature_set_version: str) -> Optional[FeatureVector]:
         with self._connect() as conn:
@@ -114,20 +122,7 @@ class OnlineFeatureStore:
                 """,
                 (symbol, feature_set_name, feature_set_version),
             ).fetchone()
-        if not row:
-            return None
-        symbol, fs_name, fs_version, ts, available_ts, lineage_id, quality_flags, values_json, entity_keys_json = row
-        return FeatureVector(
-            symbol=symbol,
-            ts=datetime.fromisoformat(ts),
-            available_ts=datetime.fromisoformat(available_ts),
-            values=json.loads(values_json),
-            feature_set_name=fs_name,
-            feature_set_version=fs_version,
-            lineage_id=lineage_id,
-            quality_flags=tuple(json.loads(quality_flags)),
-            entity_keys=json.loads(entity_keys_json),
-        )
+        return self._row_to_vector(row) if row else None
 
     def get_latest_servable(self, *, symbol: str, decision_ts: datetime, feature_set_name: str, feature_set_version: str) -> Optional[FeatureVector]:
         fv = self.get_latest(symbol=symbol, feature_set_name=feature_set_name, feature_set_version=feature_set_version)
@@ -176,6 +171,87 @@ class OnlineFeatureStore:
                 (symbol, feature_set_name, feature_set_version, start_ts.isoformat(), end_ts.isoformat()),
             ).fetchall()
         return [self._row_to_vector(row) for row in rows]
+
+    def get_snapshot_before(
+        self,
+        *,
+        symbol: str,
+        cutoff_ts: datetime,
+        feature_set_name: str,
+        feature_set_version: str,
+    ) -> Optional[FeatureVector]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT symbol, feature_set_name, feature_set_version, ts, available_ts, lineage_id, quality_flags, values_json, entity_keys_json
+                FROM history_vectors
+                WHERE symbol=? AND feature_set_name=? AND feature_set_version=? AND available_ts<=? AND ts<=?
+                ORDER BY ts DESC, available_ts DESC
+                LIMIT 1
+                """,
+                (symbol, feature_set_name, feature_set_version, cutoff_ts.isoformat(), cutoff_ts.isoformat()),
+            ).fetchone()
+        return self._row_to_vector(row) if row else None
+
+    def prune_history(
+        self,
+        *,
+        symbol: str | None = None,
+        feature_set_name: str | None = None,
+        feature_set_version: str | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        total_deleted = 0
+        now = now or datetime.utcnow().astimezone()
+        filters = []
+        params: list[str] = []
+        if symbol is not None:
+            filters.append("symbol = ?")
+            params.append(symbol)
+        if feature_set_name is not None:
+            filters.append("feature_set_name = ?")
+            params.append(feature_set_name)
+        if feature_set_version is not None:
+            filters.append("feature_set_version = ?")
+            params.append(feature_set_version)
+        where = ("WHERE " + " AND ".join(filters)) if filters else ""
+        with self._connect() as conn:
+            if self.history_retention_seconds is not None:
+                cutoff = now - timedelta(seconds=float(self.history_retention_seconds))
+                retention_where = f"{where} {'AND' if where else 'WHERE'} available_ts < ?"
+                cursor = conn.execute(
+                    f"DELETE FROM history_vectors {retention_where}",
+                    tuple(params + [cutoff.isoformat()]),
+                )
+                total_deleted += cursor.rowcount or 0
+            if self.history_max_rows_per_scope is not None and self.history_max_rows_per_scope > 0:
+                rows = conn.execute(
+                    f"""
+                    SELECT symbol, feature_set_name, feature_set_version, ts, lineage_id
+                    FROM history_vectors
+                    {where}
+                    ORDER BY symbol ASC, feature_set_name ASC, feature_set_version ASC, ts DESC, available_ts DESC
+                    """,
+                    tuple(params),
+                ).fetchall()
+                grouped: dict[tuple[str, str, str], list[tuple[str, str]]] = {}
+                for row_symbol, row_name, row_version, row_ts, row_lineage in rows:
+                    grouped.setdefault((row_symbol, row_name, row_version), []).append((row_ts, row_lineage))
+                delete_payload = []
+                for (row_symbol, row_name, row_version), entries in grouped.items():
+                    for row_ts, row_lineage in entries[self.history_max_rows_per_scope :]:
+                        delete_payload.append((row_symbol, row_name, row_version, row_ts, row_lineage))
+                if delete_payload:
+                    cursor = conn.executemany(
+                        """
+                        DELETE FROM history_vectors
+                        WHERE symbol=? AND feature_set_name=? AND feature_set_version=? AND ts=? AND lineage_id=?
+                        """,
+                        delete_payload,
+                    )
+                    total_deleted += cursor.rowcount or 0
+            conn.commit()
+        return total_deleted
 
     def _row_to_vector(self, row) -> FeatureVector:
         symbol, fs_name, fs_version, ts, available_ts, lineage_id, quality_flags, values_json, entity_keys_json = row

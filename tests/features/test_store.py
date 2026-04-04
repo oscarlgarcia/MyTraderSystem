@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.common.dto import MarketEvent
-from app.features.store import compute_features
+from app.features.pipeline import run_feature_pipeline
 
 
 def _ev(ts_offset, price):
@@ -14,9 +14,9 @@ def _ev(ts_offset, price):
     )
 
 
-def test_compute_features_sma_and_ret():
+def test_pipeline_sma_and_ret():
     events = [_ev(0, 100), _ev(60, 101), _ev(120, 103), _ev(180, 104)]
-    fvs = compute_features(events, windows=(3,))
+    fvs = run_feature_pipeline(events, window=3)
     assert len(fvs) == 4
     last = fvs[-1]
     assert "sma_3" in last.values

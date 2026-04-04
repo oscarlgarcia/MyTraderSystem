@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import warnings
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -11,6 +12,7 @@ from datetime import datetime
 from app.common.dto import FeatureVector
 
 STORAGE_VERSION = "2.0"
+LEGACY_ENV_VAR = "APP_ALLOW_LEGACY_FEATURES_V1"
 
 
 class StorageError(ValueError):
@@ -19,6 +21,14 @@ class StorageError(ValueError):
 
 def _warn_legacy_storage(name: str) -> None:
     warnings.warn(f"app.features.storage.{name} is legacy; migrate to OfflineFeatureStore/OnlineFeatureStore APIs", DeprecationWarning, stacklevel=2)
+
+
+def _require_legacy_opt_in(name: str) -> None:
+    if os.getenv(LEGACY_ENV_VAR) != "1":
+        raise RuntimeError(
+            f"app.features.storage.{name} is blocked by default; set {LEGACY_ENV_VAR}=1 only for explicit compatibility work"
+        )
+    _warn_legacy_storage(name)
 
 
 def _fv_to_dict(fv: FeatureVector) -> dict:
@@ -60,7 +70,7 @@ def _fv_from_dict(payload: dict) -> FeatureVector:
 
 
 def save(features: Iterable[FeatureVector], path: str | Path, *, feature_set: Optional[Tuple[str, str]] = None) -> None:
-    _warn_legacy_storage("save")
+    _require_legacy_opt_in("save")
     p = Path(path)
     if p.suffix.lower() not in {".json", ".jsonl"}:
         raise StorageError("only .json/.jsonl supported (Parquet no incluido sin deps externas)")
@@ -74,7 +84,7 @@ def save(features: Iterable[FeatureVector], path: str | Path, *, feature_set: Op
 
 
 def load(path: str | Path) -> Tuple[List[FeatureVector], Optional[Tuple[str, str]]]:
-    _warn_legacy_storage("load")
+    _require_legacy_opt_in("load")
     p = Path(path)
     if not p.exists():
         raise StorageError(f"file not found: {p}")

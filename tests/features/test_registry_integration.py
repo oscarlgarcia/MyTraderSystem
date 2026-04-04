@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 
-from app.features.registry import FeatureRegistry
 from app.common.dto import MarketEvent
+from app.features.definition_registry import DefinitionRegistry
+from app.features.definitions import build_legacy_feature_set_definition
+from app.features.engine import FeatureEngine
 
 
 def _ev(ts_offset: int, price: float) -> MarketEvent:
@@ -14,18 +16,19 @@ def _ev(ts_offset: int, price: float) -> MarketEvent:
     )
 
 
-def test_build_feature_state_from_registry():
-    reg = FeatureRegistry()
-    reg.register_feature_set(
-        name="default",
-        version="1.0.0",
-        description="baseline",
-        windows=[3],
-        aggregators=["sma"],
-        transformers=[],
+def test_feature_engine_uses_registered_definition(tmp_path):
+    reg = DefinitionRegistry(storage_dir=tmp_path)
+    feature_set = reg.register(
+        build_legacy_feature_set_definition(
+            name="default",
+            version="1.0.0",
+            description="baseline",
+            windows=[3],
+            aggregators=["sma"],
+            transformers=[],
+        )
     )
-    state = reg.build_feature_state("default", "1.0.0")
-    events = [_ev(i * 60, p) for i, p in enumerate([100, 101, 103])]
-    out = [state.update(ev) for ev in events]
+    engine = FeatureEngine(feature_set=feature_set)
+    out = engine.update_batch([_ev(i * 60, p) for i, p in enumerate([100, 101, 103])])
     assert out[-1] is not None
     assert "sma_3" in out[-1].values

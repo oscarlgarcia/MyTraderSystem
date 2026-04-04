@@ -1,9 +1,10 @@
 """
 Entry point for the trading system.
 
-Implements a dual-mode pipeline:
+Implements a three-mode pipeline:
 - dry (default): determinista, sin IO externo, apto para tests/CI.
-- live: usa WS/REST existentes con ResilientRunner y escribe Parquet acotado.
+- paper: usa market data live con ejecucion paper y auditoria obligatoria.
+- live: usa el runtime operativo mas estricto disponible.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ from app.ingestion.storage_health import assert_storage_health_for_runtime
 from app.features.pipeline import run_feature_pipeline
 from app.features.engine import FeatureEngine
 from app.features.audit import build_decision_audit_record, persist_decision_audits
+from app.features.metrics import FeatureMetrics
+from app.features.parity import ParityReport
+from app.features.release_workflow import gate_and_publish_feature_release, rollback_feature_release
 from app.ops.release_gates import render_release_gate_summary, run_release_gates
 from app.strategy.basic import generate_signals
 from app.risk.rules import apply_risk
@@ -32,6 +36,18 @@ from app.execution.paper import paper_execute
 from app.portfolio.state import update_portfolio
 
 FAST_PATH_BATCH_SIZE = 256
+
+
+def _load_feature_release_gate_inputs(path: str | None) -> tuple[ParityReport, FeatureMetrics]:
+    if not path:
+        raise ValueError("feature release publish requires --feature-release-gate-input")
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    mismatches = int(payload.get("parity_mismatches", 0))
+    stale_serves = int(payload.get("stale_serves", 0))
+    serving_latency_max = float(payload.get("serving_latency_max", 0.0))
+    parity_report = ParityReport(pass_ok=mismatches == 0, mismatches=tuple(object() for _ in range(mismatches)))
+    metrics = FeatureMetrics(stale_serves=stale_serves, serving_latency_max=serving_latency_max)
+    return parity_report, metrics
 
 
 def _trace(logger, enabled: bool, phase: str, status: str, extra: Optional[Dict[str, object]] = None) -> None:
@@ -143,7 +159,7 @@ def _validate_operational_security(
     production_mode = bool(runtime.get("production_mode", False))
     ingest_stream_types = tuple(runtime.get("ingest_stream_types", DEFAULT_INGEST_STREAM_TYPES))
     validate_output_path(cfg.data_dir, require_absolute=production_mode)
-    if mode == "live" and not production_mode:
+    if mode in {"live", "paper"} and not production_mode:
         try:
             validate_live_feed_support(
                 ingest_stream_types,
@@ -280,6 +296,31 @@ def run() -> int:
     """Bootstrap principal; devuelve 0 en éxito."""
     args = parse_args()
     config = load_config(args.env)
+    if getattr(args, "feature_release_action", None):
+        if not getattr(args, "feature_release_name", None):
+            raise ValueError("feature release action requires --feature-release-name")
+        registry_path = Path(args.feature_release_registry)
+        if args.feature_release_action == "publish":
+            if not getattr(args, "feature_release_version", None):
+                raise ValueError("feature release publish requires --feature-release-version")
+            parity_report, metrics = _load_feature_release_gate_inputs(getattr(args, "feature_release_gate_input", None))
+            gate_and_publish_feature_release(
+                registry_path=registry_path,
+                feature_set_name=args.feature_release_name,
+                version=args.feature_release_version,
+                parity_report=parity_report,
+                metrics=metrics,
+                target=args.feature_release_target,
+                actor="app.main.run",
+            )
+            return 0
+        rollback_feature_release(
+            registry_path=registry_path,
+            feature_set_name=args.feature_release_name,
+            target=args.feature_release_target,
+            actor="app.main.run",
+        )
+        return 0
     if getattr(args, "release_gates", False):
         report = run_release_gates(
             base_dir=config.data_dir,

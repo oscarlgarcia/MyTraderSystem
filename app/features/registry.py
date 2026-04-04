@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from typing import Any, Dict, Tuple
 import warnings
 
@@ -11,15 +12,24 @@ from app.features.definitions import FeatureSetDefinition, build_legacy_feature_
 from app.features.runtime import FeatureRuntimeEngine
 
 FeatureSet = FeatureSetDefinition
+LEGACY_ENV_VAR = "APP_ALLOW_LEGACY_FEATURES_V1"
 
 
 def _warn_legacy_registry(name: str) -> None:
     warnings.warn(f"app.features.registry.{name} is legacy; migrate to DefinitionRegistry/FeatureSetDefinition APIs", DeprecationWarning, stacklevel=2)
 
 
+def _require_legacy_opt_in(name: str) -> None:
+    if os.getenv(LEGACY_ENV_VAR) != "1":
+        raise RuntimeError(
+            f"app.features.registry.{name} is blocked by default; set {LEGACY_ENV_VAR}=1 only for explicit compatibility work"
+        )
+    _warn_legacy_registry(name)
+
+
 class FeatureRegistry:
     def __init__(self, storage_dir: str | Path | None = None) -> None:
-        _warn_legacy_registry("FeatureRegistry")
+        _require_legacy_opt_in("FeatureRegistry")
         self._registry = DefinitionRegistry(storage_dir=storage_dir)
 
     def register_feature_set(
