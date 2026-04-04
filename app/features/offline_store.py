@@ -87,6 +87,10 @@ class OfflineFeatureStore:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
     def put_many(self, vectors: Iterable[FeatureVector], *, run_id: str = "") -> None:
+        vectors = list(vectors)
+        for fv in vectors:
+            if tuple(sorted(fv.entity_keys.keys())) != ("symbol",):
+                raise ValueError("OfflineFeatureStore only supports symbol-scoped entity keys")
         payload = [
             (
                 fv.symbol,

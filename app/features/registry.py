@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Tuple
+import warnings
 
 from app.features.definition_registry import DefinitionRegistry
 from app.features.definitions import FeatureSetDefinition, build_legacy_feature_set_definition
@@ -12,8 +13,13 @@ from app.features.runtime import FeatureRuntimeEngine
 FeatureSet = FeatureSetDefinition
 
 
+def _warn_legacy_registry(name: str) -> None:
+    warnings.warn(f"app.features.registry.{name} is legacy; migrate to DefinitionRegistry/FeatureSetDefinition APIs", DeprecationWarning, stacklevel=2)
+
+
 class FeatureRegistry:
     def __init__(self, storage_dir: str | Path | None = None) -> None:
+        _warn_legacy_registry("FeatureRegistry")
         self._registry = DefinitionRegistry(storage_dir=storage_dir)
 
     def register_feature_set(

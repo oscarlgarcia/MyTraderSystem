@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 from datetime import datetime
@@ -14,6 +15,10 @@ STORAGE_VERSION = "2.0"
 
 class StorageError(ValueError):
     """Errores de persistencia / esquema."""
+
+
+def _warn_legacy_storage(name: str) -> None:
+    warnings.warn(f"app.features.storage.{name} is legacy; migrate to OfflineFeatureStore/OnlineFeatureStore APIs", DeprecationWarning, stacklevel=2)
 
 
 def _fv_to_dict(fv: FeatureVector) -> dict:
@@ -55,6 +60,7 @@ def _fv_from_dict(payload: dict) -> FeatureVector:
 
 
 def save(features: Iterable[FeatureVector], path: str | Path, *, feature_set: Optional[Tuple[str, str]] = None) -> None:
+    _warn_legacy_storage("save")
     p = Path(path)
     if p.suffix.lower() not in {".json", ".jsonl"}:
         raise StorageError("only .json/.jsonl supported (Parquet no incluido sin deps externas)")
@@ -68,6 +74,7 @@ def save(features: Iterable[FeatureVector], path: str | Path, *, feature_set: Op
 
 
 def load(path: str | Path) -> Tuple[List[FeatureVector], Optional[Tuple[str, str]]]:
+    _warn_legacy_storage("load")
     p = Path(path)
     if not p.exists():
         raise StorageError(f"file not found: {p}")

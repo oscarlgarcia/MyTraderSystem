@@ -24,6 +24,10 @@ class FeatureDefinition:
     validation_policy: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if tuple(self.entity_keys) != ("symbol",):
+            raise ValueError("V2 feature module currently supports only symbol-scoped entity_keys=('symbol',)")
+
     @property
     def definition_hash(self) -> str:
         payload = json.dumps(asdict(self), sort_keys=True, default=str, separators=(",", ":"))
@@ -63,6 +67,10 @@ class FeatureSetDefinition:
     node_definitions: Tuple[FeatureNodeDefinition, ...] = ()
     tags: Tuple[str, ...] = ()
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if tuple(self.entity_keys) != ("symbol",):
+            raise ValueError("V2 feature module currently supports only symbol-scoped entity_keys=('symbol',)")
 
     @property
     def definition_hash(self) -> str:

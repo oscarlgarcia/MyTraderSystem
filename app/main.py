@@ -228,6 +228,7 @@ def run_cycle(
     production_mode: bool = False,
     allow_live_fallback: bool = False,
     error_policy: str | None = None,
+    feature_audit_path: str | None = None,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -269,6 +270,7 @@ def run_cycle(
         logger=logger,
         recorder=recorder,
         trace_steps=trace_steps,
+        feature_audit_path=feature_audit_path,
         mode=mode,
     )
 
@@ -326,6 +328,7 @@ def run() -> int:
         production_mode=runtime["production_mode"],
         allow_live_fallback=runtime["allow_live_fallback"],
         error_policy=runtime["error_policy"],
+        feature_audit_path=args.feature_audit_path,
     )
 
     logger.info(

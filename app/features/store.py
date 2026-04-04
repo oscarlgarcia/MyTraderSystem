@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from datetime import datetime
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -19,6 +20,10 @@ TransformerFn = Callable[[FeatureVector], FeatureVector]
 TRANSFORMERS: Dict[str, TransformerFn] = {}
 
 
+def _warn_legacy_api(name: str) -> None:
+    warnings.warn(f"app.features.store.{name} is legacy; migrate to V2 runtime/materialization/store APIs", DeprecationWarning, stacklevel=2)
+
+
 def _is_finite_price(price: float) -> bool:
     import math
 
@@ -26,6 +31,7 @@ def _is_finite_price(price: float) -> bool:
 
 
 def register_aggregator(name: str, fn: AggregatorFn) -> None:
+    _warn_legacy_api("register_aggregator")
     AGGREGATORS[name] = fn
 
 
@@ -42,6 +48,7 @@ class FeatureState:
         feature_set: FeatureSetDefinition | None = None,
         out_of_order_policy: str = "reject",
     ) -> None:
+        _warn_legacy_api("FeatureState")
         self.cache = cache or FeatureCache()
         self.feature_set = feature_set or build_legacy_runtime_feature_set(
             window=window,
@@ -91,6 +98,7 @@ def compute_features(
     feature_set: Optional[FeatureSetDefinition] = None,
     cache: Optional[FeatureCache] = None,
 ) -> List[FeatureVector]:
+    _warn_legacy_api("compute_features")
     if not events:
         return []
     if feature_set is None:

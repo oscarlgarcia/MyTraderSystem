@@ -187,3 +187,35 @@ class FeatureServingService:
             result=result,
             elapsed=time.perf_counter() - start,
         )
+
+    def get_recent_history(
+        self,
+        *,
+        symbol: str,
+        feature_set_name: str,
+        feature_set_version: str,
+        limit: int = 10,
+    ) -> list[FeatureVector]:
+        return self.online_store.get_recent_history(
+            symbol=symbol,
+            feature_set_name=feature_set_name,
+            feature_set_version=feature_set_version,
+            limit=limit,
+        )
+
+    def get_history_range(
+        self,
+        *,
+        symbol: str,
+        feature_set_name: str,
+        feature_set_version: str,
+        start_ts: datetime,
+        end_ts: datetime,
+    ) -> list[FeatureVector]:
+        return self.online_store.get_history_range(
+            symbol=symbol,
+            feature_set_name=feature_set_name,
+            feature_set_version=feature_set_version,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )

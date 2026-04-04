@@ -190,6 +190,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Duracion maxima en segundos para live; ignora en dry si no se indica",
     )
     parser.add_argument(
+        "--feature-audit-path",
+        default=None,
+        help="Ruta del audit trail de features requerido fuera de dry mode.",
+    )
+    parser.add_argument(
         "--trace-steps",
         action="store_true",
         help="Emite trazas start/done por fase del pipeline para debugging visual",
