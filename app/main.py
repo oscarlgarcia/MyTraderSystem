@@ -24,6 +24,7 @@ from app.ingestion.storage import validate_output_path
 from app.ingestion.storage_health import assert_storage_health_for_runtime
 from app.features.pipeline import run_feature_pipeline
 from app.features.engine import FeatureEngine
+from app.features.audit import build_decision_audit_record, persist_decision_audits
 from app.ops.release_gates import render_release_gate_summary, run_release_gates
 from app.strategy.basic import generate_signals
 from app.risk.rules import apply_risk
@@ -60,6 +61,7 @@ def run_trading_cycle(
     logger,
     recorder: Optional[List[str]] = None,
     trace_steps: bool = False,
+    feature_audit_path: str | None = None,
 ):
     _trace(logger, trace_steps, "features", "start")
     feature_engine = FeatureEngine()
@@ -69,6 +71,9 @@ def run_trading_cycle(
 
     _trace(logger, trace_steps, "strategy", "start")
     signals = generate_signals(fvs)
+    if feature_audit_path:
+        audits = [build_decision_audit_record(fv, sig) for fv, sig in zip(fvs, signals)]
+        persist_decision_audits(audits, feature_audit_path)
     _trace(logger, trace_steps, "strategy", "done", {"count": len(signals)})
     _mark(recorder, "strategy")
 

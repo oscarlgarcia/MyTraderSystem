@@ -1,12 +1,10 @@
-"""
-In-memory Feature Cache con índice temporal por símbolo.
-"""
+"""In-memory Feature Cache con ?ndice temporal por s?mbolo."""
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from bisect import bisect_right
-from typing import Dict, List, Tuple, Optional
+from collections import OrderedDict
+from typing import Dict, List, Optional
 
 from app.common.dto import FeatureVector
 
@@ -14,19 +12,24 @@ from app.common.dto import FeatureVector
 class FeatureCache:
     def __init__(self, capacity_per_symbol: int = 1000) -> None:
         self.capacity = capacity_per_symbol
-        # symbol -> OrderedDict ts -> FeatureVector (mantiene orden de inserción)
         self.data: Dict[str, OrderedDict[float, FeatureVector]] = {}
 
     def put(self, fv: FeatureVector) -> None:
         sym = fv.symbol
         ts = fv.ts.timestamp()
         od = self.data.setdefault(sym, OrderedDict())
-        od[ts] = fv
-        # mantener orden por ts
-        self.data[sym] = OrderedDict(sorted(od.items(), key=lambda x: x[0]))
-        if len(self.data[sym]) > self.capacity:
-            # expulsar más antiguo
-            self.data[sym].popitem(last=False)
+        if not od:
+            od[ts] = fv
+        else:
+            last_key = next(reversed(od))
+            if ts >= last_key:
+                od[ts] = fv
+            else:
+                od[ts] = fv
+                self.data[sym] = OrderedDict(sorted(od.items(), key=lambda x: x[0]))
+                od = self.data[sym]
+        if len(od) > self.capacity:
+            od.popitem(last=False)
 
     def get_latest(self, symbol: str) -> Optional[FeatureVector]:
         od = self.data.get(symbol)

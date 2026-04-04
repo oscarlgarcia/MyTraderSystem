@@ -1,5 +1,15 @@
-"""
-Feature Store: calculations and serving of derived data for strategies.
-"""
+﻿"""Feature package exports both legacy and V2 surfaces."""
 
-__all__ = []
+from app.features.definitions import FeatureDefinition, FeatureNodeDefinition, FeatureSetDefinition
+from app.features.definition_registry import DefinitionRegistry
+from app.features.engine import FeatureEngine
+from app.features.registry import FeatureRegistry
+
+__all__ = [
+    "FeatureDefinition",
+    "FeatureNodeDefinition",
+    "FeatureSetDefinition",
+    "DefinitionRegistry",
+    "FeatureEngine",
+    "FeatureRegistry",
+]

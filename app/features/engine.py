@@ -1,7 +1,4 @@
-"""
-FeatureEngine: fachada de acceso a FeatureState + Cache.
-Incluye contadores ligeros de observabilidad (no thread-safe).
-"""
+"""FeatureEngine facade over FeatureRuntimeEngine + cache/serving helpers."""
 
 from __future__ import annotations
 
@@ -11,9 +8,9 @@ import time
 from typing import Iterable, List, Optional
 
 from app.common.dto import FeatureVector, MarketEvent
-from app.features.store import FeatureState
 from app.features.cache import FeatureCache
-from app.features.registry import FeatureSet
+from app.features.definitions import FeatureSetDefinition
+from app.features.runtime import FeatureRuntimeEngine, build_legacy_runtime_feature_set
 
 
 class FeatureEngine:
@@ -23,18 +20,18 @@ class FeatureEngine:
         windows: Iterable[int] | None = None,
         aggregators: Iterable[str] | None = None,
         transformers: Iterable[str] | None = None,
-        feature_set: Optional[FeatureSet] = None,
+        feature_set: Optional[FeatureSetDefinition] = None,
         cache_capacity: int = 1000,
+        out_of_order_policy: str = "reject",
     ) -> None:
         self.cache = FeatureCache(capacity_per_symbol=cache_capacity)
-        if feature_set:
-            window = feature_set.windows[0] if feature_set.windows else window
-            windows = feature_set.windows
-            aggregators = feature_set.aggregators
-            transformers = feature_set.transformers
-        self.state = FeatureState(
-            window=window, windows=windows, aggregators=aggregators, transformers=transformers, cache=self.cache
+        feature_set = feature_set or build_legacy_runtime_feature_set(
+            window=window,
+            windows=windows,
+            aggregators=aggregators,
+            transformers=transformers,
         )
+        self.runtime = FeatureRuntimeEngine(feature_set=feature_set, cache=self.cache, out_of_order_policy=out_of_order_policy)
         self.metrics = {
             "events_in": 0,
             "features_out": 0,
@@ -51,15 +48,14 @@ class FeatureEngine:
             return None
         start = time.perf_counter()
         try:
-            fv = self.state.update(event)
-        except Exception as exc:  # pragma: no cover - ruta de error rara
+            fv = self.runtime.update(event)
+        except Exception as exc:
             self.metrics["transform_errors"] += 1
             logging.getLogger("features.engine").warning("feature update failed", exc_info=exc)
             return None
         elapsed = time.perf_counter() - start
         self.metrics["compute_latency_total"] += elapsed
-        if elapsed > self.metrics["compute_latency_max"]:
-            self.metrics["compute_latency_max"] = elapsed
+        self.metrics["compute_latency_max"] = max(self.metrics["compute_latency_max"], elapsed)
         if fv:
             self.metrics["features_out"] += 1
         return fv
@@ -91,14 +87,4 @@ class FeatureEngine:
 
     def log_metrics(self, logger: Optional[logging.Logger] = None) -> None:
         logger = logger or logging.getLogger("features.engine")
-        logger.info(
-            "feature engine metrics",
-            extra={
-                "events_in": self.metrics["events_in"],
-                "features_out": self.metrics["features_out"],
-                "dropped_non_finite": self.metrics["dropped_non_finite"],
-                "transform_errors": self.metrics["transform_errors"],
-                "latency_max": self.metrics["compute_latency_max"],
-                "latency_avg": self.avg_latency(),
-            },
-        )
+        logger.info("feature engine metrics", extra={**self.metrics, "latency_avg": self.avg_latency()})

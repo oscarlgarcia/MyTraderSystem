@@ -1,6 +1,4 @@
-"""
-Estrategia mínima basada en retorno y SMA.
-"""
+﻿"""Estrategia mínima basada en retorno y SMA."""
 
 from __future__ import annotations
 
@@ -24,11 +22,7 @@ def generate_signals(features: Iterable[FeatureVector]) -> List[Signal]:
         else:
             side = "flat"
 
-        if side == "flat":
-            size = 0.0
-        else:
-            size = max(0.0, min(abs(ret_1), 1.0))  # tamaño proporcional a confianza
-
+        size = 0.0 if side == "flat" else max(0.0, min(abs(ret_1), 1.0))
         signals.append(
             Signal(
                 symbol=fv.symbol,
@@ -36,6 +30,11 @@ def generate_signals(features: Iterable[FeatureVector]) -> List[Signal]:
                 side=side,
                 size=size,
                 confidence=max(0.0, min(abs(ret_1) if ret_1 is not None else 0.0, 1.0)),
+                metadata={
+                    "feature_bundle_id": fv.lineage_id,
+                    "feature_set_name": fv.feature_set_name,
+                    "feature_set_version": fv.feature_set_version,
+                },
             )
         )
     return signals

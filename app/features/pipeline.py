@@ -14,12 +14,20 @@ from app.features.engine import FeatureEngine
 logger = logging.getLogger("features.pipeline")
 
 
+def _event_ts(event) -> object:
+    return getattr(event, "event_ts", getattr(event, "exchange_ts", None))
+
+
+def _available_ts(event) -> object:
+    return getattr(event, "available_ts", None) or _event_ts(event)
+
+
 def run_feature_pipeline(
     events: Iterable[MarketEvent],
     window: int = 5,
     engine: Optional[FeatureEngine] = None,
 ) -> List[FeatureVector]:
-    events_list = sorted(list(events), key=lambda e: (e.symbol, e.event_ts))
+    events_list = sorted(list(events), key=lambda e: (getattr(e, "symbol", ""), _available_ts(e), _event_ts(e)))
     eng = engine or FeatureEngine(window=window)
     features = eng.update_batch(events_list)
     logger.info(

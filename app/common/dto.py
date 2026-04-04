@@ -1,14 +1,8 @@
-"""
-Data Transfer Objects (DTOs) used across the trading system.
-
-These dataclasses are intentionally stdlib-only to stay lightweight and easily serializable.
-"""
-
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 
 def utc_now() -> datetime:
@@ -31,7 +25,7 @@ class TraceContext:
 
 @dataclass(slots=True)
 class MarketEvent:
-    """Normalized market data event."""
+    """Normalized market data event with explicit temporal semantics."""
 
     symbol: str
     event_ts: datetime
@@ -39,6 +33,10 @@ class MarketEvent:
     size: float
     source: Literal["trade", "kline", "book"]
     metadata: Dict[str, str] = field(default_factory=dict)
+    published_ts: Optional[datetime] = None
+    available_ts: Optional[datetime] = None
+    processed_ts: Optional[datetime] = None
+    observation_ts: Optional[datetime] = None
 
     def __post_init__(self) -> None:
         self.symbol = normalize_symbol(self.symbol)
@@ -48,20 +46,44 @@ class MarketEvent:
             raise ValueError("price must be non-negative")
         if self.size < 0:
             raise ValueError("size must be non-negative")
+        self.published_ts = self.published_ts or self.event_ts
+        self.available_ts = self.available_ts or self.published_ts
+        self.processed_ts = self.processed_ts or self.available_ts
+        self.observation_ts = self.observation_ts or self.event_ts
+        for attr in ("published_ts", "available_ts", "processed_ts", "observation_ts"):
+            value = getattr(self, attr)
+            if value is None or value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+                raise ValueError(f"{attr} must be timezone-aware (UTC)")
 
 
 @dataclass(slots=True)
 class FeatureVector:
-    """Derived features for a given symbol and timestamp."""
+    """Derived features for a given entity and timestamp."""
 
     symbol: str
     ts: datetime
     values: Dict[str, float]
+    feature_set_name: str = "legacy"
+    feature_set_version: str = "legacy"
+    available_ts: Optional[datetime] = None
+    source_cutoff_ts: Optional[datetime] = None
+    lineage_id: str = ""
+    quality_flags: Tuple[str, ...] = ()
+    entity_keys: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.symbol = normalize_symbol(self.symbol)
         if self.ts.tzinfo is None or self.ts.tzinfo.utcoffset(self.ts) is None:
             raise ValueError("ts must be timezone-aware (UTC)")
+        self.available_ts = self.available_ts or self.ts
+        self.source_cutoff_ts = self.source_cutoff_ts or self.ts
+        if self.available_ts.tzinfo is None or self.available_ts.tzinfo.utcoffset(self.available_ts) is None:
+            raise ValueError("available_ts must be timezone-aware (UTC)")
+        if self.source_cutoff_ts.tzinfo is None or self.source_cutoff_ts.tzinfo.utcoffset(self.source_cutoff_ts) is None:
+            raise ValueError("source_cutoff_ts must be timezone-aware (UTC)")
+        if not self.entity_keys:
+            self.entity_keys = {"symbol": self.symbol}
+        self.quality_flags = tuple(self.quality_flags)
 
 
 @dataclass(slots=True)
@@ -75,6 +97,7 @@ class Signal:
     confidence: float = 1.0
     ttl_seconds: Optional[int] = None
     strategy_id: str = "default"
+    metadata: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.symbol = normalize_symbol(self.symbol)
@@ -141,7 +164,7 @@ class PortfolioState:
     """Aggregate portfolio state used for risk and reporting."""
 
     ts: datetime
-    positions: Dict[str, float]  # symbol -> position size (base units)
+    positions: Dict[str, float]
     cash: float
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
@@ -152,5 +175,4 @@ class PortfolioState:
             raise ValueError("ts must be timezone-aware (UTC)")
 
     def total_value(self) -> float:
-        """Compute a conservative total value using realized + unrealized + cash."""
         return self.cash + self.unrealized_pnl + self.realized_pnl
