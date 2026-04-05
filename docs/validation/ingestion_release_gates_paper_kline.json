@@ -2,9 +2,9 @@
   "target": "paper",
   "env": "dev",
   "base_dir": "data/dev",
-  "generated_at": "2026-04-05T01:32:43.870840+00:00",
-  "overall_status": "FAIL",
-  "pass_ok": false,
+  "generated_at": "2026-04-05T03:25:46.029763+00:00",
+  "overall_status": "PASS",
+  "pass_ok": true,
   "blocks": [
     {
       "name": "support_matrix",
@@ -14321,44 +14321,37 @@
         "pass_ok": true,
         "generated_at": null,
         "comparison_reason": "semantic_match",
-        "artifact_age_seconds": 793.164585
+        "artifact_age_seconds": 1391.38595
       }
     },
     {
       "name": "canary_ws",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "reasons": [
-        "pass_ok is not true",
-        "duplicates exceed promotion threshold",
-        "gaps exceed promotion threshold",
-        "heartbeat misses exceed promotion threshold",
-        "exchange receive skew exceeds promotion threshold",
-        "processing latency exceeds promotion threshold",
-        "streams degraded during runtime validation"
+        "artifact validated"
       ],
       "details": {
         "path": "docs/validation/ingestion_ws_canary_report_paper_kline.json",
-        "pass_ok": false,
-        "generated_at": "2026-04-05T01:21:55.136890+00:00",
-        "comparison_reason": "duplicates_detected,gaps_detected,heartbeat_missed_detected,exchange_receive_skew_slo_breached,processing_latency_slo_breached,streams_degraded_detected",
-        "artifact_age_seconds": 648.076874
+        "pass_ok": true,
+        "generated_at": "2026-04-05T03:04:00.332324+00:00",
+        "comparison_reason": "continuity_ok",
+        "artifact_age_seconds": 1305.357867
       }
     },
     {
       "name": "storage_benchmark",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "reasons": [
-        "pass_ok is not true",
-        "shadow_scoped_case.pass_ok is not true"
+        "artifact validated"
       ],
       "details": {
         "path": "docs/validation/ingestion_storage_benchmark_paper_kline.json",
-        "pass_ok": false,
-        "generated_at": "2026-04-05T01:26:54.132168+00:00",
+        "pass_ok": true,
+        "generated_at": "2026-04-05T03:25:21.887079+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 349.107849
+        "artifact_age_seconds": 23.816722
       }
     },
     {
@@ -14371,27 +14364,24 @@
       "details": {
         "path": "docs/validation/ingestion_replay_parity_paper_kline.json",
         "pass_ok": true,
-        "generated_at": "2026-04-05T01:19:27.100519+00:00",
+        "generated_at": "2026-04-05T03:02:31.837057+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 796.163313
+        "artifact_age_seconds": 1393.87881
       }
     },
     {
       "name": "paper_soak",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "reasons": [
-        "pass_ok is not true",
-        "heartbeat misses exceed soak threshold",
-        "streams degraded during soak",
-        "processing latency exceeds soak threshold"
+        "artifact validated"
       ],
       "details": {
         "path": "docs/validation/ingestion_soak_evidence_paper_kline.json",
-        "pass_ok": false,
-        "generated_at": "2026-04-05T01:32:10.850981+00:00",
+        "pass_ok": true,
+        "generated_at": "2026-04-05T02:46:55.029927+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 32.439625
+        "artifact_age_seconds": 2330.699132
       }
     },
     {
@@ -14406,7 +14396,7 @@
         "pass_ok": true,
         "generated_at": "2026-04-05T01:25:53.828770+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 409.48183
+        "artifact_age_seconds": 7191.91206
       }
     },
     {
@@ -14417,11 +14407,11 @@
         "artifact validated"
       ],
       "details": {
-        "path": "docs/validation/ingestion_failure_injection.json",
+        "path": "docs/validation/ingestion_failure_injection_live_kline.json",
         "pass_ok": true,
-        "generated_at": "2026-04-04T09:03:47.897760+00:00",
+        "generated_at": "2026-04-05T01:25:57.924073+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 59335.425776
+        "artifact_age_seconds": 7187.828848
       }
     },
     {
@@ -14607,11 +14597,11 @@
         "artifact validated"
       ],
       "details": {
-        "path": "docs/validation/ingestion_live_drill_report.json",
+        "path": "docs/validation/ingestion_live_drill_report_live_kline.json",
         "pass_ok": false,
-        "generated_at": "2026-04-04T09:03:53.216714+00:00",
+        "generated_at": "2026-04-05T03:24:32.989445+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 59330.120526
+        "artifact_age_seconds": 72.77616
       }
     },
     {

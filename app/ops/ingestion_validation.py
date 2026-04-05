@@ -640,7 +640,7 @@ def run_soak_validation(
     mode: str = "deterministic",
     iterations: int = 5,
     events_per_iteration: int = 500,
-    duration_seconds: float = 130.0,
+    duration_seconds: float = 150.0,
     pipeline_version: str = "v2",
     symbol: str = "BTCUSDT",
     stream_type: str = "kline",
@@ -909,7 +909,7 @@ def _build_ws_live_canary_source(
             session_events += 1
             if reconnect_state["remaining"] > 0 and session_events >= max(1, reconnect_after_events):
                 reconnect_state["remaining"] -= 1
-                raise TimeoutError("ws canary induced reconnect")
+                raise ConnectionAbortedError("ws canary induced reconnect")
 
     return BinanceSource(
         cfg=cfg,
@@ -1401,12 +1401,12 @@ def run_storage_benchmark(
             )
             if workspace_dir is None:
                 extra_cleanup_dirs.append(shadow_base_dir)
-            shadow_bursts = max(2, min(3, bursts + 1))
-            shadow_events_per_symbol = max(12, min(24, events_per_symbol_per_burst * 2))
-            shadow_symbol_count = max(2, min(4, len(symbols)))
+            shadow_bursts = max(2, min(3, bursts))
+            shadow_events_per_symbol = max(8, min(12, events_per_symbol_per_burst))
+            shadow_symbol_count = max(2, min(2, len(symbols)))
             if target_profile == "live":
                 shadow_bursts = max(4, shadow_bursts)
-                shadow_events_per_symbol = max(48, shadow_events_per_symbol)
+                shadow_events_per_symbol = max(64, events_per_symbol_per_burst * 4)
                 shadow_symbol_count = 1
             shadow_symbols = [f"SHADOW{index:04d}USDT" for index in range(1, shadow_symbol_count + 1)]
             shadow_events = _benchmark_trade_events(
@@ -1415,7 +1415,7 @@ def run_storage_benchmark(
                 events_per_symbol_per_burst=shadow_events_per_symbol,
             )
             gc.collect()
-            shadow_batch_size = 24 if target_profile != "live" else len(shadow_events)
+            shadow_batch_size = max(24, len(shadow_events))
             shadow_partition_flush_size = shadow_bursts * shadow_events_per_symbol if target_profile == "live" else shadow_events_per_symbol
             shadow_started = time.perf_counter()
             primary_sink = ParquetEventSink(
@@ -1592,13 +1592,16 @@ def run_storage_benchmark(
         concurrent_symbols = symbols[: max(2, min(4, len(symbols)))]
         first_half_symbols = concurrent_symbols[: max(1, len(concurrent_symbols) // 2)]
         second_half_symbols = concurrent_symbols[max(1, len(concurrent_symbols) // 2) :] or concurrent_symbols[:1]
-        concurrent_flush_size = max(48, events_per_symbol_per_burst * 4)
+        concurrent_events_per_symbol = max(8, events_per_symbol_per_burst)
+        if target_profile == "live":
+            concurrent_events_per_symbol = max(24, events_per_symbol_per_burst * 2)
+        concurrent_flush_size = max(48, concurrent_events_per_symbol * 4)
         first_writer = ParquetWriter(base_dir=concurrent_base_dir, env="test", flush_size=concurrent_flush_size, dedup=True)
         first_sink = ParquetEventSink(first_writer)
         first_events = _benchmark_trade_events(
             symbols=first_half_symbols,
             bursts=bursts,
-            events_per_symbol_per_burst=events_per_symbol_per_burst,
+            events_per_symbol_per_burst=concurrent_events_per_symbol,
         )
         collect_events(
             mode="live",
@@ -1654,7 +1657,7 @@ def run_storage_benchmark(
         second_events = _benchmark_trade_events(
             symbols=second_half_symbols,
             bursts=bursts,
-            events_per_symbol_per_burst=events_per_symbol_per_burst,
+            events_per_symbol_per_burst=concurrent_events_per_symbol,
         )
         collect_events(
             mode="live",

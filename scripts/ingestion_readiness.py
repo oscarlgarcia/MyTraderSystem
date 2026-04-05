@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--soak-mode", choices=["deterministic", "ws-live"], default="ws-live")
     parser.add_argument("--soak-iterations", type=int, default=5)
     parser.add_argument("--soak-events-per-iteration", type=int, default=500)
-    parser.add_argument("--soak-duration-seconds", type=float, default=130.0)
+    parser.add_argument("--soak-duration-seconds", type=float, default=150.0)
     parser.add_argument("--soak-reconnect-after-events", type=int, default=1)
     parser.add_argument("--soak-induced-reconnects", type=int, default=1)
     return parser

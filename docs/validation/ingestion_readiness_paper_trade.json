@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-05T01:19:07.362153+00:00",
+  "generated_at": "2026-04-05T03:02:01.623957+00:00",
   "target": "paper",
   "profile": "paper_trade",
   "dataset_env": "papercand",
@@ -11,8 +11,8 @@
   "raw_base_dir": "data/paper_candidate_ok/raw",
   "normalized_path": "data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03",
   "validation_dir": "docs/validation",
-  "overall_status": "FAIL",
-  "pass_ok": false,
+  "overall_status": "PASS",
+  "pass_ok": true,
   "steps": [
     {
       "name": "replay_parity",
@@ -33,7 +33,7 @@
         "docs/validation/ingestion_replay_parity_paper_trade.json"
       ],
       "returncode": 0,
-      "stdout": "replay parity: PASS\n- generated_at: 2026-04-05T01:18:04.411241+00:00\n- raw_base_dir: data/paper_candidate_ok/raw\n- normalized_path: data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03\n- env: papercand\n- symbol: BTCUSDT\n- stream_type: trade\n- raw_rows: 3\n- replay_rows: 3\n- normalized_rows: 3\n- replay_identity_count: 3\n- normalized_identity_count: 3\n- manifest_ok: True\n- order_match: True\n- report_path: docs/validation/ingestion_replay_parity_paper_trade.json\n",
+      "stdout": "replay parity: PASS\n- generated_at: 2026-04-05T03:00:59.483281+00:00\n- raw_base_dir: data/paper_candidate_ok/raw\n- normalized_path: data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03\n- env: papercand\n- symbol: BTCUSDT\n- stream_type: trade\n- raw_rows: 3\n- replay_rows: 3\n- normalized_rows: 3\n- replay_identity_count: 3\n- normalized_identity_count: 3\n- manifest_ok: True\n- order_match: True\n- report_path: docs/validation/ingestion_replay_parity_paper_trade.json\n",
       "stderr": "",
       "artifact_path": "docs/validation/ingestion_replay_parity_paper_trade.json"
     },
@@ -55,10 +55,62 @@
         "--output",
         "docs/validation/ingestion_storage_benchmark_paper_trade.json"
       ],
-      "returncode": 1,
-      "stdout": "storage benchmark: FAIL\n- generated_at: 2026-04-05T01:19:07.061729+00:00\n- target_profile: paper\n- synthetic_rows_per_second: 1403.300\n- replay_rows_per_second: 1100.125\n- high_cardinality_cases: 2\n- report_path: docs/validation/ingestion_storage_benchmark_paper_trade.json\n",
+      "returncode": 0,
+      "stdout": "storage benchmark: PASS\n- generated_at: 2026-04-05T03:01:53.033047+00:00\n- target_profile: paper\n- synthetic_rows_per_second: 1870.259\n- replay_rows_per_second: 2078.650\n- high_cardinality_cases: 2\n- report_path: docs/validation/ingestion_storage_benchmark_paper_trade.json\n",
       "stderr": "",
       "artifact_path": "docs/validation/ingestion_storage_benchmark_paper_trade.json"
+    },
+    {
+      "name": "vendor_contracts",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_vendor_contracts.py",
+        "--output",
+        "docs/validation/ingestion_vendor_contracts_paper_trade.json"
+      ],
+      "returncode": 0,
+      "stdout": "vendor contracts: PASS\n- generated_at: 2026-04-05T03:01:59.182005+00:00\n- pytest_target: tests/network/test_binance_contracts.py\n- duration_seconds: 4.201\n- returncode: 0\n- report_path: docs/validation/ingestion_vendor_contracts_paper_trade.json\n",
+      "stderr": "",
+      "artifact_path": "docs/validation/ingestion_vendor_contracts_paper_trade.json"
+    },
+    {
+      "name": "release_gates_final",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_release_gates.py",
+        "--env",
+        "dev",
+        "--target",
+        "paper",
+        "--phase",
+        "final",
+        "--stream-types",
+        "trade",
+        "--rest-canary-path",
+        "docs/validation/ingestion_canary_report_paper_trade.json",
+        "--ws-canary-path",
+        "docs/validation/ingestion_ws_canary_report_paper_trade.json",
+        "--replay-parity-path",
+        "docs/validation/ingestion_replay_parity_paper_trade.json",
+        "--benchmark-path",
+        "docs/validation/ingestion_storage_benchmark_paper_trade.json",
+        "--soak-path",
+        "docs/validation/ingestion_soak_evidence_paper_trade.json",
+        "--network-contracts-path",
+        "docs/validation/ingestion_vendor_contracts_paper_trade.json",
+        "--failure-injection-path",
+        "docs/validation/ingestion_failure_injection_paper_trade.json",
+        "--live-drill-path",
+        "docs/validation/ingestion_live_drill_report_paper_trade.json",
+        "--base-dir",
+        "data/dev",
+        "--output",
+        "docs/validation/ingestion_release_gates_paper_trade.json"
+      ],
+      "returncode": 0,
+      "stdout": "Release gates: PASS (paper)\n- base_dir: data/dev\n- support_matrix: PASS [required] - support matrix aligned\n- exact_recovery: WARN [informational] - trade exact recovery suite still pending\n- live_scope: PASS [informational] - live scope not enforced for non-live targets\n- instrument_metadata: PASS [required] - instrument metadata snapshot valid\n- canary_rest: WARN [informational] - missing artifact: docs/validation/ingestion_canary_report_paper_trade.json\n- canary_ws: WARN [informational] - missing artifact: docs/validation/ingestion_ws_canary_report_paper_trade.json\n- storage_benchmark: PASS [required] - artifact validated\n- replay_parity: PASS [required] - artifact validated\n- paper_soak: WARN [informational] - missing artifact: docs/validation/ingestion_soak_evidence_paper_trade.json\n- vendor_contracts: PASS [required] - artifact validated\n- failure_injection: WARN [informational] - missing artifact: docs/validation/ingestion_failure_injection_paper_trade.json\n- observability_contract: PASS [required] - observability contract defined\n- live_drill: WARN [informational] - missing artifact: docs/validation/ingestion_live_drill_report_paper_trade.json\n- shadow_diffs: PASS [informational] - shadow comparison clean\n- storage_health: PASS [required] - storage health clean\n- phase: final\n- report_path: docs/validation/ingestion_release_gates_paper_trade.json\n",
+      "stderr": "",
+      "artifact_path": "docs/validation/ingestion_release_gates_paper_trade.json"
     }
   ]
 }

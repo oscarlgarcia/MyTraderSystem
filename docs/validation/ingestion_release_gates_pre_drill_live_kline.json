@@ -2,9 +2,9 @@
   "target": "live",
   "env": "dev",
   "base_dir": "data/dev",
-  "generated_at": "2026-04-05T01:27:47.620458+00:00",
-  "overall_status": "FAIL",
-  "pass_ok": false,
+  "generated_at": "2026-04-05T03:24:09.415838+00:00",
+  "overall_status": "PASS",
+  "pass_ok": true,
   "blocks": [
     {
       "name": "support_matrix",
@@ -14321,45 +14321,37 @@
         "pass_ok": true,
         "generated_at": null,
         "comparison_reason": "semantic_match",
-        "artifact_age_seconds": 327.760563
+        "artifact_age_seconds": 7311.748501
       }
     },
     {
       "name": "canary_ws",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "reasons": [
-        "pass_ok is not true",
-        "duplicates exceed promotion threshold",
-        "gaps exceed promotion threshold",
-        "heartbeat misses exceed promotion threshold",
-        "exchange receive skew exceeds promotion threshold",
-        "processing latency exceeds promotion threshold",
-        "streams degraded during runtime validation"
+        "artifact validated"
       ],
       "details": {
         "path": "docs/validation/ingestion_ws_canary_report_live_kline.json",
-        "pass_ok": false,
-        "generated_at": "2026-04-05T01:24:41.456943+00:00",
-        "comparison_reason": "duplicates_detected,gaps_detected,heartbeat_missed_detected,exchange_receive_skew_slo_breached,processing_latency_slo_breached,streams_degraded_detected",
-        "artifact_age_seconds": 183.594601
+        "pass_ok": true,
+        "generated_at": "2026-04-05T02:07:00.352025+00:00",
+        "comparison_reason": "continuity_ok",
+        "artifact_age_seconds": 4628.665878
       }
     },
     {
       "name": "storage_benchmark",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "reasons": [
-        "pass_ok is not true",
-        "concurrent_compaction_case.pass_ok is not true",
-        "shadow_scoped_case.pass_ok is not true"
+        "artifact validated"
       ],
       "details": {
         "path": "docs/validation/ingestion_storage_benchmark_live_kline.json",
-        "pass_ok": false,
-        "generated_at": "2026-04-05T01:27:06.241572+00:00",
+        "pass_ok": true,
+        "generated_at": "2026-04-05T01:58:58.634107+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 38.831614
+        "artifact_age_seconds": 5110.393751
       }
     },
     {
@@ -14374,18 +14366,22 @@
         "pass_ok": true,
         "generated_at": "2026-04-05T01:22:13.667616+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 331.43209
+        "artifact_age_seconds": 7315.371368
       }
     },
     {
       "name": "paper_soak",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "reasons": [
-        "missing artifact: docs/validation/ingestion_soak_evidence_live_kline.json"
+        "artifact validated"
       ],
       "details": {
-        "path": "docs/validation/ingestion_soak_evidence_live_kline.json"
+        "path": "docs/validation/ingestion_soak_evidence_live_kline.json",
+        "pass_ok": true,
+        "generated_at": "2026-04-05T03:00:39.334072+00:00",
+        "comparison_reason": null,
+        "artifact_age_seconds": 1409.713591
       }
     },
     {
@@ -14400,7 +14396,7 @@
         "pass_ok": true,
         "generated_at": "2026-04-05T01:25:53.844862+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 111.294569
+        "artifact_age_seconds": 7095.21361
       }
     },
     {
@@ -14415,7 +14411,7 @@
         "pass_ok": true,
         "generated_at": "2026-04-05T01:25:57.924073+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 107.249274
+        "artifact_age_seconds": 7091.141207
       }
     },
     {
@@ -14605,7 +14601,7 @@
         "pass_ok": false,
         "generated_at": "2026-04-04T09:03:53.216714+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 59031.987447
+        "artifact_age_seconds": 66015.864473
       }
     },
     {

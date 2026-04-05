@@ -377,7 +377,7 @@ class ResilientRunner:
                 self.metrics.last_lag_seconds = self.metrics.max_event_gap_seconds
                 self._update_temporal_metrics(partition_key, stream_state)
 
-                if delta_seconds > self.lag_threshold_seconds and recovery_policy.can_recover(self.snapshot_fn):
+                if gap_observation.detected and recovery_policy.can_recover(self.snapshot_fn):
                     recovery_request = build_recovery_request(
                         ev,
                         partition=partition_key,
@@ -420,9 +420,11 @@ class ResilientRunner:
         stream_state.last_event_ts = max(stream_state.last_event_ts or ev.event_ts, ev.event_ts)
         self._update_temporal_metrics(partition_key, stream_state)
 
-        # latency from event_ts to processing time
+        # Runtime latency should reflect ingest handling after the event becomes
+        # available to the process, not the vendor event clock itself.
         now = datetime.now(timezone.utc)
-        latency = max(0.0, (now - ev.event_ts).total_seconds())
+        latency_reference = getattr(ev, "receive_ts", None) or getattr(ev, "provider_ts", None) or ev.event_ts
+        latency = max(0.0, (now - latency_reference).total_seconds())
         self.metrics.last_latency_seconds = latency
         if latency > self.metrics.max_latency_seconds:
             self.metrics.max_latency_seconds = latency

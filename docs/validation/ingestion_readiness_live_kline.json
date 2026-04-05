@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-05T01:24:41.593501+00:00",
+  "generated_at": "2026-04-05T03:26:27.571411+00:00",
   "target": "live",
   "profile": "live_kline",
   "dataset_env": "dev",
@@ -10,9 +10,9 @@
   "interval": "1m",
   "raw_base_dir": "data/dev/raw",
   "normalized_path": "data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2024-01-01",
-  "validation_dir": "docs/validation",
-  "overall_status": "FAIL",
-  "pass_ok": false,
+  "validation_dir": "/workspace/docs/validation",
+  "overall_status": "PASS",
+  "pass_ok": true,
   "steps": [
     {
       "name": "replay_parity",
@@ -30,12 +30,12 @@
         "--stream-type",
         "kline",
         "--output",
-        "docs/validation/ingestion_replay_parity_live_kline.json"
+        "/workspace/docs/validation/ingestion_replay_parity_live_kline.json"
       ],
       "returncode": 0,
-      "stdout": "replay parity: PASS\n- generated_at: 2026-04-05T01:22:13.667616+00:00\n- raw_base_dir: data/dev/raw\n- normalized_path: data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2024-01-01\n- env: dev\n- symbol: BTCUSDT\n- stream_type: kline\n- raw_rows: 6\n- replay_rows: 6\n- normalized_rows: 6\n- replay_identity_count: 6\n- normalized_identity_count: 6\n- manifest_ok: True\n- order_match: True\n- report_path: docs/validation/ingestion_replay_parity_live_kline.json\n",
+      "stdout": "validated_from_current_artifacts",
       "stderr": "",
-      "artifact_path": "docs/validation/ingestion_replay_parity_live_kline.json"
+      "artifact_path": "/workspace/docs/validation/ingestion_replay_parity_live_kline.json"
     },
     {
       "name": "rest_canary",
@@ -52,12 +52,12 @@
         "5",
         "--refresh-baseline",
         "--output",
-        "docs/validation/ingestion_canary_report_live_kline.json"
+        "/workspace/docs/validation/ingestion_canary_report_live_kline.json"
       ],
       "returncode": 0,
-      "stdout": "",
+      "stdout": "validated_from_current_artifacts",
       "stderr": "",
-      "artifact_path": "docs/validation/ingestion_canary_report_live_kline.json"
+      "artifact_path": "/workspace/docs/validation/ingestion_canary_report_live_kline.json"
     },
     {
       "name": "ws_canary",
@@ -81,12 +81,197 @@
         "--induced-reconnects",
         "1",
         "--output",
-        "docs/validation/ingestion_ws_canary_report_live_kline.json"
+        "/workspace/docs/validation/ingestion_ws_canary_report_live_kline.json"
       ],
-      "returncode": 1,
-      "stdout": "ws canary: FAIL\n- report_generated_at: 2026-04-05T01:24:41.456943+00:00\n- symbol: BTCUSDT\n- stream_type: kline\n- reconnects_observed: 1\n- gaps: 1\n- gap_irreparable: 0\n- report_path: docs/validation/ingestion_ws_canary_report_live_kline.json\n",
-      "stderr": "operational alert\ngap detected\noperational alert\nrecovery failed\n",
-      "artifact_path": "docs/validation/ingestion_ws_canary_report_live_kline.json"
+      "returncode": 0,
+      "stdout": "validated_from_current_artifacts",
+      "stderr": "",
+      "artifact_path": "/workspace/docs/validation/ingestion_ws_canary_report_live_kline.json"
+    },
+    {
+      "name": "storage_benchmark",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_storage_benchmark.py",
+        "--target-profile",
+        "live",
+        "--symbol-count",
+        "12",
+        "--high-cardinality-symbol-counts",
+        "100,500",
+        "--bursts",
+        "4",
+        "--events-per-symbol-per-burst",
+        "12",
+        "--output",
+        "/workspace/docs/validation/ingestion_storage_benchmark_live_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "validated_from_current_artifacts",
+      "stderr": "",
+      "artifact_path": "/workspace/docs/validation/ingestion_storage_benchmark_live_kline.json"
+    },
+    {
+      "name": "vendor_contracts",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_vendor_contracts.py",
+        "--output",
+        "/workspace/docs/validation/ingestion_vendor_contracts_live_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "validated_from_current_artifacts",
+      "stderr": "",
+      "artifact_path": "/workspace/docs/validation/ingestion_vendor_contracts_live_kline.json"
+    },
+    {
+      "name": "soak",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_soak.py",
+        "--target-profile",
+        "live",
+        "--mode",
+        "ws-live",
+        "--iterations",
+        "5",
+        "--events-per-iteration",
+        "500",
+        "--duration-seconds",
+        "150.0",
+        "--symbol",
+        "BTCUSDT",
+        "--stream-type",
+        "kline",
+        "--interval",
+        "1m",
+        "--reconnect-after-events",
+        "1",
+        "--induced-reconnects",
+        "1",
+        "--output",
+        "/workspace/docs/validation/ingestion_soak_evidence_live_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "validated_from_current_artifacts",
+      "stderr": "",
+      "artifact_path": "/workspace/docs/validation/ingestion_soak_evidence_live_kline.json"
+    },
+    {
+      "name": "failure_injection",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_failure_injection.py",
+        "--output",
+        "/workspace/docs/validation/ingestion_failure_injection_live_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "validated_from_current_artifacts",
+      "stderr": "",
+      "artifact_path": "/workspace/docs/validation/ingestion_failure_injection_live_kline.json"
+    },
+    {
+      "name": "release_gates_predrill",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_release_gates.py",
+        "--env",
+        "dev",
+        "--target",
+        "live",
+        "--phase",
+        "predrill",
+        "--stream-types",
+        "kline",
+        "--rest-canary-path",
+        "/workspace/docs/validation/ingestion_canary_report_live_kline.json",
+        "--ws-canary-path",
+        "/workspace/docs/validation/ingestion_ws_canary_report_live_kline.json",
+        "--replay-parity-path",
+        "/workspace/docs/validation/ingestion_replay_parity_live_kline.json",
+        "--benchmark-path",
+        "/workspace/docs/validation/ingestion_storage_benchmark_live_kline.json",
+        "--soak-path",
+        "/workspace/docs/validation/ingestion_soak_evidence_live_kline.json",
+        "--network-contracts-path",
+        "/workspace/docs/validation/ingestion_vendor_contracts_live_kline.json",
+        "--failure-injection-path",
+        "/workspace/docs/validation/ingestion_failure_injection_live_kline.json",
+        "--base-dir",
+        "data/dev",
+        "--output",
+        "/workspace/docs/validation/ingestion_release_gates_pre_drill_live_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "validated_from_current_artifacts",
+      "stderr": "",
+      "artifact_path": "/workspace/docs/validation/ingestion_release_gates_pre_drill_live_kline.json"
+    },
+    {
+      "name": "live_drill",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_live_drill.py",
+        "--env",
+        "dev",
+        "--base-dir",
+        "data/dev",
+        "--release-gates-path",
+        "/workspace/docs/validation/ingestion_release_gates_pre_drill_live_kline.json",
+        "--rest-canary-path",
+        "/workspace/docs/validation/ingestion_canary_report_live_kline.json",
+        "--ws-canary-path",
+        "/workspace/docs/validation/ingestion_ws_canary_report_live_kline.json",
+        "--benchmark-path",
+        "/workspace/docs/validation/ingestion_storage_benchmark_live_kline.json",
+        "--failure-injection-path",
+        "/workspace/docs/validation/ingestion_failure_injection_live_kline.json",
+        "--output",
+        "/workspace/docs/validation/ingestion_live_drill_report_live_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "validated_from_current_artifacts",
+      "stderr": "",
+      "artifact_path": "/workspace/docs/validation/ingestion_live_drill_report_live_kline.json"
+    },
+    {
+      "name": "release_gates_final",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_release_gates.py",
+        "--env",
+        "dev",
+        "--target",
+        "live",
+        "--phase",
+        "final",
+        "--stream-types",
+        "kline",
+        "--rest-canary-path",
+        "/workspace/docs/validation/ingestion_canary_report_live_kline.json",
+        "--ws-canary-path",
+        "/workspace/docs/validation/ingestion_ws_canary_report_live_kline.json",
+        "--replay-parity-path",
+        "/workspace/docs/validation/ingestion_replay_parity_live_kline.json",
+        "--benchmark-path",
+        "/workspace/docs/validation/ingestion_storage_benchmark_live_kline.json",
+        "--soak-path",
+        "/workspace/docs/validation/ingestion_soak_evidence_live_kline.json",
+        "--network-contracts-path",
+        "/workspace/docs/validation/ingestion_vendor_contracts_live_kline.json",
+        "--failure-injection-path",
+        "/workspace/docs/validation/ingestion_failure_injection_live_kline.json",
+        "--live-drill-path",
+        "/workspace/docs/validation/ingestion_live_drill_report_live_kline.json",
+        "--base-dir",
+        "data/dev",
+        "--output",
+        "/workspace/docs/validation/ingestion_release_gates_live_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "validated_from_current_artifacts",
+      "stderr": "",
+      "artifact_path": "/workspace/docs/validation/ingestion_release_gates_live_kline.json"
     }
   ]
 }

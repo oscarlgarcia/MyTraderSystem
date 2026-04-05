@@ -206,6 +206,40 @@ def test_ws_live_canary_fails_when_runtime_is_degraded(tmp_path: Path):
     events = _bar_events(3)
 
     class FakeWSCanarySource:
+        def stream(self, end_time=None):
+            del end_time
+            yield events[0]
+            yield events[0]
+            yield events[1]
+
+        def snapshot(self, request=None):
+            del request
+            return []
+
+    evidence = run_ws_live_canary(
+        output,
+        target_profile="live",
+        symbol="BTCUSDT",
+        stream_type="kline",
+        max_events=2,
+        duration_seconds=5.0,
+        reconnect_after_events=1,
+        induced_reconnects=0,
+        max_allowed_exchange_receive_skew_seconds=1e9,
+        max_allowed_receive_process_skew_seconds=1e9,
+        max_allowed_processing_latency_seconds=1e9,
+        source_builder=lambda cfg: FakeWSCanarySource(),
+    )
+
+    assert evidence.pass_ok is False
+    assert "duplicates_detected" in evidence.comparison_reason
+
+
+def test_ws_live_canary_allows_clean_induced_reconnect(tmp_path: Path):
+    output = tmp_path / "ws-canary.json"
+    events = _bar_events(2)
+
+    class FakeWSCanarySource:
         def __init__(self):
             self.calls = 0
 
@@ -214,14 +248,13 @@ def test_ws_live_canary_fails_when_runtime_is_degraded(tmp_path: Path):
             if self.calls == 0:
                 self.calls += 1
                 yield events[0]
-                raise TimeoutError("induced reconnect")
+                raise ConnectionAbortedError("induced reconnect")
             self.calls += 1
-            for event in events[1:]:
-                yield event
+            yield events[1]
 
         def snapshot(self, request=None):
             del request
-            return [events[0], events[1]]
+            return []
 
     evidence = run_ws_live_canary(
         output,
@@ -232,11 +265,17 @@ def test_ws_live_canary_fails_when_runtime_is_degraded(tmp_path: Path):
         duration_seconds=5.0,
         reconnect_after_events=1,
         induced_reconnects=1,
+        max_allowed_exchange_receive_skew_seconds=1e9,
+        max_allowed_receive_process_skew_seconds=1e9,
+        max_allowed_processing_latency_seconds=1e9,
         source_builder=lambda cfg: FakeWSCanarySource(),
     )
 
-    assert evidence.pass_ok is False
-    assert "gaps_detected" in evidence.comparison_reason
+    assert evidence.pass_ok is True
+    assert evidence.reconnects_observed == 1
+    assert evidence.continuity["heartbeat_missed_total"] == 0
+    assert evidence.continuity["gaps"] == 0
+    assert evidence.continuity["streams_degraded"] == []
 
 
 def test_ws_live_soak_writes_report_with_clean_runtime(tmp_path: Path, monkeypatch):
@@ -306,22 +345,15 @@ def test_ws_live_soak_fails_when_runtime_is_degraded(tmp_path: Path):
     events = _bar_events(3)
 
     class FakeWSSoakSource:
-        def __init__(self):
-            self.calls = 0
-
         def stream(self, end_time=None):
             del end_time
-            if self.calls == 0:
-                self.calls += 1
-                yield events[0]
-                raise TimeoutError("induced reconnect")
-            self.calls += 1
-            for event in events[1:]:
-                yield event
+            yield events[0]
+            yield events[0]
+            yield events[1]
 
         def snapshot(self, request=None):
             del request
-            return [events[0], events[1]]
+            return []
 
     evidence = run_soak_validation(
         output,
@@ -335,12 +367,15 @@ def test_ws_live_soak_fails_when_runtime_is_degraded(tmp_path: Path):
         stream_type="kline",
         interval="1m",
         reconnect_after_events=1,
-        induced_reconnects=1,
+        induced_reconnects=0,
+        max_allowed_exchange_receive_skew_seconds=1e9,
+        max_allowed_receive_process_skew_seconds=1e9,
+        max_allowed_processing_latency_seconds=1e9,
         source_builder=lambda cfg: FakeWSSoakSource(),
     )
 
     assert evidence.pass_ok is False
-    assert evidence.max_gaps >= 1
+    assert evidence.max_duplicates >= 1
 
 
 def test_vendor_contract_validation_writes_artifact(tmp_path: Path):

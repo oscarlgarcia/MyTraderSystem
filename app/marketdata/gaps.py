@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from app.marketdata.temporal_state import TemporalStreamState, cursor_from_event
-from app.marketdata.models import IngestionEvent
+from app.marketdata.models import BarEvent, IngestionEvent
 
 GapDetectionMode = str
 
@@ -24,6 +24,14 @@ class GapObservation:
 
 
 _SEQUENCE_CURSOR_KINDS = {"trade_id", "sequence_id"}
+_INTERVAL_SECONDS = {
+    "s": 1.0,
+    "m": 60.0,
+    "h": 3600.0,
+    "d": 86_400.0,
+    "w": 604_800.0,
+    "M": 2_592_000.0,
+}
 
 
 def _numeric_cursor(kind: str | None, value: str | None) -> int | None:
@@ -33,6 +41,33 @@ def _numeric_cursor(kind: str | None, value: str | None) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _expected_bar_cadence_seconds(event: IngestionEvent) -> float | None:
+    if not isinstance(event, BarEvent):
+        return None
+    if event.open_ts is not None and event.close_ts is not None:
+        window_seconds = max(0.0, (event.close_ts - event.open_ts).total_seconds())
+        if window_seconds > 0.0:
+            return window_seconds
+    raw_interval = str(getattr(event, "interval", "") or "").strip()
+    if len(raw_interval) < 2:
+        return None
+    try:
+        interval_value = int(raw_interval[:-1])
+    except ValueError:
+        return None
+    unit_seconds = _INTERVAL_SECONDS.get(raw_interval[-1])
+    if unit_seconds is None:
+        return None
+    return float(interval_value) * unit_seconds
+
+
+def _weak_gap_threshold_seconds(event: IngestionEvent, lag_threshold_seconds: float) -> float:
+    expected_cadence_seconds = _expected_bar_cadence_seconds(event)
+    if expected_cadence_seconds is None:
+        return lag_threshold_seconds
+    return max(lag_threshold_seconds, expected_cadence_seconds + lag_threshold_seconds)
 
 
 def detect_gap(
@@ -58,7 +93,11 @@ def detect_gap(
     if stream_state.last_event_ts is None:
         return GapObservation(detected=False)
     gap_seconds = max(0.0, (event.event_ts - stream_state.last_event_ts).total_seconds())
-    if gap_seconds > lag_threshold_seconds:
+    weak_gap_threshold_seconds = _weak_gap_threshold_seconds(
+        event,
+        lag_threshold_seconds=lag_threshold_seconds,
+    )
+    if gap_seconds > weak_gap_threshold_seconds:
         return GapObservation(
             detected=True,
             mode="weak_gap_detection",

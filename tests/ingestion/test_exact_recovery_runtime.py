@@ -92,3 +92,54 @@ def test_production_mode_accepts_kline_after_exact_verified_claim() -> None:
 
     assert len(out) == 1
     assert out[0].source == "kline"
+
+
+def test_minute_kline_cadence_does_not_trigger_gap_recovery() -> None:
+    base = datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc)
+    handled: list[datetime] = []
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter([
+            _bar(base),
+            _bar(base + timedelta(minutes=1)),
+        ]),
+        snapshot_fn=lambda *, request=None: [_bar(base + timedelta(minutes=2))],
+        lag_threshold_seconds=5,
+        sleeper=lambda _seconds: None,
+    )
+
+    runner.run(lambda event: handled.append(event.event_ts), stop_on_complete=True)
+
+    assert handled == [base, base + timedelta(minutes=1)]
+    assert runner.metrics.gaps_total == 0
+    stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:kline"]
+    assert stream_metrics["gaps_total"] == 0
+
+
+def test_processing_latency_tracks_receive_clock_for_kline() -> None:
+    now = datetime.now(timezone.utc)
+    stale_exchange_ts = now - timedelta(minutes=2)
+    event = BarEvent(
+        symbol="BTCUSDT",
+        exchange_ts=stale_exchange_ts,
+        receive_ts=now,
+        process_ts=now,
+        venue="BINANCE",
+        source_id="1",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=5.0,
+        interval="1m",
+        open_ts=stale_exchange_ts - timedelta(minutes=1),
+        close_ts=stale_exchange_ts,
+    )
+    runner = ResilientRunner(
+        stream_fn=lambda: iter([event]),
+        sleeper=lambda _seconds: None,
+    )
+
+    runner.run(lambda _event: None, stop_on_complete=True)
+
+    assert runner.metrics.max_latency_seconds < 5.0

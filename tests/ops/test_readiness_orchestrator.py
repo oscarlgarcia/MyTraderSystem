@@ -60,6 +60,9 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
     assert "--stream-types" in commands[-1]
     assert "trade" in commands[-1]
     assert "--target-profile" in commands[1]
+    assert "--high-cardinality-symbol-counts" in commands[1]
+    assert "100" in commands[1]
+    assert "500" not in commands[1]
     assert "paper" in commands[3]
     assert "--min-rows-per-second" not in commands[1]
     written = json.loads((tmp_path / "docs" / "validation" / "paper.json").read_text(encoding="utf-8"))

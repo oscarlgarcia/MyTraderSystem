@@ -12,7 +12,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=["deterministic", "ws-live"], default="ws-live")
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--events-per-iteration", type=int, default=500)
-    parser.add_argument("--duration-seconds", type=float, default=130.0)
+    parser.add_argument("--duration-seconds", type=float, default=150.0)
     parser.add_argument("--pipeline-version", choices=["v1", "v2"], default="v2")
     parser.add_argument("--symbol", default="BTCUSDT")
     parser.add_argument("--stream-type", choices=["kline"], default="kline")

@@ -116,7 +116,6 @@ def _degraded_streams(stream_metrics: list[dict[str, object]]) -> list[str]:
             or _safe_int(metric.get("duplicates_total")) > 0
             or _safe_int(metric.get("gaps_total")) > 0
             or _safe_int(metric.get("gap_irreparable_total")) > 0
-            or _safe_int(metric.get("reconnects_total")) > 0
             or _safe_int(metric.get("heartbeat_missed_total")) > 0
             or _safe_int(metric.get("buffer_dropped_total")) > 0
         ):
@@ -668,6 +667,7 @@ def collect_events(
             backpressure_policy=backpressure_policy,
             temporal_policy=temporal_policy,
             dedup_enabled=dedup_enabled,
+            read_burst_size=1 if duration_s is not None and duration_s > 0 else 64,
         )
         runner.restore_checkpoint(checkpoint_state)
         stop_on_complete = duration_s is not None

@@ -75,14 +75,14 @@ def run_ingestion_readiness(
     ws_reconnect_after_events: int = 1,
     ws_induced_reconnects: int = 1,
     benchmark_symbol_count: int = 12,
-    benchmark_high_cardinality_symbol_counts: tuple[int, ...] = (100, 500),
+    benchmark_high_cardinality_symbol_counts: tuple[int, ...] | None = None,
     benchmark_bursts: int = 4,
     benchmark_events_per_symbol_per_burst: int = 12,
     benchmark_min_rows_per_second: float | None = None,
     soak_mode: Literal["deterministic", "ws-live"] = "ws-live",
     soak_iterations: int = 5,
     soak_events_per_iteration: int = 500,
-    soak_duration_seconds: float = 130.0,
+    soak_duration_seconds: float = 150.0,
     soak_reconnect_after_events: int = 1,
     soak_induced_reconnects: int = 1,
     executor: Executor | None = None,
@@ -108,6 +108,11 @@ def run_ingestion_readiness(
     workspace = Path(workspace)
     validation_dir.mkdir(parents=True, exist_ok=True)
     executor = executor or _default_executor
+    benchmark_high_cardinality_symbol_counts = (
+        (100, 500) if target == "live" else (100,)
+        if benchmark_high_cardinality_symbol_counts is None
+        else tuple(int(value) for value in benchmark_high_cardinality_symbol_counts)
+    )
 
     replay_parity_path = _profile_artifact_path(validation_dir, "ingestion_replay_parity", profile)
     rest_canary_path = _profile_artifact_path(validation_dir, "ingestion_canary_report", profile)

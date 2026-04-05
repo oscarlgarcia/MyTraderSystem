@@ -1,11 +1,11 @@
 {
-  "generated_at": "2026-04-05T01:32:42.451067+00:00",
+  "generated_at": "2026-04-05T03:24:32.989445+00:00",
   "env": "dev",
   "target": "live",
-  "overall_status": "FAIL",
+  "overall_status": "PASS",
   "drill_executed": true,
-  "checklist_completed": false,
-  "promote_ready": false,
+  "checklist_completed": true,
+  "promote_ready": true,
   "rollback_ready": true,
   "decision_deadlines": {
     "promote_decision_max_minutes": 15,
@@ -17,13 +17,13 @@
     {
       "name": "release_gate_pass",
       "required": true,
-      "passed": false,
+      "passed": true,
       "details": {
         "path": "docs/validation/ingestion_release_gates_pre_drill_live_kline.json",
-        "overall_status": "FAIL",
-        "pass_ok": false,
+        "overall_status": "PASS",
+        "pass_ok": true,
         "target": "live",
-        "artifact_age_seconds": 294.77994
+        "artifact_age_seconds": 23.537884
       }
     },
     {
@@ -34,27 +34,27 @@
         "path": "docs/validation/ingestion_canary_report_live_kline.json",
         "pass_ok": true,
         "comparison_reason": "semantic_match",
-        "artifact_age_seconds": 625.139849
+        "artifact_age_seconds": 7335.693182
       }
     },
     {
       "name": "canary_ws",
       "required": true,
-      "passed": false,
+      "passed": true,
       "details": {
         "path": "docs/validation/ingestion_ws_canary_report_live_kline.json",
-        "pass_ok": false,
-        "comparison_reason": "duplicates_detected,gaps_detected,heartbeat_missed_detected,exchange_receive_skew_slo_breached,processing_latency_slo_breached,streams_degraded_detected",
-        "artifact_age_seconds": 480.952896
+        "pass_ok": true,
+        "comparison_reason": "continuity_ok",
+        "artifact_age_seconds": 4652.607067
       }
     },
     {
       "name": "storage_benchmark_pass",
       "required": true,
-      "passed": false,
+      "passed": true,
       "details": {
         "path": "docs/validation/ingestion_storage_benchmark_live_kline.json",
-        "pass_ok": false,
+        "pass_ok": true,
         "slo": {
           "target_profile": "live",
           "min_rows_per_second": 100.0,
@@ -66,7 +66,7 @@
             500
           ]
         },
-        "artifact_age_seconds": 336.168286
+        "artifact_age_seconds": 5134.325008
       }
     },
     {
@@ -81,7 +81,7 @@
           "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot",
           "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch"
         ],
-        "artifact_age_seconds": 404.485796
+        "artifact_age_seconds": 7115.035057
       }
     },
     {

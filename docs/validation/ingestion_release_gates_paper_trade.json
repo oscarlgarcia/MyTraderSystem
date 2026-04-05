@@ -2,9 +2,9 @@
   "target": "paper",
   "env": "dev",
   "base_dir": "data/dev",
-  "generated_at": "2026-04-05T01:27:45.662090+00:00",
-  "overall_status": "FAIL",
-  "pass_ok": false,
+  "generated_at": "2026-04-05T03:02:01.449970+00:00",
+  "overall_status": "PASS",
+  "pass_ok": true,
   "blocks": [
     {
       "name": "support_matrix",
@@ -14311,17 +14311,13 @@
     },
     {
       "name": "canary_rest",
-      "status": "pass",
+      "status": "warn",
       "required": false,
       "reasons": [
-        "artifact validated"
+        "missing artifact: docs/validation/ingestion_canary_report_paper_trade.json"
       ],
       "details": {
-        "path": "docs/validation/ingestion_canary_report.json",
-        "pass_ok": true,
-        "generated_at": null,
-        "comparison_reason": "semantic_match",
-        "artifact_age_seconds": 59967.039423
+        "path": "docs/validation/ingestion_canary_report_paper_trade.json"
       }
     },
     {
@@ -14329,39 +14325,25 @@
       "status": "warn",
       "required": false,
       "reasons": [
-        "missing key: target_profile",
-        "continuity.heartbeat_missed_total missing",
-        "continuity.exchange_receive_skew_seconds missing",
-        "continuity.receive_process_skew_seconds missing",
-        "continuity.processing_latency_seconds missing",
-        "canary stream_type 'kline' not aligned with release contract ('trade',)",
-        "canary target_profile None does not match gate target 'paper'",
-        "duplicates exceed promotion threshold",
-        "gaps exceed promotion threshold",
-        "streams degraded during runtime validation"
+        "missing artifact: docs/validation/ingestion_ws_canary_report_paper_trade.json"
       ],
       "details": {
-        "path": "docs/validation/ingestion_ws_canary_report.json",
-        "pass_ok": true,
-        "generated_at": "2026-04-04T08:50:44.669848+00:00",
-        "comparison_reason": "continuity_ok",
-        "artifact_age_seconds": 59820.05298
+        "path": "docs/validation/ingestion_ws_canary_report_paper_trade.json"
       }
     },
     {
       "name": "storage_benchmark",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "reasons": [
-        "pass_ok is not true",
-        "shadow_scoped_case.pass_ok is not true"
+        "artifact validated"
       ],
       "details": {
         "path": "docs/validation/ingestion_storage_benchmark_paper_trade.json",
-        "pass_ok": false,
-        "generated_at": "2026-04-05T01:19:07.061729+00:00",
+        "pass_ok": true,
+        "generated_at": "2026-04-05T03:01:53.033047+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 517.685981
+        "artifact_age_seconds": 7.753925
       }
     },
     {
@@ -14374,9 +14356,9 @@
       "details": {
         "path": "docs/validation/ingestion_replay_parity_paper_trade.json",
         "pass_ok": true,
-        "generated_at": "2026-04-05T01:18:04.411241+00:00",
+        "generated_at": "2026-04-05T03:00:59.483281+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 580.358386
+        "artifact_age_seconds": 61.322192
       }
     },
     {
@@ -14384,26 +14366,10 @@
       "status": "warn",
       "required": false,
       "reasons": [
-        "missing key: target_profile",
-        "missing key: max_allowed_duplicates",
-        "missing key: max_duplicates",
-        "missing key: max_allowed_heartbeat_missed_total",
-        "missing key: max_heartbeat_missed_total",
-        "missing key: max_allowed_exchange_receive_skew_seconds",
-        "missing key: max_exchange_receive_skew_seconds",
-        "missing key: max_allowed_receive_process_skew_seconds",
-        "missing key: max_receive_process_skew_seconds",
-        "missing key: max_allowed_processing_latency_seconds",
-        "soak stream_type 'kline' not aligned with release contract ('trade',)",
-        "soak target_profile None does not match gate target 'paper'",
-        "processing latency exceeds soak threshold"
+        "missing artifact: docs/validation/ingestion_soak_evidence_paper_trade.json"
       ],
       "details": {
-        "path": "docs/validation/ingestion_soak_evidence.json",
-        "pass_ok": true,
-        "generated_at": "2026-04-04T09:03:40.324936+00:00",
-        "comparison_reason": null,
-        "artifact_age_seconds": 59044.466761
+        "path": "docs/validation/ingestion_soak_evidence_paper_trade.json"
       }
     },
     {
@@ -14416,24 +14382,20 @@
       "details": {
         "path": "docs/validation/ingestion_vendor_contracts_paper_trade.json",
         "pass_ok": true,
-        "generated_at": "2026-04-05T01:25:53.840275+00:00",
+        "generated_at": "2026-04-05T03:01:59.182005+00:00",
         "comparison_reason": null,
-        "artifact_age_seconds": 110.965016
+        "artifact_age_seconds": 1.6433
       }
     },
     {
       "name": "failure_injection",
-      "status": "pass",
+      "status": "warn",
       "required": false,
       "reasons": [
-        "artifact validated"
+        "missing artifact: docs/validation/ingestion_failure_injection_paper_trade.json"
       ],
       "details": {
-        "path": "docs/validation/ingestion_failure_injection.json",
-        "pass_ok": true,
-        "generated_at": "2026-04-04T09:03:47.897760+00:00",
-        "comparison_reason": null,
-        "artifact_age_seconds": 59036.921328
+        "path": "docs/validation/ingestion_failure_injection_paper_trade.json"
       }
     },
     {
@@ -14613,17 +14575,13 @@
     },
     {
       "name": "live_drill",
-      "status": "pass",
+      "status": "warn",
       "required": false,
       "reasons": [
-        "artifact validated"
+        "missing artifact: docs/validation/ingestion_live_drill_report_paper_trade.json"
       ],
       "details": {
-        "path": "docs/validation/ingestion_live_drill_report.json",
-        "pass_ok": false,
-        "generated_at": "2026-04-04T09:03:53.216714+00:00",
-        "comparison_reason": null,
-        "artifact_age_seconds": 59031.615608
+        "path": "docs/validation/ingestion_live_drill_report_paper_trade.json"
       }
     },
     {
