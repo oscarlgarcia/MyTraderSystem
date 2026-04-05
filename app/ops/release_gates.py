@@ -77,6 +77,7 @@ def run_release_gates(
     require_live_drill: bool = True,
 ) -> ReleaseGateReport:
     normalized_stream_types = normalize_feed_types(stream_types)
+    require_runtime_artifacts = _requires_runtime_artifacts(normalized_stream_types, target=target)
     blocks = (
         _support_matrix_block(normalized_stream_types, target=target),
         _exact_recovery_block(normalized_stream_types, target=target),
@@ -85,7 +86,7 @@ def run_release_gates(
         _canary_block(
             name="canary_rest",
             path=Path(rest_canary_path or "docs/validation/ingestion_canary_report.json"),
-            required=True,
+            required=require_runtime_artifacts,
             expected_keys=("pass_ok", "diffs", "comparison_reason"),
             bool_paths=(("pass_ok",),),
             max_age=timedelta(hours=24),
@@ -93,10 +94,10 @@ def run_release_gates(
         _canary_block(
             name="canary_ws",
             path=Path(ws_canary_path or "docs/validation/ingestion_ws_canary_report.json"),
-            required=True,
-            expected_keys=("pass_ok", "continuity", "reconnects_observed", "report_generated_at", "symbol", "stream_type"),
+            required=require_runtime_artifacts,
+            expected_keys=("pass_ok", "target_profile", "continuity", "reconnects_observed", "report_generated_at", "symbol", "stream_type"),
             bool_paths=(("pass_ok",),),
-            extra_checks=_validate_ws_canary_payload,
+            extra_checks=lambda payload: _validate_ws_canary_payload(payload, target=target, stream_types=normalized_stream_types),
             max_age=timedelta(hours=24),
         ),
         _canary_block(
@@ -125,26 +126,37 @@ def run_release_gates(
             required=True,
             expected_keys=("pass_ok", "order_match", "manifest_ok", "generated_at", "normalized_path", "symbol", "stream_type"),
             bool_paths=(("pass_ok",), ("order_match",), ("manifest_ok",)),
-            extra_checks=_validate_replay_parity_payload,
+            extra_checks=lambda payload: _validate_replay_parity_payload(payload, stream_types=normalized_stream_types),
             max_age=timedelta(days=7),
         ),
         _canary_block(
             name="paper_soak",
             path=Path(soak_path or "docs/validation/ingestion_soak_evidence.json"),
-            required=(target in {"paper", "live"}),
+            required=require_runtime_artifacts,
             expected_keys=(
                 "pass_ok",
                 "generated_at",
+                "target_profile",
+                "stream_type",
                 "max_allowed_gaps",
                 "max_gaps",
+                "max_allowed_duplicates",
+                "max_duplicates",
                 "max_allowed_gap_irreparable",
                 "max_gap_irreparable",
+                "max_allowed_heartbeat_missed_total",
+                "max_heartbeat_missed_total",
+                "max_allowed_exchange_receive_skew_seconds",
+                "max_exchange_receive_skew_seconds",
+                "max_allowed_receive_process_skew_seconds",
+                "max_receive_process_skew_seconds",
+                "max_allowed_processing_latency_seconds",
                 "max_allowed_compaction_failures",
                 "compaction_failures_total",
                 "reconnects_observed",
             ),
             bool_paths=(("pass_ok",),),
-            extra_checks=_validate_soak_payload,
+            extra_checks=lambda payload: _validate_soak_payload(payload, target=target, stream_types=normalized_stream_types),
             max_age=timedelta(hours=24),
         ),
         _canary_block(
@@ -194,16 +206,16 @@ def run_release_gates(
 
 
 def _support_matrix_block(stream_types: tuple[str, ...], *, target: ReleaseTarget) -> GateBlockReport:
-    del target
     reasons: list[str] = []
     details: dict[str, object] = {"feeds": {}}
     for stream_type in stream_types:
         support = feed_support(stream_type)
         details["feeds"][stream_type] = _feed_support_payload(support)
-        if not support.supports_live:
-            reasons.append(f"{stream_type} does not support live ingestion")
-        if not support.supports_handoff:
-            reasons.append(f"{stream_type} does not support historical-to-live handoff")
+        if target == "live":
+            if not support.supports_live:
+                reasons.append(f"{stream_type} does not support live ingestion")
+            if not support.supports_handoff:
+                reasons.append(f"{stream_type} does not support historical-to-live handoff")
     status: GateStatus = "pass" if not reasons else "fail"
     return GateBlockReport(
         name="support_matrix",
@@ -319,14 +331,37 @@ def _canary_block(
     )
 
 
-def _validate_ws_canary_payload(payload: dict[str, object]) -> list[str]:
+def _validate_ws_canary_payload(
+    payload: dict[str, object],
+    *,
+    target: ReleaseTarget,
+    stream_types: tuple[str, ...],
+) -> list[str]:
     reasons: list[str] = []
     continuity = payload.get("continuity")
     if not isinstance(continuity, dict):
         return ["continuity payload missing"]
-    for key in ("reconnects", "duplicates", "gaps"):
+    for key in (
+        "reconnects",
+        "duplicates",
+        "gaps",
+        "gap_irreparable",
+        "streams_degraded",
+        "heartbeat_missed_total",
+        "exchange_receive_skew_seconds",
+        "receive_process_skew_seconds",
+        "processing_latency_seconds",
+    ):
         if key not in continuity:
             reasons.append(f"continuity.{key} missing")
+    try:
+        stream_type = str(payload.get("stream_type") or "")
+        if stream_type not in stream_types:
+            reasons.append(f"canary stream_type {stream_type!r} not aligned with release contract {stream_types}")
+        if str(payload.get("target_profile") or "") != target:
+            reasons.append(f"canary target_profile {payload.get('target_profile')!r} does not match gate target {target!r}")
+    except (TypeError, ValueError):
+        reasons.append("invalid stream_type")
     reconnects_observed = payload.get("reconnects_observed")
     reconnects_target = payload.get("reconnects_target", 0)
     try:
@@ -334,6 +369,8 @@ def _validate_ws_canary_payload(payload: dict[str, object]) -> list[str]:
             reasons.append("reconnect target not met")
     except (TypeError, ValueError):
         reasons.append("invalid reconnect counters")
+    slo = _promotion_slo(target)
+    reasons.extend(_continuity_threshold_reasons(continuity, slo))
     return reasons
 
 
@@ -344,12 +381,15 @@ def _validate_live_drill_payload(payload: dict[str, object]) -> list[str]:
     return reasons
 
 
-def _validate_replay_parity_payload(payload: dict[str, object]) -> list[str]:
+def _validate_replay_parity_payload(payload: dict[str, object], *, stream_types: tuple[str, ...]) -> list[str]:
     reasons: list[str] = []
     if payload.get("manifest_missing_files"):
         reasons.append("raw manifest files missing")
     if payload.get("manifest_mismatches"):
         reasons.append("raw manifest mismatches detected")
+    stream_type = str(payload.get("stream_type") or "")
+    if stream_type not in stream_types:
+        reasons.append(f"replay parity stream_type {stream_type!r} not aligned with release contract {stream_types}")
     return reasons
 
 
@@ -456,11 +496,21 @@ def _validate_failure_injection_payload(payload: dict[str, object]) -> list[str]
     return reasons
 
 
-def _validate_soak_payload(payload: dict[str, object]) -> list[str]:
+def _validate_soak_payload(
+    payload: dict[str, object],
+    *,
+    target: ReleaseTarget,
+    stream_types: tuple[str, ...],
+) -> list[str]:
     reasons: list[str] = []
     reconnects_observed = payload.get("reconnects_observed")
     reconnects_target = payload.get("reconnects_target", 0)
     try:
+        stream_type = str(payload.get("stream_type") or "")
+        if stream_type not in stream_types:
+            reasons.append(f"soak stream_type {stream_type!r} not aligned with release contract {stream_types}")
+        if str(payload.get("target_profile") or "") != target:
+            reasons.append(f"soak target_profile {payload.get('target_profile')!r} does not match gate target {target!r}")
         max_gap_irreparable = int(payload.get("max_gap_irreparable", 0) or 0)
         max_allowed_gap_irreparable = int(payload.get("max_allowed_gap_irreparable", 0) or 0)
         if max_gap_irreparable > max_allowed_gap_irreparable:
@@ -469,6 +519,35 @@ def _validate_soak_payload(payload: dict[str, object]) -> list[str]:
         max_allowed_gaps = int(payload.get("max_allowed_gaps", 0) or 0)
         if max_gaps > max_allowed_gaps:
             reasons.append("gaps exceed soak threshold")
+        max_duplicates = int(payload.get("max_duplicates", 0) or 0)
+        max_allowed_duplicates = int(payload.get("max_allowed_duplicates", 0) or 0)
+        if max_duplicates > max_allowed_duplicates:
+            reasons.append("duplicates exceed soak threshold")
+        max_heartbeat_missed_total = int(payload.get("max_heartbeat_missed_total", 0) or 0)
+        max_allowed_heartbeat_missed_total = int(payload.get("max_allowed_heartbeat_missed_total", 0) or 0)
+        if max_heartbeat_missed_total > max_allowed_heartbeat_missed_total:
+            reasons.append("heartbeat misses exceed soak threshold")
+        max_streams_degraded = int(payload.get("max_streams_degraded", 0) or 0)
+        if max_streams_degraded > 0:
+            reasons.append("streams degraded during soak")
+        max_exchange_receive_skew_seconds = float(payload.get("max_exchange_receive_skew_seconds", 0.0) or 0.0)
+        max_allowed_exchange_receive_skew_seconds = float(
+            payload.get("max_allowed_exchange_receive_skew_seconds", 0.0) or 0.0
+        )
+        if max_exchange_receive_skew_seconds > max_allowed_exchange_receive_skew_seconds:
+            reasons.append("exchange receive skew exceeds soak threshold")
+        max_receive_process_skew_seconds = float(payload.get("max_receive_process_skew_seconds", 0.0) or 0.0)
+        max_allowed_receive_process_skew_seconds = float(
+            payload.get("max_allowed_receive_process_skew_seconds", 0.0) or 0.0
+        )
+        if max_receive_process_skew_seconds > max_allowed_receive_process_skew_seconds:
+            reasons.append("receive-process skew exceeds soak threshold")
+        max_processing_latency_seconds = float(payload.get("max_processing_latency_seconds", 0.0) or 0.0)
+        max_allowed_processing_latency_seconds = float(
+            payload.get("max_allowed_processing_latency_seconds", 0.0) or 0.0
+        )
+        if max_processing_latency_seconds > max_allowed_processing_latency_seconds:
+            reasons.append("processing latency exceeds soak threshold")
         compaction_failures_total = int(payload.get("compaction_failures_total", 0) or 0)
         max_allowed_compaction_failures = int(payload.get("max_allowed_compaction_failures", 0) or 0)
         if compaction_failures_total > max_allowed_compaction_failures:
@@ -479,6 +558,69 @@ def _validate_soak_payload(payload: dict[str, object]) -> list[str]:
             reasons.append("soak reconnect target not met")
     except (TypeError, ValueError):
         reasons.append("invalid reconnect counters")
+    return reasons
+
+
+def _requires_runtime_artifacts(stream_types: tuple[str, ...], *, target: ReleaseTarget) -> bool:
+    if target == "live":
+        return True
+    return any(feed_support(stream_type).supports_live for stream_type in stream_types)
+
+
+def _promotion_slo(target: ReleaseTarget) -> dict[str, float | int]:
+    thresholds = build_observability_contract_report(target=target).required_metric_thresholds
+    def _critical(metric: str, *, default: float = 0.0) -> float:
+        payload = thresholds.get(metric)
+        if not isinstance(payload, dict):
+            return default
+        value = payload.get("critical", default)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "duplicates": int(_critical("duplicates_total")),
+        "gaps": int(_critical("gaps_total")),
+        "gap_irreparable": int(_critical("gap_irreparable_total")),
+        "heartbeat_missed_total": int(_critical("heartbeat_missed_total")),
+        "exchange_receive_skew_seconds": _critical("exchange_receive_skew_seconds"),
+        "receive_process_skew_seconds": _critical("receive_process_skew_seconds"),
+        "processing_latency_seconds": _critical("processing_latency_seconds"),
+    }
+
+
+def _continuity_threshold_reasons(
+    continuity: dict[str, object],
+    slo: dict[str, float | int],
+) -> list[str]:
+    reasons: list[str] = []
+    try:
+        if int(continuity.get("duplicates", 0) or 0) > int(slo["duplicates"]):
+            reasons.append("duplicates exceed promotion threshold")
+        if int(continuity.get("gaps", 0) or 0) > int(slo["gaps"]):
+            reasons.append("gaps exceed promotion threshold")
+        if int(continuity.get("gap_irreparable", 0) or 0) > int(slo["gap_irreparable"]):
+            reasons.append("gap_irreparable exceeds promotion threshold")
+        if int(continuity.get("heartbeat_missed_total", 0) or 0) > int(slo["heartbeat_missed_total"]):
+            reasons.append("heartbeat misses exceed promotion threshold")
+        if float(continuity.get("exchange_receive_skew_seconds", 0.0) or 0.0) > float(
+            slo["exchange_receive_skew_seconds"]
+        ):
+            reasons.append("exchange receive skew exceeds promotion threshold")
+        if float(continuity.get("receive_process_skew_seconds", 0.0) or 0.0) > float(
+            slo["receive_process_skew_seconds"]
+        ):
+            reasons.append("receive-process skew exceeds promotion threshold")
+        if float(continuity.get("processing_latency_seconds", 0.0) or 0.0) > float(
+            slo["processing_latency_seconds"]
+        ):
+            reasons.append("processing latency exceeds promotion threshold")
+        streams_degraded = continuity.get("streams_degraded") or []
+        if isinstance(streams_degraded, list) and streams_degraded:
+            reasons.append("streams degraded during runtime validation")
+    except (TypeError, ValueError):
+        reasons.append("invalid continuity thresholds")
     return reasons
 
 

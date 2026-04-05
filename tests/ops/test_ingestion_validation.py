@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 import sys
 
+import app.ops.ingestion_validation as ingestion_validation
 from app.ingestion.backfill import normalize_kline_row
 from types import SimpleNamespace
 
@@ -54,14 +55,19 @@ def _bar_events(count: int):
 
 def test_soak_validation_writes_evidence_and_passes(tmp_path: Path):
     output = tmp_path / "soak.json"
-    evidence = run_soak_validation(output, iterations=2, events_per_iteration=20, pipeline_version="v2")
+    evidence = run_soak_validation(output, target_profile="paper", iterations=2, events_per_iteration=20, pipeline_version="v2")
 
     assert evidence.pass_ok is True
+    assert evidence.target_profile == "paper"
     assert evidence.total_events_persisted == 40
     assert evidence.generated_at
     assert evidence.max_allowed_gaps == 0
     assert evidence.max_gap_irreparable == 0
     assert evidence.max_gaps == 0
+    assert evidence.max_allowed_duplicates == 0
+    assert evidence.max_duplicates == 0
+    assert evidence.max_allowed_heartbeat_missed_total == 0
+    assert evidence.max_heartbeat_missed_total == 0
     assert evidence.max_allowed_gap_irreparable == 0
     assert evidence.max_allowed_compaction_failures == 0
     assert evidence.compaction_failures_total == 0
@@ -133,7 +139,69 @@ def test_canary_validation_reuses_persisted_baseline_without_network(tmp_path: P
     assert evidence.diffs["projection_checksum_match"] is True
 
 
-def test_ws_live_canary_writes_report_and_records_reconnects(tmp_path: Path):
+def test_ws_live_canary_writes_report_with_clean_runtime(tmp_path: Path, monkeypatch):
+    output = tmp_path / "ws-canary.json"
+    monkeypatch.setattr(ingestion_validation, "collect_events", lambda **_: None)
+    monkeypatch.setattr(
+        ingestion_validation,
+        "_json_lines",
+        lambda _buffer: [
+            {
+                "message": "ingestion summary",
+                "mode": "live",
+                "events_in": 2,
+                "events_persisted": 2,
+                "events_dedup_skipped": 0,
+                "gaps_total": 0,
+                "gap_irreparable_total": 0,
+                "reconnects": 0,
+                "processing_latency_seconds": 0.1,
+                "write_latency_seconds": 0.1,
+                "exchange_receive_skew_seconds": 0.1,
+                "receive_process_skew_seconds": 0.1,
+                "stream_metrics": [
+                    {
+                        "heartbeat_missed_total": 0,
+                        "exchange_receive_skew_seconds": 0.1,
+                        "receive_process_skew_seconds": 0.1,
+                    }
+                ],
+            },
+            {
+                "message": "ingestion health",
+                "streams_degraded": [],
+                "result": "ok",
+            },
+        ],
+    )
+    monkeypatch.setattr(ingestion_validation, "_count_jsonl_records", lambda _path: 0)
+
+    evidence = run_ws_live_canary(
+        output,
+        target_profile="paper",
+        symbol="BTCUSDT",
+        stream_type="kline",
+        max_events=2,
+        duration_seconds=5.0,
+        reconnect_after_events=1,
+        induced_reconnects=0,
+        source_builder=lambda cfg: SimpleNamespace(stream=lambda end_time=None: iter(()), snapshot=lambda request=None: []),
+    )
+
+    assert evidence.pass_ok is True
+    assert evidence.target_profile == "paper"
+    assert evidence.reconnects_observed == 0
+    assert evidence.continuity["events_persisted"] == 2
+    assert evidence.continuity["gaps"] == 0
+    assert evidence.continuity["duplicates"] == 0
+    assert evidence.continuity["gap_irreparable"] == 0
+    assert evidence.continuity["heartbeat_missed_total"] == 0
+    assert "reconnects" in evidence.continuity
+    assert "duplicates" in evidence.continuity
+    assert output.exists()
+
+
+def test_ws_live_canary_fails_when_runtime_is_degraded(tmp_path: Path):
     output = tmp_path / "ws-canary.json"
     events = _bar_events(3)
 
@@ -157,6 +225,7 @@ def test_ws_live_canary_writes_report_and_records_reconnects(tmp_path: Path):
 
     evidence = run_ws_live_canary(
         output,
+        target_profile="live",
         symbol="BTCUSDT",
         stream_type="kline",
         max_events=2,
@@ -166,17 +235,73 @@ def test_ws_live_canary_writes_report_and_records_reconnects(tmp_path: Path):
         source_builder=lambda cfg: FakeWSCanarySource(),
     )
 
+    assert evidence.pass_ok is False
+    assert "gaps_detected" in evidence.comparison_reason
+
+
+def test_ws_live_soak_writes_report_with_clean_runtime(tmp_path: Path, monkeypatch):
+    output = tmp_path / "soak.json"
+    monkeypatch.setattr(ingestion_validation, "collect_events", lambda **_: None)
+    monkeypatch.setattr(
+        ingestion_validation,
+        "_json_lines",
+        lambda _buffer: [
+            {
+                "message": "ingestion summary",
+                "mode": "live",
+                "events_in": 2,
+                "events_persisted": 2,
+                "events_dedup_skipped": 0,
+                "gaps_total": 0,
+                "gap_irreparable_total": 0,
+                "reconnects": 0,
+                "processing_latency_seconds": 0.1,
+                "write_latency_seconds": 0.1,
+                "exchange_receive_skew_seconds": 0.1,
+                "receive_process_skew_seconds": 0.1,
+                "stream_metrics": [
+                    {
+                        "heartbeat_missed_total": 0,
+                        "exchange_receive_skew_seconds": 0.1,
+                        "receive_process_skew_seconds": 0.1,
+                    }
+                ],
+            },
+            {
+                "message": "ingestion health",
+                "streams_degraded": [],
+                "result": "ok",
+            },
+        ],
+    )
+
+    evidence = run_soak_validation(
+        output,
+        target_profile="paper",
+        mode="ws-live",
+        iterations=1,
+        events_per_iteration=2,
+        duration_seconds=5.0,
+        pipeline_version="v2",
+        symbol="BTCUSDT",
+        stream_type="kline",
+        interval="1m",
+        reconnect_after_events=1,
+        induced_reconnects=0,
+        source_builder=lambda cfg: SimpleNamespace(stream=lambda end_time=None: iter(()), snapshot=lambda request=None: []),
+    )
+
     assert evidence.pass_ok is True
-    assert evidence.reconnects_observed >= 1
-    assert evidence.continuity["events_persisted"] == 2
-    assert evidence.continuity["gaps"] >= 1
-    assert evidence.continuity["gap_irreparable"] == 0
-    assert "reconnects" in evidence.continuity
-    assert "duplicates" in evidence.continuity
+    assert evidence.reconnects_observed == 0
+    assert evidence.reconnects_target == 0
+    assert evidence.max_allowed_gaps == 0
+    assert evidence.max_duplicates == 0
+    assert evidence.compaction_failures_total == 0
+    assert evidence.max_gap_irreparable == 0
     assert output.exists()
 
 
-def test_ws_live_soak_writes_report_and_records_reconnects(tmp_path: Path):
+def test_ws_live_soak_fails_when_runtime_is_degraded(tmp_path: Path):
     output = tmp_path / "soak.json"
     events = _bar_events(3)
 
@@ -200,6 +325,7 @@ def test_ws_live_soak_writes_report_and_records_reconnects(tmp_path: Path):
 
     evidence = run_soak_validation(
         output,
+        target_profile="live",
         mode="ws-live",
         iterations=1,
         events_per_iteration=2,
@@ -213,13 +339,8 @@ def test_ws_live_soak_writes_report_and_records_reconnects(tmp_path: Path):
         source_builder=lambda cfg: FakeWSSoakSource(),
     )
 
-    assert evidence.pass_ok is True
-    assert evidence.reconnects_observed >= 1
-    assert evidence.reconnects_target == 1
-    assert evidence.max_allowed_gaps == 1
-    assert evidence.compaction_failures_total == 0
-    assert evidence.max_gap_irreparable == 0
-    assert output.exists()
+    assert evidence.pass_ok is False
+    assert evidence.max_gaps >= 1
 
 
 def test_vendor_contract_validation_writes_artifact(tmp_path: Path):

@@ -8,6 +8,7 @@ from app.ops.ingestion_validation import run_ws_live_canary
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the live WS canary and persist a JSON artifact")
+    parser.add_argument("--target-profile", choices=["paper", "live"], default="live")
     parser.add_argument("--symbol", default="BTCUSDT")
     parser.add_argument("--stream-type", choices=["kline"], default="kline")
     parser.add_argument("--interval", default="1m")
@@ -29,6 +30,7 @@ def main() -> int:
     args = parse_args()
     evidence = run_ws_live_canary(
         Path(args.output),
+        target_profile=args.target_profile,
         symbol=args.symbol,
         stream_type=args.stream_type,
         interval=args.interval,

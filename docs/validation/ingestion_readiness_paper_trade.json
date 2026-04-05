@@ -1,0 +1,64 @@
+{
+  "generated_at": "2026-04-05T01:19:07.362153+00:00",
+  "target": "paper",
+  "profile": "paper_trade",
+  "dataset_env": "papercand",
+  "runtime_env": "dev",
+  "runtime_base_dir": "data/dev",
+  "symbol": "BTCUSDT",
+  "stream_type": "trade",
+  "interval": "1m",
+  "raw_base_dir": "data/paper_candidate_ok/raw",
+  "normalized_path": "data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03",
+  "validation_dir": "docs/validation",
+  "overall_status": "FAIL",
+  "pass_ok": false,
+  "steps": [
+    {
+      "name": "replay_parity",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/check_replay_parity.py",
+        "--raw-base-dir",
+        "data/paper_candidate_ok/raw",
+        "--normalized-path",
+        "data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03",
+        "--env",
+        "papercand",
+        "--symbol",
+        "BTCUSDT",
+        "--stream-type",
+        "trade",
+        "--output",
+        "docs/validation/ingestion_replay_parity_paper_trade.json"
+      ],
+      "returncode": 0,
+      "stdout": "replay parity: PASS\n- generated_at: 2026-04-05T01:18:04.411241+00:00\n- raw_base_dir: data/paper_candidate_ok/raw\n- normalized_path: data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03\n- env: papercand\n- symbol: BTCUSDT\n- stream_type: trade\n- raw_rows: 3\n- replay_rows: 3\n- normalized_rows: 3\n- replay_identity_count: 3\n- normalized_identity_count: 3\n- manifest_ok: True\n- order_match: True\n- report_path: docs/validation/ingestion_replay_parity_paper_trade.json\n",
+      "stderr": "",
+      "artifact_path": "docs/validation/ingestion_replay_parity_paper_trade.json"
+    },
+    {
+      "name": "storage_benchmark",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_storage_benchmark.py",
+        "--target-profile",
+        "paper",
+        "--symbol-count",
+        "12",
+        "--high-cardinality-symbol-counts",
+        "100,500",
+        "--bursts",
+        "4",
+        "--events-per-symbol-per-burst",
+        "12",
+        "--output",
+        "docs/validation/ingestion_storage_benchmark_paper_trade.json"
+      ],
+      "returncode": 1,
+      "stdout": "storage benchmark: FAIL\n- generated_at: 2026-04-05T01:19:07.061729+00:00\n- target_profile: paper\n- synthetic_rows_per_second: 1403.300\n- replay_rows_per_second: 1100.125\n- high_cardinality_cases: 2\n- report_path: docs/validation/ingestion_storage_benchmark_paper_trade.json\n",
+      "stderr": "",
+      "artifact_path": "docs/validation/ingestion_storage_benchmark_paper_trade.json"
+    }
+  ]
+}

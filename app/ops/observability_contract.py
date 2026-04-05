@@ -18,6 +18,7 @@ REQUIRED_INGESTION_METRICS: tuple[str, ...] = (
     "heartbeat_missed_total",
     "exchange_receive_skew_seconds",
     "receive_process_skew_seconds",
+    "processing_latency_seconds",
     "invalid_timestamp_total",
     "marketdata_anomaly_total",
     "segments_pending_total",
@@ -72,6 +73,20 @@ class ObservabilityContractReport:
 
 
 REQUIRED_METRIC_THRESHOLDS: dict[str, MetricThresholdSpec] = {
+    "duplicates_total": MetricThresholdSpec(
+        unit="count_per_run",
+        paper_warning=0.0,
+        paper_critical=0.0,
+        live_warning=0.0,
+        live_critical=0.0,
+    ),
+    "gaps_total": MetricThresholdSpec(
+        unit="count_per_run",
+        paper_warning=0.0,
+        paper_critical=0.0,
+        live_warning=0.0,
+        live_critical=0.0,
+    ),
     "reconnects_total": MetricThresholdSpec(
         unit="count_per_run",
         paper_warning=3.0,
@@ -81,10 +96,10 @@ REQUIRED_METRIC_THRESHOLDS: dict[str, MetricThresholdSpec] = {
     ),
     "heartbeat_missed_total": MetricThresholdSpec(
         unit="count_per_run",
-        paper_warning=1.0,
-        paper_critical=2.0,
-        live_warning=1.0,
-        live_critical=1.0,
+        paper_warning=0.0,
+        paper_critical=0.0,
+        live_warning=0.0,
+        live_critical=0.0,
     ),
     "exchange_receive_skew_seconds": MetricThresholdSpec(
         unit="seconds",
@@ -100,19 +115,26 @@ REQUIRED_METRIC_THRESHOLDS: dict[str, MetricThresholdSpec] = {
         live_warning=0.5,
         live_critical=2.0,
     ),
+    "processing_latency_seconds": MetricThresholdSpec(
+        unit="seconds",
+        paper_warning=1.0,
+        paper_critical=5.0,
+        live_warning=0.5,
+        live_critical=2.0,
+    ),
     "invalid_timestamp_total": MetricThresholdSpec(
         unit="count_per_run",
-        paper_warning=1.0,
-        paper_critical=1.0,
-        live_warning=1.0,
-        live_critical=1.0,
+        paper_warning=0.0,
+        paper_critical=0.0,
+        live_warning=0.0,
+        live_critical=0.0,
     ),
     "gap_irreparable_total": MetricThresholdSpec(
         unit="count_per_run",
-        paper_warning=1.0,
-        paper_critical=1.0,
-        live_warning=1.0,
-        live_critical=1.0,
+        paper_warning=0.0,
+        paper_critical=0.0,
+        live_warning=0.0,
+        live_critical=0.0,
     ),
     "marketdata_anomaly_total": MetricThresholdSpec(
         unit="count_per_run",
@@ -130,10 +152,10 @@ REQUIRED_METRIC_THRESHOLDS: dict[str, MetricThresholdSpec] = {
     ),
     "compaction_failures_total": MetricThresholdSpec(
         unit="count_per_run",
-        paper_warning=1.0,
-        paper_critical=1.0,
-        live_warning=1.0,
-        live_critical=1.0,
+        paper_warning=0.0,
+        paper_critical=0.0,
+        live_warning=0.0,
+        live_critical=0.0,
     ),
 }
 

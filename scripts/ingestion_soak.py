@@ -8,6 +8,7 @@ from app.ops.ingestion_validation import run_soak_validation
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ingestion soak validation for paper/live readiness")
+    parser.add_argument("--target-profile", choices=["paper", "live"], default="paper")
     parser.add_argument("--mode", choices=["deterministic", "ws-live"], default="ws-live")
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--events-per-iteration", type=int, default=500)
@@ -32,6 +33,7 @@ def main() -> int:
 
     evidence = run_soak_validation(
         Path(args.output),
+        target_profile=args.target_profile,
         mode=args.mode,
         iterations=args.iterations,
         events_per_iteration=args.events_per_iteration,

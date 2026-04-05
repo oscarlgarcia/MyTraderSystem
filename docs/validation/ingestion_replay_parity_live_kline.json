@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-04-05T01:22:13.667616+00:00",
+  "raw_base_dir": "data/dev/raw",
+  "normalized_path": "data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2024-01-01",
+  "env": "dev",
+  "symbol": "BTCUSDT",
+  "stream_type": "kline",
+  "raw_rows": 6,
+  "replay_rows": 6,
+  "normalized_rows": 6,
+  "replay_identity_count": 6,
+  "normalized_identity_count": 6,
+  "manifest_ok": true,
+  "manifest_checked_files": [
+    "data/dev/raw/env=dev/venue=BINANCE/stream_type=kline/symbol=BTCUSDT/date=2024-01-01/events.jsonl"
+  ],
+  "manifest_missing_files": [],
+  "manifest_mismatches": [],
+  "order_match": true,
+  "pass_ok": true
+}

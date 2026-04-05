@@ -38,6 +38,7 @@ from app.marketdata.instruments import ensure_default_instruments, get_default_i
 from app.marketdata.models import BarEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, RawRecord
 from app.marketdata.replay import ReplaySource
+from app.ops.observability_contract import build_observability_contract_report
 from app.observability.logger import get_logger
 
 
@@ -52,6 +53,9 @@ class ValidationRun:
     gaps: int
     gap_irreparable: int
     reconnects: int
+    heartbeat_missed_total: int
+    exchange_receive_skew_seconds: float
+    receive_process_skew_seconds: float
     processing_latency_seconds: float
     write_latency_seconds: float
     streams_degraded: list[str]
@@ -61,6 +65,7 @@ class ValidationRun:
 @dataclass(frozen=True, slots=True)
 class SoakEvidence:
     generated_at: str
+    target_profile: str
     mode: str
     vendor: str
     symbol: str
@@ -77,10 +82,21 @@ class SoakEvidence:
     total_events_persisted: int
     max_allowed_gaps: int
     max_gaps: int
+    max_allowed_duplicates: int
+    max_duplicates: int
     max_allowed_gap_irreparable: int
     max_gap_irreparable: int
+    max_allowed_heartbeat_missed_total: int
+    max_heartbeat_missed_total: int
+    max_allowed_exchange_receive_skew_seconds: float
+    max_exchange_receive_skew_seconds: float
+    max_allowed_receive_process_skew_seconds: float
+    max_receive_process_skew_seconds: float
+    max_allowed_processing_latency_seconds: float
     max_allowed_compaction_failures: int
     compaction_failures_total: int
+    max_streams_degraded: int
+    slo: dict[str, object]
     pass_ok: bool
     runs: list[ValidationRun]
 
@@ -156,6 +172,7 @@ BenchmarkTargetProfile = Literal["paper", "live", "robustness"]
 @dataclass(frozen=True, slots=True)
 class WSCanaryEvidence:
     mode: str
+    target_profile: str
     vendor: str
     ws_base: str
     symbol: str
@@ -172,6 +189,7 @@ class WSCanaryEvidence:
     checkpoint_audit_events: int
     recovery_audit_events: int
     report_generated_at: str
+    slo: dict[str, object]
     pass_ok: bool
     comparison_reason: str
 
@@ -265,6 +283,7 @@ def _json_lines(buffer: io.StringIO) -> list[dict[str, object]]:
 def _extract_run(logs: list[dict[str, object]], *, pipeline_version: str, shadow_mode: bool) -> ValidationRun:
     summary = next(record for record in logs if record["message"] == "ingestion summary")
     health = next(record for record in logs if record["message"] == "ingestion health")
+    stream_metrics = list(summary.get("stream_metrics") or [])
     return ValidationRun(
         mode=str(summary["mode"]),
         pipeline_version=pipeline_version,
@@ -275,6 +294,9 @@ def _extract_run(logs: list[dict[str, object]], *, pipeline_version: str, shadow
         gaps=int(summary["gaps_total"]),
         gap_irreparable=int(summary["gap_irreparable_total"]),
         reconnects=int(summary["reconnects"]),
+        heartbeat_missed_total=_sum_stream_metric(stream_metrics, "heartbeat_missed_total"),
+        exchange_receive_skew_seconds=float(summary.get("exchange_receive_skew_seconds", 0.0)),
+        receive_process_skew_seconds=float(summary.get("receive_process_skew_seconds", 0.0)),
         processing_latency_seconds=float(summary["processing_latency_seconds"]),
         write_latency_seconds=float(summary["write_latency_seconds"]),
         streams_degraded=list(health.get("streams_degraded", [])),
@@ -288,6 +310,41 @@ def _extract_alert_types(logs: list[dict[str, object]]) -> list[str]:
         for record in logs
         if record.get("message") == "operational alert" and record.get("alert_type")
     ]
+
+
+def _sum_stream_metric(stream_metrics: Sequence[dict[str, object]], key: str) -> int:
+    total = 0
+    for metric in stream_metrics:
+        try:
+            total += int(metric.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _max_stream_metric(stream_metrics: Sequence[dict[str, object]], key: str) -> float:
+    observed = 0.0
+    for metric in stream_metrics:
+        try:
+            observed = max(observed, float(metric.get(key, 0.0) or 0.0))
+        except (TypeError, ValueError):
+            continue
+    return observed
+
+
+def _validation_slo(target_profile: Literal["paper", "live"]) -> dict[str, object]:
+    thresholds = build_observability_contract_report(target=target_profile).required_metric_thresholds
+    return {
+        "target_profile": target_profile,
+        "max_allowed_duplicates": int(thresholds["duplicates_total"]["critical"]),
+        "max_allowed_gaps": int(thresholds["gaps_total"]["critical"]),
+        "max_allowed_gap_irreparable": int(thresholds["gap_irreparable_total"]["critical"]),
+        "max_allowed_heartbeat_missed_total": int(thresholds["heartbeat_missed_total"]["critical"]),
+        "max_allowed_exchange_receive_skew_seconds": float(thresholds["exchange_receive_skew_seconds"]["critical"]),
+        "max_allowed_receive_process_skew_seconds": float(thresholds["receive_process_skew_seconds"]["critical"]),
+        "max_allowed_processing_latency_seconds": float(thresholds["processing_latency_seconds"]["critical"]),
+        "max_allowed_compaction_failures": int(thresholds["compaction_failures_total"]["critical"]),
+    }
 
 
 def _count_jsonl_records(path: Path) -> int:
@@ -566,6 +623,9 @@ def _execute_canary_version(
         gaps=0,
         gap_irreparable=0,
         reconnects=0,
+        heartbeat_missed_total=0,
+        exchange_receive_skew_seconds=0.0,
+        receive_process_skew_seconds=0.0,
         processing_latency_seconds=0.0,
         write_latency_seconds=float(getattr(sink, "write_latency_seconds", 0.0)),
         streams_degraded=[],
@@ -576,6 +636,7 @@ def _execute_canary_version(
 def run_soak_validation(
     output_path: Path,
     *,
+    target_profile: Literal["paper", "live"] = "paper",
     mode: str = "deterministic",
     iterations: int = 5,
     events_per_iteration: int = 500,
@@ -588,7 +649,12 @@ def run_soak_validation(
     rest_base: str = "https://api.binance.com",
     reconnect_after_events: int = 1,
     induced_reconnects: int = 1,
+    max_allowed_duplicates: int | None = None,
     max_allowed_gaps: int | None = None,
+    max_allowed_heartbeat_missed_total: int | None = None,
+    max_allowed_exchange_receive_skew_seconds: float | None = None,
+    max_allowed_receive_process_skew_seconds: float | None = None,
+    max_allowed_processing_latency_seconds: float | None = None,
     max_allowed_gap_irreparable: int = 0,
     max_allowed_compaction_failures: int = 0,
     source_builder: WSCanarySourceBuilder | None = None,
@@ -601,6 +667,39 @@ def run_soak_validation(
     reconnects_observed = 0
     compaction_failures_total = 0
     started = time.perf_counter()
+    slo = _validation_slo(target_profile)
+    allowed_duplicates = slo["max_allowed_duplicates"] if max_allowed_duplicates is None else int(max_allowed_duplicates)
+    allowed_gaps = slo["max_allowed_gaps"] if max_allowed_gaps is None else int(max_allowed_gaps)
+    allowed_heartbeat_missed_total = (
+        slo["max_allowed_heartbeat_missed_total"]
+        if max_allowed_heartbeat_missed_total is None
+        else int(max_allowed_heartbeat_missed_total)
+    )
+    allowed_exchange_receive_skew_seconds = (
+        slo["max_allowed_exchange_receive_skew_seconds"]
+        if max_allowed_exchange_receive_skew_seconds is None
+        else float(max_allowed_exchange_receive_skew_seconds)
+    )
+    allowed_receive_process_skew_seconds = (
+        slo["max_allowed_receive_process_skew_seconds"]
+        if max_allowed_receive_process_skew_seconds is None
+        else float(max_allowed_receive_process_skew_seconds)
+    )
+    allowed_processing_latency_seconds = (
+        slo["max_allowed_processing_latency_seconds"]
+        if max_allowed_processing_latency_seconds is None
+        else float(max_allowed_processing_latency_seconds)
+    )
+    allowed_gap_irreparable = (
+        slo["max_allowed_gap_irreparable"]
+        if max_allowed_gap_irreparable == 0 and "max_allowed_gap_irreparable" in slo
+        else int(max_allowed_gap_irreparable)
+    )
+    allowed_compaction_failures = (
+        slo["max_allowed_compaction_failures"]
+        if max_allowed_compaction_failures == 0 and "max_allowed_compaction_failures" in slo
+        else int(max_allowed_compaction_failures)
+    )
     for index in range(iterations):
         with tempfile.TemporaryDirectory() as tmp_dir:
             base_dir = Path(tmp_dir)
@@ -658,13 +757,17 @@ def run_soak_validation(
             compaction_failures_total += collect_storage_health(base_dir, "test").compaction_failures_total
     elapsed = max(0.0, time.perf_counter() - started)
     reconnects_target = max(0, induced_reconnects * iterations) if mode == "ws-live" else 0
-    allowed_gaps = (
-        reconnects_target if max_allowed_gaps is None and mode == "ws-live" else (0 if max_allowed_gaps is None else max_allowed_gaps)
-    )
     observed_max_gaps = max(run.gaps for run in runs)
+    observed_max_duplicates = max(run.duplicates for run in runs)
     observed_max_gap_irreparable = max(run.gap_irreparable for run in runs)
+    observed_max_heartbeat_missed_total = max(run.heartbeat_missed_total for run in runs)
+    observed_max_exchange_receive_skew_seconds = max(run.exchange_receive_skew_seconds for run in runs)
+    observed_max_receive_process_skew_seconds = max(run.receive_process_skew_seconds for run in runs)
+    observed_max_processing_latency_seconds = max(run.processing_latency_seconds for run in runs)
+    observed_max_streams_degraded = max(len(run.streams_degraded) for run in runs)
     evidence = SoakEvidence(
         generated_at=datetime.now(timezone.utc).isoformat(),
+        target_profile=target_profile,
         mode=mode,
         vendor="BINANCE" if mode == "ws-live" else "STATIC",
         symbol=symbol,
@@ -676,21 +779,38 @@ def run_soak_validation(
         reconnects_target=reconnects_target,
         reconnects_observed=reconnects_observed,
         elapsed_seconds=elapsed,
-        max_processing_latency_seconds=max(run.processing_latency_seconds for run in runs),
+        max_processing_latency_seconds=observed_max_processing_latency_seconds,
         max_write_latency_seconds=max(run.write_latency_seconds for run in runs),
         total_events_persisted=sum(run.events_persisted for run in runs),
         max_allowed_gaps=allowed_gaps,
         max_gaps=observed_max_gaps,
-        max_allowed_gap_irreparable=max_allowed_gap_irreparable,
+        max_allowed_duplicates=allowed_duplicates,
+        max_duplicates=observed_max_duplicates,
+        max_allowed_gap_irreparable=allowed_gap_irreparable,
         max_gap_irreparable=observed_max_gap_irreparable,
-        max_allowed_compaction_failures=max_allowed_compaction_failures,
+        max_allowed_heartbeat_missed_total=allowed_heartbeat_missed_total,
+        max_heartbeat_missed_total=observed_max_heartbeat_missed_total,
+        max_allowed_exchange_receive_skew_seconds=allowed_exchange_receive_skew_seconds,
+        max_exchange_receive_skew_seconds=observed_max_exchange_receive_skew_seconds,
+        max_allowed_receive_process_skew_seconds=allowed_receive_process_skew_seconds,
+        max_receive_process_skew_seconds=observed_max_receive_process_skew_seconds,
+        max_allowed_processing_latency_seconds=allowed_processing_latency_seconds,
+        max_allowed_compaction_failures=allowed_compaction_failures,
         compaction_failures_total=compaction_failures_total,
+        max_streams_degraded=observed_max_streams_degraded,
+        slo=slo,
         pass_ok=(
             all(run.result == "ok" for run in runs)
-            and observed_max_gaps <= allowed_gaps
-            and observed_max_gap_irreparable <= max_allowed_gap_irreparable
-            and compaction_failures_total <= max_allowed_compaction_failures
-            and reconnects_observed >= reconnects_target
+            and (mode != "ws-live" or observed_max_duplicates <= allowed_duplicates)
+            and (mode != "ws-live" or observed_max_gaps <= allowed_gaps)
+            and (mode != "ws-live" or observed_max_gap_irreparable <= allowed_gap_irreparable)
+            and (mode != "ws-live" or observed_max_heartbeat_missed_total <= allowed_heartbeat_missed_total)
+            and (mode != "ws-live" or observed_max_exchange_receive_skew_seconds <= allowed_exchange_receive_skew_seconds)
+            and (mode != "ws-live" or observed_max_receive_process_skew_seconds <= allowed_receive_process_skew_seconds)
+            and (mode != "ws-live" or observed_max_processing_latency_seconds <= allowed_processing_latency_seconds)
+            and compaction_failures_total <= allowed_compaction_failures
+            and (mode != "ws-live" or observed_max_streams_degraded == 0)
+            and (mode != "ws-live" or reconnects_observed >= reconnects_target)
         ),
         runs=runs,
     )
@@ -803,6 +923,7 @@ def _build_ws_live_canary_source(
 def run_ws_live_canary(
     output_path: Path,
     *,
+    target_profile: Literal["paper", "live"] = "live",
     symbol: str = "BTCUSDT",
     stream_type: str = "kline",
     interval: str = "1m",
@@ -813,10 +934,39 @@ def run_ws_live_canary(
     reconnect_after_events: int = 1,
     induced_reconnects: int = 1,
     pipeline_version: str = "v2",
+    max_allowed_duplicates: int | None = None,
+    max_allowed_gaps: int | None = None,
+    max_allowed_heartbeat_missed_total: int | None = None,
+    max_allowed_exchange_receive_skew_seconds: float | None = None,
+    max_allowed_receive_process_skew_seconds: float | None = None,
+    max_allowed_processing_latency_seconds: float | None = None,
     source_builder: WSCanarySourceBuilder | None = None,
 ) -> WSCanaryEvidence:
     if stream_type != "kline":
         raise ValueError("ws-live canary currently supports only kline feeds because live pipeline support is bars-only")
+    slo = _validation_slo(target_profile)
+    allowed_duplicates = slo["max_allowed_duplicates"] if max_allowed_duplicates is None else int(max_allowed_duplicates)
+    allowed_gaps = slo["max_allowed_gaps"] if max_allowed_gaps is None else int(max_allowed_gaps)
+    allowed_heartbeat_missed_total = (
+        slo["max_allowed_heartbeat_missed_total"]
+        if max_allowed_heartbeat_missed_total is None
+        else int(max_allowed_heartbeat_missed_total)
+    )
+    allowed_exchange_receive_skew_seconds = (
+        slo["max_allowed_exchange_receive_skew_seconds"]
+        if max_allowed_exchange_receive_skew_seconds is None
+        else float(max_allowed_exchange_receive_skew_seconds)
+    )
+    allowed_receive_process_skew_seconds = (
+        slo["max_allowed_receive_process_skew_seconds"]
+        if max_allowed_receive_process_skew_seconds is None
+        else float(max_allowed_receive_process_skew_seconds)
+    )
+    allowed_processing_latency_seconds = (
+        slo["max_allowed_processing_latency_seconds"]
+        if max_allowed_processing_latency_seconds is None
+        else float(max_allowed_processing_latency_seconds)
+    )
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
@@ -853,6 +1003,9 @@ def run_ws_live_canary(
         run = _extract_run(logs, pipeline_version=pipeline_version, shadow_mode=False)
         alert_types = _extract_alert_types(logs)
         stream_metrics = list(summary.get("stream_metrics") or [])
+        heartbeat_missed_total = _sum_stream_metric(stream_metrics, "heartbeat_missed_total")
+        exchange_receive_skew_seconds = _max_stream_metric(stream_metrics, "exchange_receive_skew_seconds")
+        receive_process_skew_seconds = _max_stream_metric(stream_metrics, "receive_process_skew_seconds")
         continuity = {
             "events_persisted": run.events_persisted,
             "duplicates": run.duplicates,
@@ -861,6 +1014,10 @@ def run_ws_live_canary(
             "reconnects": run.reconnects,
             "result": run.result,
             "streams_degraded": list(run.streams_degraded),
+            "heartbeat_missed_total": heartbeat_missed_total,
+            "exchange_receive_skew_seconds": exchange_receive_skew_seconds,
+            "receive_process_skew_seconds": receive_process_skew_seconds,
+            "processing_latency_seconds": run.processing_latency_seconds,
         }
         checkpoint_audit_events = _count_jsonl_records(checkpoint_dir / "ingestion-checkpoint-audit.jsonl")
         recovery_audit_events = sum(
@@ -872,7 +1029,14 @@ def run_ws_live_canary(
             run.result == "ok"
             and run.events_persisted > 0
             and run.reconnects >= max(0, induced_reconnects)
+            and run.duplicates <= allowed_duplicates
+            and run.gaps <= allowed_gaps
             and run.gap_irreparable == 0
+            and heartbeat_missed_total <= allowed_heartbeat_missed_total
+            and exchange_receive_skew_seconds <= allowed_exchange_receive_skew_seconds
+            and receive_process_skew_seconds <= allowed_receive_process_skew_seconds
+            and run.processing_latency_seconds <= allowed_processing_latency_seconds
+            and not run.streams_degraded
         )
         reasons: list[str] = []
         if run.result != "ok":
@@ -881,10 +1045,25 @@ def run_ws_live_canary(
             reasons.append("no_events_persisted")
         if run.reconnects < max(0, induced_reconnects):
             reasons.append("reconnect_target_not_met")
+        if run.duplicates > allowed_duplicates:
+            reasons.append("duplicates_detected")
+        if run.gaps > allowed_gaps:
+            reasons.append("gaps_detected")
         if run.gap_irreparable > 0:
             reasons.append("gap_irreparable_detected")
+        if heartbeat_missed_total > allowed_heartbeat_missed_total:
+            reasons.append("heartbeat_missed_detected")
+        if exchange_receive_skew_seconds > allowed_exchange_receive_skew_seconds:
+            reasons.append("exchange_receive_skew_slo_breached")
+        if receive_process_skew_seconds > allowed_receive_process_skew_seconds:
+            reasons.append("receive_process_skew_slo_breached")
+        if run.processing_latency_seconds > allowed_processing_latency_seconds:
+            reasons.append("processing_latency_slo_breached")
+        if run.streams_degraded:
+            reasons.append("streams_degraded_detected")
         evidence = WSCanaryEvidence(
             mode="ws-live",
+            target_profile=target_profile,
             vendor="BINANCE",
             ws_base=ws_base,
             symbol=symbol,
@@ -901,6 +1080,7 @@ def run_ws_live_canary(
             checkpoint_audit_events=checkpoint_audit_events,
             recovery_audit_events=recovery_audit_events,
             report_generated_at=datetime.now(timezone.utc).isoformat(),
+            slo=slo,
             pass_ok=pass_ok,
             comparison_reason="continuity_ok" if pass_ok else ",".join(reasons),
         )

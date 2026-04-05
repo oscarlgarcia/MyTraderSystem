@@ -48,6 +48,12 @@ def _write_metadata_snapshot(base_dir: Path, *, env: str, mode: str = "runtime",
     )
 
 
+def _rewrite_runtime_artifact_target(path: Path, *, target_profile: str) -> None:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["target_profile"] = target_profile
+    _write_json(path, payload)
+
+
 def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tuple[Path, Path, Path, Path, Path, Path, Path, Path]:
     rest_path = tmp_path / "rest.json"
     ws_path = tmp_path / "ws.json"
@@ -71,6 +77,7 @@ def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tup
         ws_path,
         {
             "report_generated_at": NOW.isoformat(),
+            "target_profile": "paper",
             "pass_ok": True,
             "symbol": "BTCUSDT",
             "stream_type": "kline",
@@ -79,7 +86,13 @@ def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tup
                 "duplicates": 0,
                 "gaps": 0,
                 "gap_irreparable": 0,
+                "streams_degraded": [],
+                "heartbeat_missed_total": 0,
+                "exchange_receive_skew_seconds": 0.1,
+                "receive_process_skew_seconds": 0.1,
+                "processing_latency_seconds": 0.1,
             },
+            "slo": {"target_profile": "paper"},
             "reconnects_observed": 1,
             "reconnects_target": 1,
             "comparison_reason": "continuity_ok",
@@ -120,13 +133,26 @@ def _write_release_artifacts(tmp_path: Path, *, stale_rest: bool = False) -> tup
         soak_path,
         {
             "generated_at": NOW.isoformat(),
+            "target_profile": "paper",
             "pass_ok": True,
+            "stream_type": "kline",
             "max_allowed_gaps": 0,
             "max_gaps": 0,
+            "max_allowed_duplicates": 0,
+            "max_duplicates": 0,
             "max_allowed_gap_irreparable": 0,
             "max_gap_irreparable": 0,
+            "max_allowed_heartbeat_missed_total": 0,
+            "max_heartbeat_missed_total": 0,
+            "max_allowed_exchange_receive_skew_seconds": 30.0,
+            "max_exchange_receive_skew_seconds": 0.1,
+            "max_allowed_receive_process_skew_seconds": 5.0,
+            "max_receive_process_skew_seconds": 0.1,
+            "max_allowed_processing_latency_seconds": 5.0,
+            "max_processing_latency_seconds": 0.1,
             "max_allowed_compaction_failures": 0,
             "compaction_failures_total": 0,
+            "max_streams_degraded": 0,
             "reconnects_observed": 1,
             "reconnects_target": 1,
         },
@@ -215,6 +241,77 @@ def test_release_gates_paper_passes_with_clean_artifacts(tmp_path: Path):
     assert "Release gates: PASS (paper)" in render_release_gate_summary(report)
 
 
+def test_release_gates_paper_trade_passes_without_runtime_proxy_artifacts(tmp_path: Path):
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    benchmark_path = tmp_path / "benchmark.json"
+    parity_path = tmp_path / "parity.json"
+    vendor_contracts_path = tmp_path / "vendor-contracts.json"
+    _write_json(
+        benchmark_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target_profile": "paper",
+            "pass_ok": True,
+            "required_high_cardinality_symbol_counts": [100],
+            "slo": {"min_rows_per_second": 1.0},
+            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "replay_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 4},
+            "high_cardinality_cases": [
+                {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100}
+            ],
+        },
+    )
+    _write_json(
+        parity_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "order_match": True,
+            "manifest_ok": True,
+            "normalized_path": str(tmp_path / "normalized" / "trades" / "env=papercand"),
+            "symbol": "BTCUSDT",
+            "stream_type": "trade",
+            "manifest_missing_files": [],
+            "manifest_mismatches": [],
+        },
+    )
+    _write_json(
+        vendor_contracts_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "pytest_target": "tests/network/test_binance_contracts.py",
+            "command": ["python", "-m", "pytest"],
+            "duration_seconds": 1.0,
+            "returncode": 0,
+        },
+    )
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("trade",),
+        benchmark_path=benchmark_path,
+        replay_parity_path=parity_path,
+        network_contracts_path=vendor_contracts_path,
+        rest_canary_path=tmp_path / "missing-rest.json",
+        ws_canary_path=tmp_path / "missing-ws.json",
+        soak_path=tmp_path / "missing-soak.json",
+        failure_injection_path=tmp_path / "missing-failure.json",
+        live_drill_path=tmp_path / "missing-live-drill.json",
+    )
+
+    assert report.pass_ok is True
+    blocks = {block.name: block for block in report.blocks}
+    assert blocks["support_matrix"].status == "pass"
+    assert blocks["canary_rest"].required is False
+    assert blocks["canary_ws"].required is False
+    assert blocks["paper_soak"].required is False
+
+
 def test_release_gates_fail_when_required_artifact_is_stale(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path, stale_rest=True)
     _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
@@ -242,6 +339,8 @@ def test_release_gates_fail_when_required_artifact_is_stale(tmp_path: Path):
 
 def test_release_gates_live_requires_runtime_metadata_and_live_drill(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    _rewrite_runtime_artifact_target(ws_path, target_profile="live")
+    _rewrite_runtime_artifact_target(soak_path, target_profile="live")
     benchmark_payload = json.loads(benchmark_path.read_text(encoding="utf-8"))
     benchmark_payload["target_profile"] = "live"
     benchmark_payload["required_high_cardinality_symbol_counts"] = [100, 500]
@@ -309,6 +408,8 @@ def test_release_gates_fail_when_vendor_contract_artifact_is_incomplete(tmp_path
 
 def test_release_gates_fail_when_benchmark_target_profile_or_high_cardinality_cases_do_not_match(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    _rewrite_runtime_artifact_target(ws_path, target_profile="live")
+    _rewrite_runtime_artifact_target(soak_path, target_profile="live")
     _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
     benchmark_payload = json.loads(benchmark_path.read_text(encoding="utf-8"))
     benchmark_payload["target_profile"] = "paper"
@@ -377,8 +478,65 @@ def test_release_gates_fail_when_soak_records_compaction_failures(tmp_path: Path
     assert any("compaction failures exceed soak threshold" in reason for reason in block.reasons)
 
 
+def test_release_gates_fail_when_ws_canary_records_degraded_runtime(tmp_path: Path):
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    ws_payload = json.loads(ws_path.read_text(encoding="utf-8"))
+    ws_payload["continuity"]["gaps"] = 1
+    ws_payload["continuity"]["streams_degraded"] = ["BINANCE:BTCUSDT:kline"]
+    _write_json(ws_path, ws_payload)
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("kline",),
+        rest_canary_path=rest_path,
+        ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+    )
+
+    block = next(block for block in report.blocks if block.name == "canary_ws")
+    assert block.status == "fail"
+    assert any("promotion threshold" in reason or "streams degraded" in reason for reason in block.reasons)
+
+
+def test_release_gates_fail_when_soak_records_duplicate_runtime(tmp_path: Path):
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    soak_payload = json.loads(soak_path.read_text(encoding="utf-8"))
+    soak_payload["max_duplicates"] = 1
+    _write_json(soak_path, soak_payload)
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("kline",),
+        rest_canary_path=rest_path,
+        ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+    )
+
+    block = next(block for block in report.blocks if block.name == "paper_soak")
+    assert block.status == "fail"
+    assert any("duplicates exceed soak threshold" in reason for reason in block.reasons)
+
+
 def test_release_gates_live_fail_when_failure_injection_artifact_is_missing(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, _failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    _rewrite_runtime_artifact_target(ws_path, target_profile="live")
+    _rewrite_runtime_artifact_target(soak_path, target_profile="live")
     benchmark_payload = json.loads(benchmark_path.read_text(encoding="utf-8"))
     benchmark_payload["target_profile"] = "live"
     benchmark_payload["required_high_cardinality_symbol_counts"] = [100, 500]
@@ -413,6 +571,8 @@ def test_release_gates_live_fail_when_failure_injection_artifact_is_missing(tmp_
 
 def test_release_gates_live_fail_when_live_drill_artifact_is_stale(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    _rewrite_runtime_artifact_target(ws_path, target_profile="live")
+    _rewrite_runtime_artifact_target(soak_path, target_profile="live")
     _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
     _write_shadow_comparison(tmp_path / "shadow" / "env=dev" / "comparisons.jsonl", significant=False)
     _write_json(
@@ -448,6 +608,8 @@ def test_release_gates_live_fail_when_live_drill_artifact_is_stale(tmp_path: Pat
 
 def test_release_gates_live_fail_when_live_drill_not_pass(tmp_path: Path):
     rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path = _write_release_artifacts(tmp_path)
+    _rewrite_runtime_artifact_target(ws_path, target_profile="live")
+    _rewrite_runtime_artifact_target(soak_path, target_profile="live")
     _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
     _write_shadow_comparison(tmp_path / "shadow" / "env=dev" / "comparisons.jsonl", significant=False)
     _write_json(

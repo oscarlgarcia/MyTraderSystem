@@ -1,0 +1,92 @@
+{
+  "generated_at": "2026-04-05T01:21:55.289718+00:00",
+  "target": "paper",
+  "profile": "paper_kline",
+  "dataset_env": "dev",
+  "runtime_env": "dev",
+  "runtime_base_dir": "data/dev",
+  "symbol": "BTCUSDT",
+  "stream_type": "kline",
+  "interval": "1m",
+  "raw_base_dir": "data/dev/raw",
+  "normalized_path": "data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2024-01-01",
+  "validation_dir": "docs/validation",
+  "overall_status": "FAIL",
+  "pass_ok": false,
+  "steps": [
+    {
+      "name": "replay_parity",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/check_replay_parity.py",
+        "--raw-base-dir",
+        "data/dev/raw",
+        "--normalized-path",
+        "data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2024-01-01",
+        "--env",
+        "dev",
+        "--symbol",
+        "BTCUSDT",
+        "--stream-type",
+        "kline",
+        "--output",
+        "docs/validation/ingestion_replay_parity_paper_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "replay parity: PASS\n- generated_at: 2026-04-05T01:19:27.100519+00:00\n- raw_base_dir: data/dev/raw\n- normalized_path: data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2024-01-01\n- env: dev\n- symbol: BTCUSDT\n- stream_type: kline\n- raw_rows: 6\n- replay_rows: 6\n- normalized_rows: 6\n- replay_identity_count: 6\n- normalized_identity_count: 6\n- manifest_ok: True\n- order_match: True\n- report_path: docs/validation/ingestion_replay_parity_paper_kline.json\n",
+      "stderr": "",
+      "artifact_path": "docs/validation/ingestion_replay_parity_paper_kline.json"
+    },
+    {
+      "name": "rest_canary",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_canary.py",
+        "--mode",
+        "rest-baseline",
+        "--symbol",
+        "BTCUSDT",
+        "--interval",
+        "1m",
+        "--bars",
+        "5",
+        "--refresh-baseline",
+        "--output",
+        "docs/validation/ingestion_canary_report_paper_kline.json"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "artifact_path": "docs/validation/ingestion_canary_report_paper_kline.json"
+    },
+    {
+      "name": "ws_canary",
+      "command": [
+        "/workspace/.venv/bin/python",
+        "scripts/ingestion_ws_canary.py",
+        "--target-profile",
+        "paper",
+        "--symbol",
+        "BTCUSDT",
+        "--stream-type",
+        "kline",
+        "--interval",
+        "1m",
+        "--max-events",
+        "2",
+        "--duration-seconds",
+        "130.0",
+        "--reconnect-after-events",
+        "1",
+        "--induced-reconnects",
+        "1",
+        "--output",
+        "docs/validation/ingestion_ws_canary_report_paper_kline.json"
+      ],
+      "returncode": 1,
+      "stdout": "ws canary: FAIL\n- report_generated_at: 2026-04-05T01:21:55.136890+00:00\n- symbol: BTCUSDT\n- stream_type: kline\n- reconnects_observed: 1\n- gaps: 1\n- gap_irreparable: 0\n- report_path: docs/validation/ingestion_ws_canary_report_paper_kline.json\n",
+      "stderr": "operational alert\ngap detected\noperational alert\nrecovery failed\n",
+      "artifact_path": "docs/validation/ingestion_ws_canary_report_paper_kline.json"
+    }
+  ]
+}

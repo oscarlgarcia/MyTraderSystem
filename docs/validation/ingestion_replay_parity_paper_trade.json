@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-04-05T01:18:04.411241+00:00",
+  "raw_base_dir": "data/paper_candidate_ok/raw",
+  "normalized_path": "data/paper_candidate_ok/normalized/trades/env=papercand/venue=BINANCE/symbol=BTCUSDT/date=2024-04-03",
+  "env": "papercand",
+  "symbol": "BTCUSDT",
+  "stream_type": "trade",
+  "raw_rows": 3,
+  "replay_rows": 3,
+  "normalized_rows": 3,
+  "replay_identity_count": 3,
+  "normalized_identity_count": 3,
+  "manifest_ok": true,
+  "manifest_checked_files": [
+    "data/paper_candidate_ok/raw/env=papercand/venue=BINANCE/stream_type=trade/symbol=BTCUSDT/date=2024-04-03/events.jsonl"
+  ],
+  "manifest_missing_files": [],
+  "manifest_mismatches": [],
+  "order_match": true,
+  "pass_ok": true
+}

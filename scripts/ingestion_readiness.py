@@ -53,7 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     validation_dir = Path(args.validation_dir)
-    output_path = Path(args.output) if args.output else validation_dir / f"ingestion_readiness_{args.target}.json"
+    stream_type = str(args.stream_type).strip().lower()
+    if args.target == "live":
+        default_profile = "live_kline"
+    else:
+        default_profile = f"paper_{stream_type}"
+    output_path = Path(args.output) if args.output else validation_dir / f"ingestion_readiness_{default_profile}.json"
     report = run_ingestion_readiness(
         workspace=Path.cwd(),
         target=args.target,
@@ -61,7 +66,7 @@ def main() -> int:
         raw_base_dir=Path(args.raw_base_dir),
         normalized_path=Path(args.normalized_path),
         symbol=args.symbol,
-        stream_type=args.stream_type,
+        stream_type=stream_type,
         interval=args.interval,
         runtime_env=args.runtime_env,
         runtime_base_dir=Path(args.runtime_base_dir) if args.runtime_base_dir else None,

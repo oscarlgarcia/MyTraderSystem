@@ -1,0 +1,154 @@
+{
+  "generated_at": "2026-04-05T01:32:42.451067+00:00",
+  "env": "dev",
+  "target": "live",
+  "overall_status": "FAIL",
+  "drill_executed": true,
+  "checklist_completed": false,
+  "promote_ready": false,
+  "rollback_ready": true,
+  "decision_deadlines": {
+    "promote_decision_max_minutes": 15,
+    "critical_alert_ack_max_minutes": 2,
+    "rollback_decision_max_minutes": 5
+  },
+  "artifact_ttl_seconds": 86400,
+  "checklist": [
+    {
+      "name": "release_gate_pass",
+      "required": true,
+      "passed": false,
+      "details": {
+        "path": "docs/validation/ingestion_release_gates_pre_drill_live_kline.json",
+        "overall_status": "FAIL",
+        "pass_ok": false,
+        "target": "live",
+        "artifact_age_seconds": 294.77994
+      }
+    },
+    {
+      "name": "canary_rest",
+      "required": true,
+      "passed": true,
+      "details": {
+        "path": "docs/validation/ingestion_canary_report_live_kline.json",
+        "pass_ok": true,
+        "comparison_reason": "semantic_match",
+        "artifact_age_seconds": 625.139849
+      }
+    },
+    {
+      "name": "canary_ws",
+      "required": true,
+      "passed": false,
+      "details": {
+        "path": "docs/validation/ingestion_ws_canary_report_live_kline.json",
+        "pass_ok": false,
+        "comparison_reason": "duplicates_detected,gaps_detected,heartbeat_missed_detected,exchange_receive_skew_slo_breached,processing_latency_slo_breached,streams_degraded_detected",
+        "artifact_age_seconds": 480.952896
+      }
+    },
+    {
+      "name": "storage_benchmark_pass",
+      "required": true,
+      "passed": false,
+      "details": {
+        "path": "docs/validation/ingestion_storage_benchmark_live_kline.json",
+        "pass_ok": false,
+        "slo": {
+          "target_profile": "live",
+          "min_rows_per_second": 100.0,
+          "max_write_latency_seconds": 2.0,
+          "max_compaction_elapsed_seconds": 5.0,
+          "max_shadow_elapsed_seconds": 5.0,
+          "required_high_cardinality_symbol_counts": [
+            100,
+            500
+          ]
+        },
+        "artifact_age_seconds": 336.168286
+      }
+    },
+    {
+      "name": "failure_injection_pass",
+      "required": true,
+      "passed": true,
+      "details": {
+        "path": "docs/validation/ingestion_failure_injection_live_kline.json",
+        "pass_ok": true,
+        "critical_test_ids": [
+          "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_stale_ws_artifact",
+          "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot",
+          "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch"
+        ],
+        "artifact_age_seconds": 404.485796
+      }
+    },
+    {
+      "name": "rollback_checklist_present",
+      "required": true,
+      "passed": true,
+      "details": {
+        "path": "docs/operations/ingestion_rollback_checklist.md"
+      }
+    },
+    {
+      "name": "live_cutover_runbook_present",
+      "required": true,
+      "passed": true,
+      "details": {
+        "path": "docs/ops/live_cutover.md"
+      }
+    },
+    {
+      "name": "promotion_runbook_present",
+      "required": true,
+      "passed": true,
+      "details": {
+        "path": "docs/operations/ingestion_promotion_runbook.md"
+      }
+    },
+    {
+      "name": "decision_deadlines_defined",
+      "required": true,
+      "passed": true,
+      "details": {
+        "promote_decision_max_minutes": 15,
+        "critical_alert_ack_max_minutes": 2,
+        "rollback_decision_max_minutes": 5
+      }
+    }
+  ],
+  "critical_alert_responses": [
+    {
+      "alert_type": "reconnect_storm",
+      "ack_deadline_minutes": 2,
+      "rollback_decision_deadline_minutes": 5,
+      "recommended_action": "Confirm vendor connectivity, freeze promotion, inspect websocket instability before continuing."
+    },
+    {
+      "alert_type": "gap_irreparable",
+      "ack_deadline_minutes": 2,
+      "rollback_decision_deadline_minutes": 5,
+      "recommended_action": "Treat stream as degraded, abort live promotion and revert to previous pipeline version."
+    },
+    {
+      "alert_type": "shadow_semantic_diff",
+      "ack_deadline_minutes": 2,
+      "rollback_decision_deadline_minutes": 5,
+      "recommended_action": "Stop promotion immediately, inspect shadow diffs and keep candidate behind shadow mode only."
+    },
+    {
+      "alert_type": "compaction_failure_detected",
+      "ack_deadline_minutes": 2,
+      "rollback_decision_deadline_minutes": 5,
+      "recommended_action": "Freeze live cutover, inspect compaction failures and clear storage health before retrying."
+    },
+    {
+      "alert_type": "provider_metadata_drift",
+      "ack_deadline_minutes": 2,
+      "rollback_decision_deadline_minutes": 5,
+      "recommended_action": "Review venue metadata drift and confirm catalog changes before promoting live."
+    }
+  ]
+}

@@ -10,6 +10,7 @@ from typing import Callable, Literal, Sequence
 
 
 ReadinessTarget = Literal["paper", "live"]
+ReadinessProfile = Literal["paper_trade", "paper_kline", "live_kline"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,7 @@ class ReadinessStepResult:
 class ReadinessReport:
     generated_at: str
     target: ReadinessTarget
+    profile: ReadinessProfile
     dataset_env: str
     runtime_env: str
     runtime_base_dir: str | None
@@ -91,30 +93,32 @@ def run_ingestion_readiness(
     validation_dir = Path(validation_dir)
     output_path = Path(output_path)
     runtime_env = str(runtime_env or env)
-    gate_stream_types = tuple(gate_stream_types or (("kline",) if target in {"paper", "live"} else (stream_type,)))
+    profile, gate_stream_types = _resolve_readiness_contract(
+        target=target,
+        stream_type=stream_type,
+        gate_stream_types=gate_stream_types,
+    )
     gate_stream_types_arg = ",".join(gate_stream_types)
 
     if not raw_base_dir.exists():
         raise ValueError(f"raw_base_dir does not exist: {raw_base_dir}")
     if not normalized_path.exists():
         raise ValueError(f"normalized_path does not exist: {normalized_path}")
-    if target == "live" and stream_type != "kline":
-        raise ValueError("live readiness only supports stream_type=kline")
 
     workspace = Path(workspace)
     validation_dir.mkdir(parents=True, exist_ok=True)
     executor = executor or _default_executor
 
-    replay_parity_path = validation_dir / "ingestion_replay_parity.json"
-    rest_canary_path = validation_dir / "ingestion_canary_report.json"
-    ws_canary_path = validation_dir / "ingestion_ws_canary_report.json"
-    benchmark_path = validation_dir / "ingestion_storage_benchmark.json"
-    vendor_contracts_path = validation_dir / "ingestion_vendor_contracts.json"
-    soak_path = validation_dir / "ingestion_soak_evidence.json"
-    failure_injection_path = validation_dir / "ingestion_failure_injection.json"
-    release_gates_path = validation_dir / "ingestion_release_gates.json"
-    release_gates_predrill_path = validation_dir / "ingestion_release_gates_pre_drill.json"
-    live_drill_path = validation_dir / "ingestion_live_drill_report.json"
+    replay_parity_path = _profile_artifact_path(validation_dir, "ingestion_replay_parity", profile)
+    rest_canary_path = _profile_artifact_path(validation_dir, "ingestion_canary_report", profile)
+    ws_canary_path = _profile_artifact_path(validation_dir, "ingestion_ws_canary_report", profile)
+    benchmark_path = _profile_artifact_path(validation_dir, "ingestion_storage_benchmark", profile)
+    vendor_contracts_path = _profile_artifact_path(validation_dir, "ingestion_vendor_contracts", profile)
+    soak_path = _profile_artifact_path(validation_dir, "ingestion_soak_evidence", profile)
+    failure_injection_path = _profile_artifact_path(validation_dir, "ingestion_failure_injection", profile)
+    release_gates_path = _profile_artifact_path(validation_dir, "ingestion_release_gates", profile)
+    release_gates_predrill_path = _profile_artifact_path(validation_dir, "ingestion_release_gates_pre_drill", profile)
+    live_drill_path = _profile_artifact_path(validation_dir, "ingestion_live_drill_report", profile)
 
     high_cardinality_arg = ",".join(str(value) for value in benchmark_high_cardinality_symbol_counts)
 
@@ -172,49 +176,6 @@ def run_ingestion_readiness(
             str(replay_parity_path),
         ),
         (
-            "rest_canary",
-            (
-                sys.executable,
-                "scripts/ingestion_canary.py",
-                "--mode",
-                "rest-baseline",
-                "--symbol",
-                symbol,
-                "--interval",
-                interval,
-                "--bars",
-                "5",
-                "--refresh-baseline",
-                "--output",
-                str(rest_canary_path),
-            ),
-            str(rest_canary_path),
-        ),
-        (
-            "ws_canary",
-            (
-                sys.executable,
-                "scripts/ingestion_ws_canary.py",
-                "--symbol",
-                symbol,
-                "--stream-type",
-                "kline",
-                "--interval",
-                interval,
-                "--max-events",
-                str(ws_max_events),
-                "--duration-seconds",
-                str(ws_duration_seconds),
-                "--reconnect-after-events",
-                str(ws_reconnect_after_events),
-                "--induced-reconnects",
-                str(ws_induced_reconnects),
-                "--output",
-                str(ws_canary_path),
-            ),
-            str(ws_canary_path),
-        ),
-        (
             "storage_benchmark",
             tuple(storage_benchmark_command),
             str(benchmark_path),
@@ -229,37 +190,90 @@ def run_ingestion_readiness(
             ),
             str(vendor_contracts_path),
         ),
-        (
-            "soak",
-            (
-                sys.executable,
-                "scripts/ingestion_soak.py",
-                "--mode",
-                soak_mode,
-                "--iterations",
-                str(soak_iterations),
-                "--events-per-iteration",
-                str(soak_events_per_iteration),
-                "--duration-seconds",
-                str(soak_duration_seconds),
-                "--symbol",
-                symbol,
-                "--stream-type",
-                "kline",
-                "--interval",
-                interval,
-                "--reconnect-after-events",
-                str(soak_reconnect_after_events),
-                "--induced-reconnects",
-                str(soak_induced_reconnects),
-                "--output",
-                str(soak_path),
-            ),
-            str(soak_path),
-        ),
     ]
 
-    if target == "live":
+    if _requires_runtime_validation(profile):
+        steps[1:1] = [
+            (
+                "rest_canary",
+                (
+                    sys.executable,
+                    "scripts/ingestion_canary.py",
+                    "--mode",
+                    "rest-baseline",
+                    "--symbol",
+                    symbol,
+                    "--interval",
+                    interval,
+                    "--bars",
+                    "5",
+                    "--refresh-baseline",
+                    "--output",
+                    str(rest_canary_path),
+                ),
+                str(rest_canary_path),
+            ),
+            (
+                "ws_canary",
+                (
+                    sys.executable,
+                    "scripts/ingestion_ws_canary.py",
+                    "--target-profile",
+                    target,
+                    "--symbol",
+                    symbol,
+                    "--stream-type",
+                    stream_type,
+                    "--interval",
+                    interval,
+                    "--max-events",
+                    str(ws_max_events),
+                    "--duration-seconds",
+                    str(ws_duration_seconds),
+                    "--reconnect-after-events",
+                    str(ws_reconnect_after_events),
+                    "--induced-reconnects",
+                    str(ws_induced_reconnects),
+                    "--output",
+                    str(ws_canary_path),
+                ),
+                str(ws_canary_path),
+            ),
+        ]
+        steps.append(
+            (
+                "soak",
+                (
+                    sys.executable,
+                    "scripts/ingestion_soak.py",
+                    "--target-profile",
+                    target,
+                    "--mode",
+                    soak_mode,
+                    "--iterations",
+                    str(soak_iterations),
+                    "--events-per-iteration",
+                    str(soak_events_per_iteration),
+                    "--duration-seconds",
+                    str(soak_duration_seconds),
+                    "--symbol",
+                    symbol,
+                    "--stream-type",
+                    stream_type,
+                    "--interval",
+                    interval,
+                    "--reconnect-after-events",
+                    str(soak_reconnect_after_events),
+                    "--induced-reconnects",
+                    str(soak_induced_reconnects),
+                    "--output",
+                    str(soak_path),
+                ),
+                str(soak_path),
+            )
+        )
+
+    if profile == "live_kline":
         steps.extend(
             [
                 (
@@ -390,6 +404,7 @@ def run_ingestion_readiness(
     report = ReadinessReport(
         generated_at=datetime.now(timezone.utc).isoformat(),
         target=target,
+        profile=profile,
         dataset_env=env,
         runtime_env=runtime_env,
         runtime_base_dir=str(runtime_base_dir) if runtime_base_dir is not None else None,
@@ -415,3 +430,41 @@ def _default_executor(command: Sequence[str], cwd: Path) -> subprocess.Completed
         text=True,
         check=False,
     )
+
+
+def _resolve_readiness_contract(
+    *,
+    target: ReadinessTarget,
+    stream_type: str,
+    gate_stream_types: tuple[str, ...] | None,
+) -> tuple[ReadinessProfile, tuple[str, ...]]:
+    normalized_stream_type = str(stream_type).strip().lower()
+    if target == "live":
+        if normalized_stream_type != "kline":
+            raise ValueError("live readiness only supports stream_type=kline")
+        profile: ReadinessProfile = "live_kline"
+        expected_gate_stream_types = ("kline",)
+    elif normalized_stream_type == "trade":
+        profile = "paper_trade"
+        expected_gate_stream_types = ("trade",)
+    elif normalized_stream_type == "kline":
+        profile = "paper_kline"
+        expected_gate_stream_types = ("kline",)
+    else:
+        raise ValueError(f"unsupported readiness stream_type={stream_type}")
+    requested_gate_stream_types = tuple(gate_stream_types or expected_gate_stream_types)
+    if requested_gate_stream_types != expected_gate_stream_types:
+        raise ValueError(
+            "readiness contract mismatch: "
+            f"profile={profile} expects gate_stream_types={expected_gate_stream_types}, "
+            f"got {requested_gate_stream_types}"
+        )
+    return profile, requested_gate_stream_types
+
+
+def _requires_runtime_validation(profile: ReadinessProfile) -> bool:
+    return profile in {"paper_kline", "live_kline"}
+
+
+def _profile_artifact_path(validation_dir: Path, stem: str, profile: ReadinessProfile) -> Path:
+    return validation_dir / f"{stem}_{profile}.json"

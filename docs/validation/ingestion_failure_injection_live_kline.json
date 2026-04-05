@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-04-05T01:25:57.924073+00:00",
+  "pytest_target": "tests/ops/test_failure_injection.py",
+  "critical_test_ids": [
+    "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_stale_ws_artifact",
+    "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot",
+    "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch"
+  ],
+  "command": [
+    "/workspace/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_stale_ws_artifact",
+    "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot",
+    "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch"
+  ],
+  "cwd": "/workspace",
+  "python_executable": "/workspace/.venv/bin/python",
+  "duration_seconds": 9.522175834000336,
+  "returncode": 0,
+  "pass_ok": true,
+  "stdout": "...                                                                      [100%]\n3 passed in 7.59s\n",
+  "stderr": ""
+}
