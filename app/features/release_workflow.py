@@ -55,6 +55,9 @@ def _append_audit_event(
             "target": gate_report.target,
             "stale_count": gate_report.stale_count,
             "latency_breaches": gate_report.latency_breaches,
+            "invalid_ratio": gate_report.invalid_ratio,
+            "invalid_ratio_breaches": gate_report.invalid_ratio_breaches,
+            "cardinality_breaches": gate_report.cardinality_breaches,
             "reasons": list(gate_report.reasons),
         }
     with audit_path.open("a", encoding="utf-8") as handle:

@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 
 from app.common.dto import FeatureVector
 from app.features.definitions import FeatureDefinition, FeatureSetDefinition
+from app.features.validation_profiles import get_validation_profile
 
 
 @dataclass(frozen=True)
@@ -16,8 +17,10 @@ class ValidationResult:
 
 
 class FeatureValidator:
-    def __init__(self, feature_set: FeatureSetDefinition) -> None:
+    def __init__(self, feature_set: FeatureSetDefinition, *, target: str = "research") -> None:
         self.feature_set = feature_set
+        self.target = target
+        self.profile = get_validation_profile(target)
         self.by_name: Dict[str, FeatureDefinition] = {fd.name: fd for fd in feature_set.feature_definitions}
         self.history = defaultdict(lambda: deque(maxlen=256))
 
@@ -86,4 +89,7 @@ class FeatureValidator:
 
         if fv.available_ts > fv.ts and "available_after_ts" not in flags:
             flags.append("available_after_ts")
+        staleness_seconds = max(0.0, (fv.available_ts - fv.ts).total_seconds())
+        if staleness_seconds > self.profile.max_staleness_seconds:
+            flags.append("feature_staleness_profile_breach")
         return ValidationResult(is_valid=not flags, flags=tuple(flags))

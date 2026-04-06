@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Deque, Dict, List, Tuple
 
 from app.common.dto import MarketEvent
+from app.features.entity_codec import decode_entity_scope, entity_scope, primary_symbol
 
 
 @dataclass
@@ -24,6 +25,20 @@ class RuntimeStateStore:
         self.agg_state: Dict[Tuple[str, str, int], float] = {}
         self.watermarks: Dict[str, datetime] = {}
         self.recent_events: Dict[str, List[MarketEvent]] = defaultdict(list)
+        self.node_history: Dict[Tuple[str, str], Deque[float]] = defaultdict(lambda: deque(maxlen=512))
+
+    def scope_for_event(self, event: MarketEvent) -> str:
+        return event.metadata.get("feature_entity_scope", entity_scope({"symbol": event.symbol}))
+
+    def entity_keys_for_event(self, event: MarketEvent) -> dict[str, str]:
+        scope = self.scope_for_event(event)
+        keys = decode_entity_scope(scope)
+        if not keys:
+            keys = {"symbol": event.symbol}
+        return keys
+
+    def symbol_for_scope(self, scope: str) -> str:
+        return primary_symbol(decode_entity_scope(scope))
 
     def reset(self) -> None:
         self.prices.clear()
@@ -31,16 +46,28 @@ class RuntimeStateStore:
         self.agg_state.clear()
         self.watermarks.clear()
         self.recent_events.clear()
+        self.node_history.clear()
+
+    def reset_scope(self, scope: str) -> None:
+        self.prices.pop(scope, None)
+        self.previous_price.pop(scope, None)
+        self.watermarks.pop(scope, None)
+        self.recent_events.pop(scope, None)
+        for key in [key for key in self.agg_state if key[1] == scope]:
+            self.agg_state.pop(key, None)
+        for key in [key for key in self.node_history if key[0] == scope]:
+            self.node_history.pop(key, None)
 
     def snapshot(self) -> dict:
         return {
+            "schema_version": "v2",
             "effective_window": self.effective_window,
-            "prices": {sym: list(values) for sym, values in self.prices.items()},
+            "prices": {scope: list(values) for scope, values in self.prices.items()},
             "previous_price": dict(self.previous_price),
             "agg_state": {"|".join([k[0], k[1], str(k[2])]): v for k, v in self.agg_state.items()},
-            "watermarks": {sym: ts.isoformat() for sym, ts in self.watermarks.items()},
+            "watermarks": {scope: ts.isoformat() for scope, ts in self.watermarks.items()},
             "recent_events": {
-                sym: [
+                scope: [
                     {
                         "symbol": ev.symbol,
                         "event_ts": ev.event_ts.isoformat(),
@@ -55,8 +82,9 @@ class RuntimeStateStore:
                     }
                     for ev in events
                 ]
-                for sym, events in self.recent_events.items()
+                for scope, events in self.recent_events.items()
             },
+            "node_history": {"|".join([scope, name]): list(values) for (scope, name), values in self.node_history.items()},
         }
 
     @classmethod
@@ -65,17 +93,17 @@ class RuntimeStateStore:
         from app.common.dto import MarketEvent
 
         state = cls(effective_window=int(payload["effective_window"]))
-        for sym, prices in payload.get("prices", {}).items():
-            state.prices[sym].extend(prices)
-        for sym, prev in payload.get("previous_price", {}).items():
-            state.previous_price[sym] = prev
+        for scope, prices in payload.get("prices", {}).items():
+            state.prices[scope].extend(prices)
+        for scope, prev in payload.get("previous_price", {}).items():
+            state.previous_price[scope] = prev
         for key, value in payload.get("agg_state", {}).items():
-            name, sym, window = key.split("|")
-            state.agg_state[(name, sym, int(window))] = value
-        for sym, ts in payload.get("watermarks", {}).items():
-            state.watermarks[sym] = datetime.fromisoformat(ts)
-        for sym, events in payload.get("recent_events", {}).items():
-            state.recent_events[sym] = [
+            name, scope, window = key.split("|")
+            state.agg_state[(name, scope, int(window))] = value
+        for scope, ts in payload.get("watermarks", {}).items():
+            state.watermarks[scope] = datetime.fromisoformat(ts)
+        for scope, events in payload.get("recent_events", {}).items():
+            state.recent_events[scope] = [
                 MarketEvent(
                     symbol=item["symbol"],
                     event_ts=datetime.fromisoformat(item["event_ts"]),
@@ -90,4 +118,7 @@ class RuntimeStateStore:
                 )
                 for item in events
             ]
+        for key, values in payload.get("node_history", {}).items():
+            scope, name = key.split("|", 1)
+            state.node_history[(scope, name)].extend(float(value) for value in values)
         return state

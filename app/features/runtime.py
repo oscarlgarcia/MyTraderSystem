@@ -4,10 +4,13 @@ import logging
 import math
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Iterable, List
 
 from app.common.dto import FeatureVector, MarketEvent
 from app.features.cache import FeatureCache
+from app.features.entity_codec import entity_scope, normalize_entity_keys, primary_symbol
+from app.features.event_journal import FeatureEventJournal
 from app.features.definitions import FeatureSetDefinition, build_legacy_feature_set_definition
 from app.features.metrics import FeatureMetrics
 from app.features.planner import FeaturePlanner
@@ -58,6 +61,8 @@ class FeatureRuntimeEngine:
         out_of_order_policy: str = "reject",
         strict_temporal_semantics: bool = False,
         runtime_mode: str = "research",
+        event_journal: FeatureEventJournal | None = None,
+        journal_path: str | Path | None = None,
     ) -> None:
         self.feature_set = feature_set
         self.cache = cache or FeatureCache()
@@ -68,6 +73,20 @@ class FeatureRuntimeEngine:
         self.out_of_order_policy = out_of_order_policy
         self.strict_temporal_semantics = strict_temporal_semantics
         self.runtime_mode = runtime_mode
+        self.event_journal = event_journal or (FeatureEventJournal(journal_path) if journal_path is not None else None)
+
+    def _entity_keys_for_event(self, event: MarketEvent) -> dict[str, str]:
+        payload = {}
+        for key in self.feature_set.entity_keys:
+            if key == "symbol":
+                continue
+            payload[key] = event.metadata.get(key) or event.metadata.get(f"entity:{key}")
+        keys = normalize_entity_keys(payload, symbol=event.symbol, required_keys=self.feature_set.entity_keys)
+        event.metadata.setdefault("feature_entity_scope", entity_scope(keys))
+        for key, value in keys.items():
+            if key != "symbol":
+                event.metadata.setdefault(f"entity:{key}", value)
+        return keys
 
     def _enforce_temporal_semantics(self, event) -> None:
         if not (self.strict_temporal_semantics or self.runtime_mode in STRICT_TEMPORAL_MODES):
@@ -81,15 +100,17 @@ class FeatureRuntimeEngine:
         if not isinstance(event.price, (int, float)) or not math.isfinite(event.price):
             self.metrics.dropped_non_finite += 1
             return None
+        entity_keys = self._entity_keys_for_event(event)
+        scope = entity_scope(entity_keys)
         event_ts = _event_ts(event)
         event_available_ts = _available_ts(event)
-        prices = self.state.prices[event.symbol]
+        prices = self.state.prices[scope]
         prices.append(float(event.price))
         if record_event:
-            self.state.recent_events[event.symbol].append(event)
+            self.state.recent_events[scope].append(event)
             max_recent = max(self.state.effective_window * 4, 32)
-            if len(self.state.recent_events[event.symbol]) > max_recent:
-                self.state.recent_events[event.symbol] = self.state.recent_events[event.symbol][-max_recent:]
+            if len(self.state.recent_events[scope]) > max_recent:
+                self.state.recent_events[scope] = self.state.recent_events[scope][-max_recent:]
         values: Dict[str, float] = {}
         context: Dict[str, float] = {}
         for node in self.plan.nodes:
@@ -97,29 +118,33 @@ class FeatureRuntimeEngine:
             if computed:
                 values.update(computed)
                 context.update(computed)
+        for name, value in values.items():
+            self.state.node_history[(scope, name)].append(float(value))
         fv = FeatureVector(
-            symbol=event.symbol,
+            symbol=primary_symbol(entity_keys, fallback_symbol=event.symbol),
             ts=event_ts,
             available_ts=event_available_ts,
             source_cutoff_ts=event_available_ts,
             values=values,
             feature_set_name=self.feature_set.name,
             feature_set_version=self.feature_set.version,
+            entity_keys=entity_keys,
         )
         if event.price > 0:
-            self.state.previous_price[event.symbol] = float(event.price)
-        self.state.watermarks[event.symbol] = event_available_ts
+            self.state.previous_price[scope] = float(event.price)
+        self.state.watermarks[scope] = event_available_ts
         self.cache.put(fv)
         return fv
 
-    def _recompute_symbol(self, symbol: str) -> List[FeatureVector]:
-        events = sorted(self.state.recent_events[symbol], key=lambda ev: (_available_ts(ev), _event_ts(ev)))
-        self.state.prices[symbol].clear()
-        self.state.previous_price[symbol] = None
-        for key in [key for key in self.state.agg_state if key[1] == symbol]:
-            self.state.agg_state.pop(key, None)
+    def _recompute_scope(self, scope: str) -> List[FeatureVector]:
+        if self.event_journal is not None:
+            events = self.event_journal.load_scope_events(scope)
+        else:
+            events = list(self.state.recent_events[scope])
+        events = sorted(events, key=lambda ev: (_available_ts(ev), _event_ts(ev)))
+        self.state.reset_scope(scope)
         out: List[FeatureVector] = []
-        self.state.recent_events[symbol] = list(events)
+        self.state.recent_events[scope] = list(events)
         for ev in events:
             fv = self._compute_from_event(ev, record_event=False)
             if fv is not None:
@@ -129,15 +154,20 @@ class FeatureRuntimeEngine:
     def update(self, event: MarketEvent) -> FeatureVector | None:
         self.metrics.events_in += 1
         self._enforce_temporal_semantics(event)
-        watermark = self.state.watermarks.get(event.symbol)
+        entity_keys = self._entity_keys_for_event(event)
+        scope = entity_scope(entity_keys)
+        if self.event_journal is not None:
+            self.event_journal.append(event, entity_keys=entity_keys)
+        watermark = self.state.watermarks.get(scope)
         event_available_ts = _available_ts(event)
         if watermark is not None and event_available_ts < watermark:
             if self.out_of_order_policy == "reject":
                 self.metrics.transform_errors += 1
                 return None
             if self.out_of_order_policy == "recompute":
-                self.state.recent_events[event.symbol].append(event)
-                recomputed = self._recompute_symbol(event.symbol)
+                if self.event_journal is None:
+                    self.state.recent_events[scope].append(event)
+                recomputed = self._recompute_scope(scope)
                 if recomputed:
                     self.metrics.features_out += 1
                     return recomputed[-1]

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
 
-from app.features.definitions import FeatureDefinition, FeatureNodeDefinition, FeatureSetDefinition
+from app.features.definitions import AuxiliaryInputDefinition, FeatureDefinition, FeatureNodeDefinition, FeatureSetDefinition
 
 
 class DefinitionRegistryError(ValueError):
@@ -28,9 +28,11 @@ class DefinitionRegistry:
     def _deserialize_feature_set(self, payload: dict) -> FeatureSetDefinition:
         feature_defs = tuple(FeatureDefinition(**item) for item in payload.get("feature_definitions", []))
         node_defs = tuple(FeatureNodeDefinition(**item) for item in payload.get("node_definitions", []))
+        auxiliary_inputs = tuple(AuxiliaryInputDefinition(**item) for item in payload.get("auxiliary_inputs", []))
         payload = dict(payload)
         payload["feature_definitions"] = feature_defs
         payload["node_definitions"] = node_defs
+        payload["auxiliary_inputs"] = auxiliary_inputs
         for key in ("windows", "aggregators", "transformers", "entity_keys", "tags"):
             if key in payload and isinstance(payload[key], list):
                 payload[key] = tuple(payload[key])

@@ -22,6 +22,17 @@ class FeatureBenchmarkReport:
     online_update_seconds: float
     serving_requests: int
     serving_seconds: float
+    materialization_rows_per_second: float
+    online_updates_per_second: float
+    serving_requests_per_second: float
+    threshold_pass_ok: bool
+
+
+@dataclass(frozen=True)
+class FeatureBenchmarkThresholds:
+    min_materialization_rows_per_second: float = 1.0
+    min_online_updates_per_second: float = 1.0
+    min_serving_requests_per_second: float = 1.0
 
 
 def run_feature_benchmarks(
@@ -30,6 +41,7 @@ def run_feature_benchmarks(
     feature_set: FeatureSetDefinition,
     offline_store_path: str | Path,
     online_store_path: str | Path,
+    thresholds: FeatureBenchmarkThresholds | None = None,
 ) -> FeatureBenchmarkReport:
     ordered = list(events)
     offline_store = OfflineFeatureStore(offline_store_path)
@@ -59,6 +71,16 @@ def run_feature_benchmarks(
         serving_requests += 1
     serving_seconds = time.perf_counter() - start
 
+    thresholds = thresholds or FeatureBenchmarkThresholds()
+    materialization_rows_per_second = len(materialized) / materialization_seconds if materialization_seconds > 0 else float("inf")
+    online_updates_per_second = len(online_vectors) / online_update_seconds if online_update_seconds > 0 else float("inf")
+    serving_requests_per_second = serving_requests / serving_seconds if serving_seconds > 0 else float("inf")
+    threshold_pass_ok = (
+        materialization_rows_per_second >= thresholds.min_materialization_rows_per_second
+        and online_updates_per_second >= thresholds.min_online_updates_per_second
+        and serving_requests_per_second >= thresholds.min_serving_requests_per_second
+    )
+
     return FeatureBenchmarkReport(
         materialization_rows=len(materialized),
         materialization_seconds=materialization_seconds,
@@ -66,4 +88,8 @@ def run_feature_benchmarks(
         online_update_seconds=online_update_seconds,
         serving_requests=serving_requests,
         serving_seconds=serving_seconds,
+        materialization_rows_per_second=materialization_rows_per_second,
+        online_updates_per_second=online_updates_per_second,
+        serving_requests_per_second=serving_requests_per_second,
+        threshold_pass_ok=threshold_pass_ok,
     )

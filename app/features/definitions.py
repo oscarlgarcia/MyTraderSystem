@@ -7,6 +7,16 @@ from typing import Any, Dict, Iterable, Tuple
 
 
 @dataclass(frozen=True)
+class AuxiliaryInputDefinition:
+    alias: str
+    description: str
+    entity_keys: Tuple[str, ...] = ("symbol",)
+    availability_field: str = "available_ts"
+    event_ts_field: str = "event_ts"
+    required: bool = False
+
+
+@dataclass(frozen=True)
 class FeatureDefinition:
     name: str
     version: str
@@ -25,8 +35,10 @@ class FeatureDefinition:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if tuple(self.entity_keys) != ("symbol",):
-            raise ValueError("V2 feature module currently supports only symbol-scoped entity_keys=('symbol',)")
+        if not tuple(self.entity_keys):
+            raise ValueError("entity_keys must not be empty")
+        if "symbol" not in tuple(self.entity_keys):
+            raise ValueError("entity_keys must include symbol")
 
     @property
     def definition_hash(self) -> str:
@@ -65,12 +77,18 @@ class FeatureSetDefinition:
     availability_semantics: str = "available_ts<=decision_ts"
     feature_definitions: Tuple[FeatureDefinition, ...] = ()
     node_definitions: Tuple[FeatureNodeDefinition, ...] = ()
+    auxiliary_inputs: Tuple[AuxiliaryInputDefinition, ...] = ()
     tags: Tuple[str, ...] = ()
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if tuple(self.entity_keys) != ("symbol",):
-            raise ValueError("V2 feature module currently supports only symbol-scoped entity_keys=('symbol',)")
+        if not tuple(self.entity_keys):
+            raise ValueError("entity_keys must not be empty")
+        if "symbol" not in tuple(self.entity_keys):
+            raise ValueError("entity_keys must include symbol")
+        for auxiliary_input in self.auxiliary_inputs:
+            if "symbol" not in tuple(auxiliary_input.entity_keys):
+                raise ValueError("auxiliary input entity_keys must include symbol")
 
     @property
     def definition_hash(self) -> str:
@@ -88,6 +106,7 @@ class FeatureSetDefinition:
             "availability_semantics": self.availability_semantics,
             "feature_definitions": [asdict(fd) for fd in self.feature_definitions],
             "node_definitions": [asdict(nd) for nd in self.node_definitions],
+            "auxiliary_inputs": [asdict(aux) for aux in self.auxiliary_inputs],
             "tags": self.tags,
             "metadata": self.metadata,
         }

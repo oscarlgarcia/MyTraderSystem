@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from app.common.dto import FeatureVector
+from app.features.entity_codec import entity_scope, normalize_entity_keys, primary_symbol
 from app.features.pit import feature_vector_is_servable_at
 
 
@@ -41,6 +42,7 @@ class OfflineFeatureStore:
                 """
                 CREATE TABLE IF NOT EXISTS feature_vectors (
                     symbol TEXT NOT NULL,
+                    entity_scope TEXT NOT NULL DEFAULT '',
                     ts TEXT NOT NULL,
                     available_ts TEXT NOT NULL,
                     source_cutoff_ts TEXT NOT NULL,
@@ -51,14 +53,18 @@ class OfflineFeatureStore:
                     quality_flags TEXT NOT NULL,
                     values_json TEXT NOT NULL,
                     entity_keys_json TEXT NOT NULL,
-                    PRIMARY KEY(symbol, ts, feature_set_name, feature_set_version, lineage_id)
+                    PRIMARY KEY(entity_scope, ts, feature_set_name, feature_set_version, lineage_id)
                 )
                 """
             )
+            self._ensure_column(conn, "feature_vectors", "entity_scope", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "feature_vectors", "source_cutoff_ts", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "feature_vectors", "run_id", "TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_feature_vectors_pit ON feature_vectors(symbol, feature_set_name, feature_set_version, available_ts, ts)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feature_vectors_scope_pit ON feature_vectors(entity_scope, feature_set_name, feature_set_version, available_ts, ts)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_feature_vectors_run ON feature_vectors(run_id, symbol, ts)"
@@ -88,12 +94,10 @@ class OfflineFeatureStore:
 
     def put_many(self, vectors: Iterable[FeatureVector], *, run_id: str = "") -> None:
         vectors = list(vectors)
-        for fv in vectors:
-            if tuple(sorted(fv.entity_keys.keys())) != ("symbol",):
-                raise ValueError("OfflineFeatureStore only supports symbol-scoped entity keys")
         payload = [
             (
-                fv.symbol,
+                primary_symbol(fv.entity_keys, fallback_symbol=fv.symbol),
+                entity_scope(normalize_entity_keys(fv.entity_keys, symbol=fv.symbol)),
                 fv.ts.isoformat(),
                 fv.available_ts.isoformat(),
                 fv.source_cutoff_ts.isoformat(),
@@ -113,13 +117,25 @@ class OfflineFeatureStore:
             conn.executemany(
                 """
                 INSERT OR REPLACE INTO feature_vectors (
-                    symbol, ts, available_ts, source_cutoff_ts, feature_set_name, feature_set_version,
-                    lineage_id, run_id, quality_flags, values_json, entity_keys_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    symbol, entity_scope, ts, available_ts, source_cutoff_ts, feature_set_name,
+                    feature_set_version, lineage_id, run_id, quality_flags, values_json, entity_keys_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 payload,
             )
             conn.commit()
+
+    def _lookup_filter(
+        self,
+        *,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
+    ) -> tuple[str, tuple[str, ...]]:
+        if entity_keys is not None:
+            return ("entity_scope = ?", (entity_scope(entity_keys, symbol=symbol),))
+        if symbol is None:
+            raise ValueError("symbol or entity_keys is required")
+        return ("symbol = ?", (primary_symbol({"symbol": symbol}),))
 
     def register_materialization_run(self, record: MaterializationRunRecord) -> None:
         with self._connect() as conn:
@@ -179,8 +195,8 @@ class OfflineFeatureStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT symbol, ts, available_ts, source_cutoff_ts, feature_set_name, feature_set_version,
-                       lineage_id, quality_flags, values_json, entity_keys_json
+                SELECT symbol, entity_scope, ts, available_ts, source_cutoff_ts, feature_set_name,
+                       feature_set_version, lineage_id, quality_flags, values_json, entity_keys_json
                 FROM feature_vectors
                 WHERE run_id = ?
                 ORDER BY symbol ASC, ts ASC, available_ts ASC
@@ -189,14 +205,25 @@ class OfflineFeatureStore:
             ).fetchall()
         return [self._row_to_vector(row) for row in rows]
 
-    def get_point_in_time(self, *, symbol: str, decision_ts: datetime, feature_set_name: str, feature_set_version: str) -> Optional[FeatureVector]:
+    def get_point_in_time(
+        self,
+        *,
+        decision_ts: datetime,
+        feature_set_name: str,
+        feature_set_version: str,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
+    ) -> Optional[FeatureVector]:
+        lookup_sql, lookup_params = self._lookup_filter(symbol=symbol, entity_keys=entity_keys)
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT symbol, ts, available_ts, source_cutoff_ts, feature_set_name, feature_set_version,
-                       lineage_id, quality_flags, values_json, entity_keys_json
+                SELECT symbol, entity_scope, ts, available_ts, source_cutoff_ts, feature_set_name,
+                       feature_set_version, lineage_id, quality_flags, values_json, entity_keys_json
                 FROM feature_vectors
-                WHERE symbol = ?
+                WHERE """
+                + lookup_sql
+                + """
                   AND feature_set_name = ?
                   AND feature_set_version = ?
                   AND available_ts <= ?
@@ -204,37 +231,60 @@ class OfflineFeatureStore:
                 ORDER BY ts DESC, available_ts DESC
                 LIMIT 1
                 """,
-                (symbol, feature_set_name, feature_set_version, decision_ts.isoformat(), decision_ts.isoformat()),
+                lookup_params + (feature_set_name, feature_set_version, decision_ts.isoformat(), decision_ts.isoformat()),
             ).fetchone()
         return self._row_to_vector(row) if row else None
 
-    def get_range(self, *, symbol: str, start_ts: datetime, end_ts: datetime, feature_set_name: str, feature_set_version: str) -> List[FeatureVector]:
+    def get_range(
+        self,
+        *,
+        start_ts: datetime,
+        end_ts: datetime,
+        feature_set_name: str,
+        feature_set_version: str,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
+    ) -> List[FeatureVector]:
+        lookup_sql, lookup_params = self._lookup_filter(symbol=symbol, entity_keys=entity_keys)
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT symbol, ts, available_ts, source_cutoff_ts, feature_set_name, feature_set_version,
-                       lineage_id, quality_flags, values_json, entity_keys_json
+                SELECT symbol, entity_scope, ts, available_ts, source_cutoff_ts, feature_set_name,
+                       feature_set_version, lineage_id, quality_flags, values_json, entity_keys_json
                 FROM feature_vectors
-                WHERE symbol = ? AND feature_set_name = ? AND feature_set_version = ? AND ts >= ? AND ts <= ?
+                WHERE """
+                + lookup_sql
+                + """ AND feature_set_name = ? AND feature_set_version = ? AND ts >= ? AND ts <= ?
                 ORDER BY ts ASC
                 """,
-                (symbol, feature_set_name, feature_set_version, start_ts.isoformat(), end_ts.isoformat()),
+                lookup_params + (feature_set_name, feature_set_version, start_ts.isoformat(), end_ts.isoformat()),
             ).fetchall()
         return [self._row_to_vector(row) for row in rows]
 
-    def reconstruct_run(self, *, run_id: str, symbol: str | None = None, start_ts: datetime | None = None, end_ts: datetime | None = None) -> List[FeatureVector]:
+    def reconstruct_run(
+        self,
+        *,
+        run_id: str,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
+        start_ts: datetime | None = None,
+        end_ts: datetime | None = None,
+    ) -> List[FeatureVector]:
         query = [
             """
-            SELECT symbol, ts, available_ts, source_cutoff_ts, feature_set_name, feature_set_version,
-                   lineage_id, quality_flags, values_json, entity_keys_json
+            SELECT symbol, entity_scope, ts, available_ts, source_cutoff_ts, feature_set_name,
+                   feature_set_version, lineage_id, quality_flags, values_json, entity_keys_json
             FROM feature_vectors
             WHERE run_id = ?
             """
         ]
         params: list[str] = [run_id]
-        if symbol is not None:
+        if entity_keys is not None:
+            query.append("AND entity_scope = ?")
+            params.append(entity_scope(entity_keys, symbol=symbol))
+        elif symbol is not None:
             query.append("AND symbol = ?")
-            params.append(symbol)
+            params.append(primary_symbol({"symbol": symbol}))
         if start_ts is not None:
             query.append("AND ts >= ?")
             params.append(start_ts.isoformat())
@@ -247,7 +297,7 @@ class OfflineFeatureStore:
         return [self._row_to_vector(row) for row in rows]
 
     def _row_to_vector(self, row) -> FeatureVector:
-        symbol, ts, available_ts, source_cutoff_ts, fs_name, fs_version, lineage_id, quality_flags, values_json, entity_keys_json = row
+        symbol, _, ts, available_ts, source_cutoff_ts, fs_name, fs_version, lineage_id, quality_flags, values_json, entity_keys_json = row
         fv = FeatureVector(
             symbol=symbol,
             ts=datetime.fromisoformat(ts),

@@ -133,6 +133,7 @@ class OrderIntent:
     time_in_force: Literal["GTC", "IOC", "FOK"] = "GTC"
     intent_id: str = ""
     strategy_id: str = "default"
+    metadata: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.symbol = normalize_symbol(self.symbol)
@@ -156,6 +157,7 @@ class ExecutionReport:
     client_order_id: str
     exchange_order_id: Optional[str] = None
     reason: Optional[str] = None
+    metadata: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.symbol = normalize_symbol(self.symbol)

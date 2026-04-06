@@ -40,6 +40,7 @@ def apply_risk(
                 quantity=adj_size,
                 price_limit=price,
                 strategy_id=sig.strategy_id,
+                metadata=dict(sig.metadata),
             )
         )
         seen.add(sig.symbol)

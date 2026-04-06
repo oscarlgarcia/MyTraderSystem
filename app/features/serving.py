@@ -9,7 +9,9 @@ from typing import Optional
 from app.common.dto import FeatureVector
 from app.features.metrics import FeatureMetrics
 from app.features.offline_store import OfflineFeatureStore
-from app.features.online_store import OnlineFeatureStore
+from app.features.online_store_base import FeatureOnlineStore
+from app.features.releases import FeatureReleaseRegistry
+from app.features.validation_profiles import get_validation_profile
 
 
 @dataclass(frozen=True)
@@ -31,17 +33,30 @@ class FeatureServingService:
     def __init__(
         self,
         *,
-        online_store: OnlineFeatureStore,
+        online_store: FeatureOnlineStore,
         offline_store: OfflineFeatureStore | None = None,
         policy: ServingPolicy | None = None,
         metrics: FeatureMetrics | None = None,
         logger: logging.Logger | None = None,
+        release_registry: FeatureReleaseRegistry | None = None,
+        release_registry_path: str | None = None,
     ) -> None:
         self.online_store = online_store
         self.offline_store = offline_store
         self.policy = policy or ServingPolicy()
         self.metrics = metrics or FeatureMetrics()
         self.logger = logger or logging.getLogger("features.serving")
+        self.release_registry = release_registry or (FeatureReleaseRegistry(release_registry_path) if release_registry_path else None)
+
+    def _resolve_version(self, *, feature_set_name: str, feature_set_version: str | None) -> str:
+        if feature_set_version:
+            return feature_set_version
+        if self.release_registry is None:
+            raise ValueError("feature_set_version is required when no release registry is configured")
+        released = self.release_registry.get(feature_set_name)
+        if released is None:
+            raise ValueError(f"no active release found for feature set {feature_set_name}")
+        return released.active_version
 
     def _record_result(self, *, symbol: str, decision_ts: datetime, feature_set_name: str, feature_set_version: str, result: ServingResult, elapsed: float) -> ServingResult:
         self.metrics.serving_requests += 1
@@ -73,14 +88,25 @@ class FeatureServingService:
         )
         return result
 
-    def get_latest_servable(self, *, symbol: str, decision_ts: datetime, feature_set_name: str, feature_set_version: str) -> ServingResult:
+    def get_latest_servable(
+        self,
+        *,
+        decision_ts: datetime,
+        feature_set_name: str,
+        feature_set_version: str | None = None,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
+    ) -> ServingResult:
         start = time.perf_counter()
+        resolved_version = self._resolve_version(feature_set_name=feature_set_name, feature_set_version=feature_set_version)
         fv = self.online_store.get_latest_servable(
-            symbol=symbol,
             decision_ts=decision_ts,
             feature_set_name=feature_set_name,
-            feature_set_version=feature_set_version,
+            feature_set_version=resolved_version,
+            symbol=symbol,
+            entity_keys=entity_keys,
         )
+        resolved_symbol = symbol or (entity_keys or {}).get("symbol", "")
         if fv is None:
             result = ServingResult(
                 status="fail" if self.policy.on_missing == "fail" else "degrade",
@@ -88,10 +114,10 @@ class FeatureServingService:
                 reason="missing_or_future",
             )
             return self._record_result(
-                symbol=symbol,
+                symbol=resolved_symbol,
                 decision_ts=decision_ts,
                 feature_set_name=feature_set_name,
-                feature_set_version=feature_set_version,
+                feature_set_version=resolved_version,
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
@@ -104,10 +130,10 @@ class FeatureServingService:
                 staleness_seconds=staleness,
             )
             return self._record_result(
-                symbol=symbol,
+                symbol=resolved_symbol or fv.symbol,
                 decision_ts=decision_ts,
                 feature_set_name=feature_set_name,
-                feature_set_version=feature_set_version,
+                feature_set_version=resolved_version,
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
@@ -119,40 +145,68 @@ class FeatureServingService:
                 staleness_seconds=staleness,
             )
             return self._record_result(
-                symbol=symbol,
+                symbol=resolved_symbol or fv.symbol,
                 decision_ts=decision_ts,
                 feature_set_name=feature_set_name,
-                feature_set_version=feature_set_version,
+                feature_set_version=resolved_version,
+                result=result,
+                elapsed=time.perf_counter() - start,
+            )
+        profile = get_validation_profile("paper")
+        invalid_ratio = self.metrics.invalid_serves / max(self.metrics.serving_requests, 1)
+        if invalid_ratio > profile.max_invalid_ratio:
+            result = ServingResult(
+                status="degrade",
+                feature_vector=fv,
+                reason="invalid_ratio",
+                staleness_seconds=staleness,
+            )
+            return self._record_result(
+                symbol=resolved_symbol or fv.symbol,
+                decision_ts=decision_ts,
+                feature_set_name=feature_set_name,
+                feature_set_version=resolved_version,
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
         result = ServingResult(status="ok", feature_vector=fv, staleness_seconds=staleness)
         return self._record_result(
-            symbol=symbol,
+            symbol=resolved_symbol or fv.symbol,
             decision_ts=decision_ts,
             feature_set_name=feature_set_name,
-            feature_set_version=feature_set_version,
+            feature_set_version=resolved_version,
             result=result,
             elapsed=time.perf_counter() - start,
         )
 
-    def get_point_in_time(self, *, symbol: str, decision_ts: datetime, feature_set_name: str, feature_set_version: str) -> ServingResult:
+    def get_point_in_time(
+        self,
+        *,
+        decision_ts: datetime,
+        feature_set_name: str,
+        feature_set_version: str | None = None,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
+    ) -> ServingResult:
         start = time.perf_counter()
+        resolved_version = self._resolve_version(feature_set_name=feature_set_name, feature_set_version=feature_set_version)
+        resolved_symbol = symbol or (entity_keys or {}).get("symbol", "")
         if self.offline_store is None:
             result = ServingResult(status="fail", feature_vector=None, reason="offline_store_unavailable")
             return self._record_result(
-                symbol=symbol,
+                symbol=resolved_symbol,
                 decision_ts=decision_ts,
                 feature_set_name=feature_set_name,
-                feature_set_version=feature_set_version,
+                feature_set_version=resolved_version,
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
         fv = self.offline_store.get_point_in_time(
-            symbol=symbol,
             decision_ts=decision_ts,
             feature_set_name=feature_set_name,
-            feature_set_version=feature_set_version,
+            feature_set_version=resolved_version,
+            symbol=symbol,
+            entity_keys=entity_keys,
         )
         if fv is None:
             result = ServingResult(
@@ -161,29 +215,29 @@ class FeatureServingService:
                 reason="point_in_time_missing",
             )
             return self._record_result(
-                symbol=symbol,
+                symbol=resolved_symbol,
                 decision_ts=decision_ts,
                 feature_set_name=feature_set_name,
-                feature_set_version=feature_set_version,
+                feature_set_version=resolved_version,
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
         if fv.quality_flags:
             result = ServingResult(status=self.policy.on_invalid, feature_vector=fv, reason="quality_flags")
             return self._record_result(
-                symbol=symbol,
+                symbol=resolved_symbol or fv.symbol,
                 decision_ts=decision_ts,
                 feature_set_name=feature_set_name,
-                feature_set_version=feature_set_version,
+                feature_set_version=resolved_version,
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
         result = ServingResult(status="ok", feature_vector=fv)
         return self._record_result(
-            symbol=symbol,
+            symbol=resolved_symbol or fv.symbol,
             decision_ts=decision_ts,
             feature_set_name=feature_set_name,
-            feature_set_version=feature_set_version,
+            feature_set_version=resolved_version,
             result=result,
             elapsed=time.perf_counter() - start,
         )
@@ -191,46 +245,52 @@ class FeatureServingService:
     def get_recent_history(
         self,
         *,
-        symbol: str,
         feature_set_name: str,
         feature_set_version: str,
         limit: int = 10,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
     ) -> list[FeatureVector]:
         return self.online_store.get_recent_history(
-            symbol=symbol,
             feature_set_name=feature_set_name,
             feature_set_version=feature_set_version,
             limit=limit,
+            symbol=symbol,
+            entity_keys=entity_keys,
         )
 
     def get_history_range(
         self,
         *,
-        symbol: str,
         feature_set_name: str,
         feature_set_version: str,
         start_ts: datetime,
         end_ts: datetime,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
     ) -> list[FeatureVector]:
         return self.online_store.get_history_range(
-            symbol=symbol,
             feature_set_name=feature_set_name,
             feature_set_version=feature_set_version,
             start_ts=start_ts,
             end_ts=end_ts,
+            symbol=symbol,
+            entity_keys=entity_keys,
         )
 
     def get_snapshot_before(
         self,
         *,
-        symbol: str,
         cutoff_ts: datetime,
         feature_set_name: str,
         feature_set_version: str,
+        symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
     ) -> FeatureVector | None:
         return self.online_store.get_snapshot_before(
-            symbol=symbol,
             cutoff_ts=cutoff_ts,
             feature_set_name=feature_set_name,
             feature_set_version=feature_set_version,
+            symbol=symbol,
+            entity_keys=entity_keys,
         )

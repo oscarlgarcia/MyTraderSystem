@@ -19,12 +19,14 @@ class FeatureQueryService:
         *,
         run_id: str,
         symbol: str | None = None,
+        entity_keys: dict[str, str] | None = None,
         start_ts: datetime | None = None,
         end_ts: datetime | None = None,
     ) -> List[FeatureVector]:
         return self.offline_store.reconstruct_run(
             run_id=run_id,
             symbol=symbol,
+            entity_keys=entity_keys,
             start_ts=start_ts,
             end_ts=end_ts,
         )

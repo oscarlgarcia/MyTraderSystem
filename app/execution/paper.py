@@ -23,6 +23,7 @@ def paper_execute(order_intents: List[OrderIntent], price_by_symbol: Dict[str, f
                     avg_price=0.0,
                     client_order_id=intent.intent_id or "paper",
                     reason="missing_price",
+                    metadata=dict(intent.metadata),
                 )
             )
             continue
@@ -35,6 +36,7 @@ def paper_execute(order_intents: List[OrderIntent], price_by_symbol: Dict[str, f
                 filled_qty=intent.quantity,
                 avg_price=price,
                 client_order_id=intent.intent_id or f"paper-{intent.side}",
+                metadata=dict(intent.metadata),
             )
         )
     return reports

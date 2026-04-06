@@ -20,6 +20,8 @@ class FeatureMetrics:
     stale_serves: int = 0
     serving_latency_total: float = 0.0
     serving_latency_max: float = 0.0
+    shadow_requests: int = 0
+    shadow_failures: int = 0
 
     def as_dict(self) -> Dict[str, float | int]:
         return {
@@ -37,4 +39,6 @@ class FeatureMetrics:
             "stale_serves": self.stale_serves,
             "serving_latency_total": self.serving_latency_total,
             "serving_latency_max": self.serving_latency_max,
+            "shadow_requests": self.shadow_requests,
+            "shadow_failures": self.shadow_failures,
         }
