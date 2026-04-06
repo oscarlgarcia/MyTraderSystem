@@ -7,19 +7,18 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
-class PersistedShadowReport:
+class PersistedCanaryDecision:
     timestamp: str
-    symbol: str
-    decision_ts: str
     feature_set_name: str
-    feature_set_version: str
-    pass_ok: bool
-    reason: str
-    severity: str
-    differing_features: tuple[str, ...]
+    route: str
+    version: str
+    symbol: str
+    entity_scope: str
+    decision_ts: str
+    status: str
 
 
-class ShadowReportStore:
+class CanaryAuditStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,25 +26,23 @@ class ShadowReportStore:
     def append(
         self,
         *,
-        symbol: str,
-        decision_ts: datetime,
         feature_set_name: str,
-        feature_set_version: str,
-        pass_ok: bool,
-        reason: str,
-        severity: str = "info",
-        differing_features: tuple[str, ...] = (),
+        route: str,
+        version: str,
+        symbol: str,
+        entity_scope: str,
+        decision_ts: datetime,
+        status: str,
     ) -> None:
-        payload = PersistedShadowReport(
+        payload = PersistedCanaryDecision(
             timestamp=datetime.now(timezone.utc).isoformat(),
-            symbol=symbol,
-            decision_ts=decision_ts.isoformat(),
             feature_set_name=feature_set_name,
-            feature_set_version=feature_set_version,
-            pass_ok=pass_ok,
-            reason=reason,
-            severity=severity,
-            differing_features=tuple(differing_features),
+            route=route,
+            version=version,
+            symbol=symbol,
+            entity_scope=entity_scope,
+            decision_ts=decision_ts.isoformat(),
+            status=status,
         )
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(payload), ensure_ascii=False, sort_keys=True) + "\n")

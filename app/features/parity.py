@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.common.dto import FeatureVector, MarketEvent
 from app.features.batch_executor import BatchFeatureExecutor
+from app.features.entity_codec import entity_scope
 from app.features.materialization import FeatureMaterializer
 from app.features.offline_store import OfflineFeatureStore
 from app.features.online_store import OnlineFeatureStore
@@ -21,6 +22,7 @@ class ParityMismatch:
     offline_value: float | None
     online_value: float | None
     reason: str
+    entity_scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,10 @@ def _feature_tolerances(feature_set, default_tolerance: float) -> Dict[str, floa
     return tolerances
 
 
+def _parity_key(fv: FeatureVector) -> tuple[str, datetime]:
+    return (entity_scope(fv.entity_keys, symbol=fv.symbol), fv.ts)
+
+
 def run_parity_check(
     events: Iterable[MarketEvent],
     *,
@@ -71,17 +77,19 @@ def run_parity_check(
     online_vectors = runtime.update_batch(sorted_events)
     for vector in online_vectors:
         online_store.upsert(vector)
-    offline_by_key: Dict[tuple[str, datetime], FeatureVector] = {(fv.symbol, fv.ts): fv for fv in persisted_vectors}
-    online_by_key: Dict[tuple[str, datetime], FeatureVector] = {(fv.symbol, fv.ts): fv for fv in online_vectors}
-    batch_by_key: Dict[tuple[str, datetime], FeatureVector] = {(fv.symbol, fv.ts): fv for fv in batch_vectors}
+    offline_by_key: Dict[tuple[str, datetime], FeatureVector] = {_parity_key(fv): fv for fv in persisted_vectors}
+    online_by_key: Dict[tuple[str, datetime], FeatureVector] = {_parity_key(fv): fv for fv in online_vectors}
+    batch_by_key: Dict[tuple[str, datetime], FeatureVector] = {_parity_key(fv): fv for fv in batch_vectors}
     tolerances = _feature_tolerances(feature_set, tolerance)
     mismatches: List[ParityMismatch] = []
     for key, offline in offline_by_key.items():
+        scope, _ = key
         batch = batch_by_key.get(key)
         if batch is None:
             mismatches.append(
                 ParityMismatch(
                     symbol=offline.symbol,
+                    entity_scope=scope,
                     ts=offline.ts,
                     feature_name="*",
                     offline_value=None,
@@ -99,6 +107,7 @@ def run_parity_check(
                     mismatches.append(
                         ParityMismatch(
                             symbol=offline.symbol,
+                            entity_scope=scope,
                             ts=offline.ts,
                             feature_name=name,
                             offline_value=float(ov) if ov is not None else None,
@@ -111,6 +120,7 @@ def run_parity_check(
             mismatches.append(
                 ParityMismatch(
                     symbol=offline.symbol,
+                    entity_scope=scope,
                     ts=offline.ts,
                     feature_name="*",
                     offline_value=None,
@@ -127,6 +137,7 @@ def run_parity_check(
                 mismatches.append(
                     ParityMismatch(
                         symbol=offline.symbol,
+                        entity_scope=scope,
                         ts=offline.ts,
                         feature_name=name,
                         offline_value=ov,
@@ -140,6 +151,7 @@ def run_parity_check(
                 mismatches.append(
                     ParityMismatch(
                         symbol=offline.symbol,
+                        entity_scope=scope,
                         ts=offline.ts,
                         feature_name=name,
                         offline_value=float(ov),
@@ -147,4 +159,5 @@ def run_parity_check(
                         reason=f"tolerance_exceeded:{allowed}",
                     )
                 )
+    runtime.metrics.parity_mismatches += len(mismatches)
     return ParityReport(pass_ok=not mismatches, mismatches=tuple(mismatches))

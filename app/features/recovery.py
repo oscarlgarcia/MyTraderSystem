@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from app.common.dto import MarketEvent
+from app.features.online_store_base import FeatureOnlineStore
 from app.features.online_store import OnlineFeatureStore
 from app.features.runtime import FeatureRuntimeEngine
 from app.features.serving import FeatureServingService
@@ -67,14 +68,18 @@ def run_operational_recovery_smoke_test(
     *,
     feature_set,
     snapshot_path: str | Path,
-    online_store_path: str | Path,
+    online_store_path: str | Path | None = None,
+    online_store: FeatureOnlineStore | None = None,
 ) -> OperationalRecoveryReport:
     ordered = sorted(list(events), key=lambda event: (event.symbol, _available_ts(event), _event_ts(event)))
     if len(ordered) < 3:
         return OperationalRecoveryReport(pass_ok=False, reason="need at least three events")
     split = len(ordered) // 2
     snapshot_store = StateSnapshotStore(snapshot_path)
-    online_store = OnlineFeatureStore(online_store_path)
+    if online_store is None:
+        if online_store_path is None:
+            raise ValueError("online_store or online_store_path is required")
+        online_store = OnlineFeatureStore(online_store_path)
     engine = FeatureRuntimeEngine(feature_set=feature_set)
     first_half = engine.update_batch(ordered[:split])
     for vector in first_half:

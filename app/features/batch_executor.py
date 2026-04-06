@@ -36,7 +36,7 @@ def _rolling_agg(values: List[float], aggregator: str) -> float:
         return max(values)
     if name == "min":
         return min(values)
-    from app.features.store import AGGREGATORS  # lazy import for legacy compatibility
+    from app.features.legacy_store_v1 import AGGREGATORS  # lazy import for legacy compatibility
 
     fn = AGGREGATORS.get(name)
     if fn is None:

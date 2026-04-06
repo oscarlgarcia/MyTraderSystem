@@ -35,6 +35,32 @@ class FeatureBenchmarkThresholds:
     min_serving_requests_per_second: float = 1.0
 
 
+DEFAULT_THRESHOLDS_BY_TARGET = {
+    "research": FeatureBenchmarkThresholds(1.0, 1.0, 1.0),
+    "paper": FeatureBenchmarkThresholds(10.0, 10.0, 25.0),
+    "live": FeatureBenchmarkThresholds(20.0, 25.0, 50.0),
+}
+
+
+def resolve_benchmark_thresholds(
+    *,
+    feature_set: FeatureSetDefinition,
+    target: str,
+    thresholds: FeatureBenchmarkThresholds | None = None,
+) -> FeatureBenchmarkThresholds:
+    if thresholds is not None:
+        return thresholds
+    resolved = DEFAULT_THRESHOLDS_BY_TARGET.get(target, DEFAULT_THRESHOLDS_BY_TARGET["research"])
+    overrides = feature_set.metadata.get("benchmark_thresholds", {}).get(target, {})
+    if not overrides:
+        return resolved
+    return FeatureBenchmarkThresholds(
+        min_materialization_rows_per_second=float(overrides.get("min_materialization_rows_per_second", resolved.min_materialization_rows_per_second)),
+        min_online_updates_per_second=float(overrides.get("min_online_updates_per_second", resolved.min_online_updates_per_second)),
+        min_serving_requests_per_second=float(overrides.get("min_serving_requests_per_second", resolved.min_serving_requests_per_second)),
+    )
+
+
 def run_feature_benchmarks(
     events: Iterable[MarketEvent],
     *,
@@ -42,6 +68,7 @@ def run_feature_benchmarks(
     offline_store_path: str | Path,
     online_store_path: str | Path,
     thresholds: FeatureBenchmarkThresholds | None = None,
+    target: str = "research",
 ) -> FeatureBenchmarkReport:
     ordered = list(events)
     offline_store = OfflineFeatureStore(offline_store_path)
@@ -71,7 +98,7 @@ def run_feature_benchmarks(
         serving_requests += 1
     serving_seconds = time.perf_counter() - start
 
-    thresholds = thresholds or FeatureBenchmarkThresholds()
+    thresholds = resolve_benchmark_thresholds(feature_set=feature_set, target=target, thresholds=thresholds)
     materialization_rows_per_second = len(materialized) / materialization_seconds if materialization_seconds > 0 else float("inf")
     online_updates_per_second = len(online_vectors) / online_update_seconds if online_update_seconds > 0 else float("inf")
     serving_requests_per_second = serving_requests / serving_seconds if serving_seconds > 0 else float("inf")

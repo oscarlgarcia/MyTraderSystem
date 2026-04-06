@@ -105,13 +105,14 @@ class FeatureMaterializer:
         store: OfflineFeatureStore,
         run_id: str | None = None,
         auxiliary_events: dict[str, Iterable[MarketEvent]] | None = None,
+        target: str = "research",
     ) -> List[FeatureVector]:
         events_list = sorted(list(events), key=lambda event: (event.symbol, _available_ts(event), _event_ts(event)))
         run_id = run_id or str(uuid4())
         self._validate_auxiliary_inputs(feature_set=feature_set, auxiliary_events=auxiliary_events)
         prepared_events = self._prepare_events(events_list, auxiliary_events=auxiliary_events, feature_set=feature_set)
         engine = FeatureRuntimeEngine(feature_set=feature_set)
-        validator = FeatureValidator(feature_set)
+        validator = FeatureValidator(feature_set, target=target)
         input_fingerprint = fingerprint_events([item[0] for item in prepared_events])
         bundle_id = build_feature_bundle_id(feature_set=feature_set, input_fingerprint=input_fingerprint, run_id=run_id)
         outputs: List[FeatureVector] = []

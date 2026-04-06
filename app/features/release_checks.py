@@ -34,6 +34,20 @@ def live_feature_slos() -> FeatureSLOs:
     return FeatureSLOs(max_staleness_seconds=30.0, max_parity_mismatches=0, max_compute_latency_seconds=0.1)
 
 
+def resolve_feature_slos(*, target: str, feature_set=None) -> FeatureSLOs:
+    defaults = paper_feature_slos() if target == "paper" else live_feature_slos()
+    if feature_set is None:
+        return defaults
+    overrides = feature_set.metadata.get("release_slos", {}).get(target, {})
+    if not overrides:
+        return defaults
+    return FeatureSLOs(
+        max_staleness_seconds=float(overrides.get("max_staleness_seconds", defaults.max_staleness_seconds)),
+        max_parity_mismatches=int(overrides.get("max_parity_mismatches", defaults.max_parity_mismatches)),
+        max_compute_latency_seconds=float(overrides.get("max_compute_latency_seconds", defaults.max_compute_latency_seconds)),
+    )
+
+
 def evaluate_release_blocking(
     *,
     parity_report: ParityReport,
@@ -44,7 +58,7 @@ def evaluate_release_blocking(
     cardinality_breaches: int = 0,
     target: str,
 ) -> tuple[bool, tuple[str, ...]]:
-    slos = paper_feature_slos() if target == "paper" else live_feature_slos()
+    slos = resolve_feature_slos(target=target)
     profile = get_validation_profile(target)
     reasons = []
     if len(parity_report.mismatches) > slos.max_parity_mismatches:
@@ -66,8 +80,9 @@ def run_feature_release_gate(
     metrics: FeatureMetrics,
     target: str,
     expected_serving_requests: int | None = None,
+    feature_set=None,
 ) -> FeatureReleaseGateReport:
-    slos = paper_feature_slos() if target == "paper" else live_feature_slos()
+    slos = resolve_feature_slos(target=target, feature_set=feature_set)
     profile = get_validation_profile(target)
     stale_count = metrics.stale_serves
     latency_breaches = 1 if metrics.serving_latency_max > slos.max_compute_latency_seconds else 0

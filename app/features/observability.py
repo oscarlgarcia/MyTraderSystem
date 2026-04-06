@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from app.features.metrics import FeatureMetrics
+
+logger = logging.getLogger("features.observability")
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,60 @@ class FeatureObservabilityBundle:
     generated_at: datetime
     metrics: dict[str, Any]
     alerts: tuple[str, ...]
+
+
+class FeatureObservabilitySink(Protocol):
+    def emit(self, bundle: FeatureObservabilityBundle) -> object:
+        ...
+
+
+class MemoryObservabilitySink:
+    def __init__(self) -> None:
+        self.bundles: list[FeatureObservabilityBundle] = []
+
+    def emit(self, bundle: FeatureObservabilityBundle) -> FeatureObservabilityBundle:
+        self.bundles.append(bundle)
+        return bundle
+
+
+class JsonlObservabilitySink:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def emit(self, bundle: FeatureObservabilityBundle) -> Path:
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "target": bundle.target,
+                        "generated_at": bundle.generated_at.isoformat(),
+                        "metrics": bundle.metrics,
+                        "alerts": list(bundle.alerts),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+        return self.path
+
+
+class LoggerObservabilitySink:
+    def __init__(self, *, sink_logger: logging.Logger | None = None) -> None:
+        self.logger = sink_logger or logger
+
+    def emit(self, bundle: FeatureObservabilityBundle) -> FeatureObservabilityBundle:
+        self.logger.info(
+            "feature observability bundle",
+            extra={
+                "target": bundle.target,
+                "generated_at": bundle.generated_at.isoformat(),
+                "metrics": bundle.metrics,
+                "alerts": list(bundle.alerts),
+            },
+        )
+        return bundle
 
 
 def build_feature_observability_bundle(*, metrics: FeatureMetrics, target: str) -> FeatureObservabilityBundle:
@@ -33,6 +90,16 @@ def build_feature_observability_bundle(*, metrics: FeatureMetrics, target: str) 
         metrics=metrics.as_dict(),
         alerts=tuple(alerts),
     )
+
+
+def emit_feature_observability_bundle(
+    *,
+    metrics: FeatureMetrics,
+    target: str,
+    sink: FeatureObservabilitySink,
+) -> object:
+    bundle = build_feature_observability_bundle(metrics=metrics, target=target)
+    return sink.emit(bundle)
 
 
 def export_feature_observability_bundle(

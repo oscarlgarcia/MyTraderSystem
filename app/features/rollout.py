@@ -4,6 +4,8 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.features.entity_codec import entity_scope, normalize_entity_keys
+from app.features.rollout_audit import CanaryAuditStore
 from app.features.serving import FeatureServingService, ServingResult
 
 
@@ -48,11 +50,13 @@ class CanaryServingService:
         canary: FeatureServingService,
         rollout: FeatureRolloutController,
         canary_version: str,
+        audit_store: CanaryAuditStore | None = None,
     ) -> None:
         self.primary = primary
         self.canary = canary
         self.rollout = rollout
         self.canary_version = canary_version
+        self.audit_store = audit_store
 
     def get_latest_servable(
         self,
@@ -63,7 +67,8 @@ class CanaryServingService:
         decision_ts: datetime,
         entity_keys: dict[str, str] | None = None,
     ) -> CanaryServingResult:
-        scope = symbol if entity_keys is None else "|".join(f"{key}={value}" for key, value in sorted(entity_keys.items()))
+        normalized_keys = normalize_entity_keys(entity_keys, symbol=symbol)
+        scope = entity_scope(normalized_keys, symbol=symbol)
         decision = self.rollout.choose_version(
             feature_set_name=feature_set_name,
             active_version=active_version,
@@ -78,4 +83,52 @@ class CanaryServingService:
             feature_set_name=feature_set_name,
             feature_set_version=decision.version,
         )
+        if self.audit_store is not None:
+            self.audit_store.append(
+                feature_set_name=feature_set_name,
+                route=decision.route,
+                version=decision.version,
+                symbol=symbol,
+                entity_scope=scope,
+                decision_ts=decision_ts,
+                status=result.status,
+            )
         return CanaryServingResult(decision=decision, result=result)
+
+
+@dataclass(frozen=True)
+class RolloutPromotionPolicy:
+    max_shadow_failures: int = 0
+    max_invalid_ratio: float = 0.05
+    min_audited_requests: int = 1
+    require_benchmark_pass: bool = True
+
+
+@dataclass(frozen=True)
+class RolloutPromotionDecision:
+    action: str
+    pass_ok: bool
+    reasons: tuple[str, ...]
+
+
+def evaluate_rollout_promotion(
+    *,
+    policy: RolloutPromotionPolicy,
+    audited_requests: int,
+    shadow_failures: int,
+    invalid_ratio: float,
+    benchmark_pass_ok: bool,
+) -> RolloutPromotionDecision:
+    reasons: list[str] = []
+    if audited_requests < policy.min_audited_requests:
+        reasons.append("insufficient_audited_requests")
+    if shadow_failures > policy.max_shadow_failures:
+        reasons.append("shadow_failure_budget_exceeded")
+    if invalid_ratio > policy.max_invalid_ratio:
+        reasons.append("invalid_ratio_budget_exceeded")
+    if policy.require_benchmark_pass and not benchmark_pass_ok:
+        reasons.append("benchmark_thresholds_not_met")
+    if reasons:
+        action = "rollback" if ("shadow_failure_budget_exceeded" in reasons or "invalid_ratio_budget_exceeded" in reasons) else "hold"
+        return RolloutPromotionDecision(action=action, pass_ok=False, reasons=tuple(reasons))
+    return RolloutPromotionDecision(action="promote", pass_ok=True, reasons=())

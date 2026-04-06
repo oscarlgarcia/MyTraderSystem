@@ -13,6 +13,8 @@ class ShadowServingReport:
     primary: ServingResult
     shadow: ServingResult
     reason: str = ""
+    severity: str = "info"
+    differing_features: tuple[str, ...] = ()
 
 
 class ShadowServingService:
@@ -34,7 +36,7 @@ class ShadowServingService:
         shadow = self.shadow.get_latest_servable(**kwargs)
         self.primary.metrics.shadow_requests += 1
         if primary.status != shadow.status:
-            report = ShadowServingReport(pass_ok=False, primary=primary, shadow=shadow, reason="status_mismatch")
+            report = ShadowServingReport(pass_ok=False, primary=primary, shadow=shadow, reason="status_mismatch", severity="critical")
             self._persist_report(kwargs=kwargs, report=report)
             self.primary.metrics.shadow_failures += 1
             return report
@@ -44,12 +46,26 @@ class ShadowServingService:
                 pv = primary.feature_vector.values.get(name)
                 sv = shadow.feature_vector.values.get(name)
                 if pv is None or sv is None:
-                    report = ShadowServingReport(pass_ok=False, primary=primary, shadow=shadow, reason=f"missing:{name}")
+                    report = ShadowServingReport(
+                        pass_ok=False,
+                        primary=primary,
+                        shadow=shadow,
+                        reason=f"missing:{name}",
+                        severity="high",
+                        differing_features=(name,),
+                    )
                     self._persist_report(kwargs=kwargs, report=report)
                     self.primary.metrics.shadow_failures += 1
                     return report
                 if abs(float(pv) - float(sv)) > self.tolerance:
-                    report = ShadowServingReport(pass_ok=False, primary=primary, shadow=shadow, reason=f"value:{name}")
+                    report = ShadowServingReport(
+                        pass_ok=False,
+                        primary=primary,
+                        shadow=shadow,
+                        reason=f"value:{name}",
+                        severity="medium",
+                        differing_features=(name,),
+                    )
                     self._persist_report(kwargs=kwargs, report=report)
                     self.primary.metrics.shadow_failures += 1
                     return report
@@ -70,4 +86,6 @@ class ShadowServingService:
             ),
             pass_ok=report.pass_ok,
             reason=report.reason,
+            severity=report.severity,
+            differing_features=report.differing_features,
         )

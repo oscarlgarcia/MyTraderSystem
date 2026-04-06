@@ -61,7 +61,7 @@ class RollingAggregatorNode(BaseNode):
             return {key: max(data)}
         if agg == "min":
             return {key: min(data)}
-        from app.features import store as legacy_store
+        from app.features import legacy_store_v1 as legacy_store
         custom = legacy_store.AGGREGATORS.get(agg)
         if custom is None:
             raise ValueError(f"unknown rolling aggregator: {agg}")
@@ -132,6 +132,40 @@ class MetadataJoinNode(BaseNode):
         return {self.definition.outputs[0]: float(raw)}
 
 
+class DifferenceNode(BaseNode):
+    def compute(self, *, event, price_history, context: Dict[str, Any], runtime_state) -> Dict[str, float]:
+        left = str(self.definition.params.get("left") or (self.definition.dependencies[0] if self.definition.dependencies else "price"))
+        right = str(self.definition.params.get("right") or (self.definition.dependencies[1] if len(self.definition.dependencies) > 1 else "price"))
+        left_value = context.get(left)
+        right_value = context.get(right)
+        if left_value is None or right_value is None:
+            return {}
+        return {self.definition.outputs[0]: float(left_value) - float(right_value)}
+
+
+class RatioNode(BaseNode):
+    def compute(self, *, event, price_history, context: Dict[str, Any], runtime_state) -> Dict[str, float]:
+        numerator = str(self.definition.params.get("numerator") or (self.definition.dependencies[0] if self.definition.dependencies else "price"))
+        denominator = str(self.definition.params.get("denominator") or (self.definition.dependencies[1] if len(self.definition.dependencies) > 1 else "price"))
+        epsilon = float(self.definition.params.get("epsilon", 1e-12))
+        numerator_value = context.get(numerator)
+        denominator_value = context.get(denominator)
+        if numerator_value is None or denominator_value is None or abs(float(denominator_value)) <= epsilon:
+            return {}
+        return {self.definition.outputs[0]: float(numerator_value) / float(denominator_value)}
+
+
+class ClipNode(BaseNode):
+    def compute(self, *, event, price_history, context: Dict[str, Any], runtime_state) -> Dict[str, float]:
+        source = str(self.definition.params.get("source") or (self.definition.dependencies[0] if self.definition.dependencies else "price"))
+        value = context.get(source)
+        if value is None:
+            return {}
+        min_value = float(self.definition.params.get("min", float("-inf")))
+        max_value = float(self.definition.params.get("max", float("inf")))
+        return {self.definition.outputs[0]: min(max(float(value), min_value), max_value)}
+
+
 NODE_CLASS_BY_KIND = {
     "price": PriceNode,
     "return": ReturnNode,
@@ -141,6 +175,9 @@ NODE_CLASS_BY_KIND = {
     "zscore": ZScoreNode,
     "volatility": VolatilityNode,
     "metadata_join": MetadataJoinNode,
+    "difference": DifferenceNode,
+    "ratio": RatioNode,
+    "clip": ClipNode,
 }
 
 

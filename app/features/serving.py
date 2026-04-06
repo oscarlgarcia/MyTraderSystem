@@ -40,6 +40,7 @@ class FeatureServingService:
         logger: logging.Logger | None = None,
         release_registry: FeatureReleaseRegistry | None = None,
         release_registry_path: str | None = None,
+        target: str = "paper",
     ) -> None:
         self.online_store = online_store
         self.offline_store = offline_store
@@ -47,6 +48,7 @@ class FeatureServingService:
         self.metrics = metrics or FeatureMetrics()
         self.logger = logger or logging.getLogger("features.serving")
         self.release_registry = release_registry or (FeatureReleaseRegistry(release_registry_path) if release_registry_path else None)
+        self.target = target
 
     def _resolve_version(self, *, feature_set_name: str, feature_set_version: str | None) -> str:
         if feature_set_version:
@@ -152,7 +154,7 @@ class FeatureServingService:
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
-        profile = get_validation_profile("paper")
+        profile = get_validation_profile(self.target)
         invalid_ratio = self.metrics.invalid_serves / max(self.metrics.serving_requests, 1)
         if invalid_ratio > profile.max_invalid_ratio:
             result = ServingResult(
