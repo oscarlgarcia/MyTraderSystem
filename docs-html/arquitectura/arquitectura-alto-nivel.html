@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Arquitectura de Alto Nivel</title>
+  <link rel="stylesheet" href="../assets/styles.css" />
+  <!-- doc_id: arquitectura/arquitectura-alto-nivel -->
+<!-- version_doc: 0.1.0 -->
+<!-- estado: Base creada -->
+<!-- ultima_actualizacion: 2026-04-06 -->
+<!-- ruta_canonica_publicacion: /docs/docs-html/ -->
+<!-- ruta_workspace_actual: /docs-html/ -->
+<!-- secciones_clave: Proposito, Contenido inicial, Placeholders estructurados -->
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand"><a href="../index.html">Portal Documental</a></div>
+    <nav class="top-nav"><a class="nav-link" href="../index.html">Inicio</a>
+<a class="nav-link" href="index.html">Arquitectura</a>
+<a class="nav-link" href="../dominio-trading/index.html">Dominio Trading</a>
+<a class="nav-link" href="../modulos/index.html">Modulos</a>
+<a class="nav-link" href="../flujos/index.html">Flujos y Secuencias</a>
+<a class="nav-link" href="../datos/index.html">Datos</a>
+<a class="nav-link" href="../research-simulation/index.html">Investigacion / Backtesting / Simulacion</a>
+<a class="nav-link" href="../operacion/index.html">Operacion</a>
+<a class="nav-link" href="../desarrollo/index.html">Desarrollo</a>
+<a class="nav-link" href="../seguridad-gobernanza/index.html">Seguridad y Gobernanza</a>
+<a class="nav-link" href="../decisiones/index.html">Decisiones</a>
+<a class="nav-link" href="../glosario/index.html">Glosario</a>
+<a class="nav-link" href="../faq/index.html">Preguntas Frecuentes</a>
+<a class="nav-link" href="../postmortems/index.html">Postmortems</a>
+<a class="nav-link" href="../templates/index.html">Plantillas</a></nav>
+  </header>
+  <main class="layout">
+    <section class="hero">
+      <p class="eyebrow">Arquitectura</p>
+      <h1>Arquitectura de Alto Nivel</h1>
+      <p class="lead">Vista de bloques principales.</p>
+      <p class="breadcrumbs"><a href="../index.html">Inicio</a> / <a href="index.html">Arquitectura</a> / <span>Arquitectura de Alto Nivel</span></p>
+    </section>
+    <aside class="status-card"><h2>Estado de la pagina</h2><dl><dt>Estado</dt><dd>Base creada</dd><dt>Informacion pendiente</dt><dd><ul><li>Completar detalles reales de la aplicacion.</li><li>Validar fuentes de verdad y responsables.</li></ul></dd><dt>Ultima actualizacion</dt><dd>2026-04-06</dd></dl></aside>
+    
+    
+    
+    
+    <section><h2>Diagrama base</h2><p>Esta pagina publica una unica vista SVG generada automaticamente a partir del Mermaid fuente. Haz click sobre la imagen para verla ampliada sin perdida de nitidez.</p><div class="diagram-stack"><figure class="diagram-figure"><button class="diagram-zoom-trigger" type="button" data-diagram-src="../assets/diagrams/arquitectura--arquitectura-alto-nivel.svg" data-diagram-alt="Version SVG generada para Arquitectura de Alto Nivel"><img src="../assets/diagrams/arquitectura--arquitectura-alto-nivel.svg" alt="Version SVG generada para Arquitectura de Alto Nivel" loading="lazy" /></button><figcaption>SVG generado automaticamente a partir del Mermaid de esta pagina. Haz click para ampliarlo sin perdida de nitidez.</figcaption></figure></div></section>
+    <section><h2>Proposito</h2><p>Documentar vistas estructurales, dependencias y restricciones no funcionales.</p></section>
+<section><h2>Contenido inicial</h2><ul><li>Explicar el alcance real de esta pagina.</li><li>Identificar las fuentes de verdad que deberian alimentarla.</li><li>Enlazar con modulos, datos, flujos u operacion cuando corresponda.</li></ul></section>
+
+<section><h2>Lectura de alto nivel</h2><p>La arquitectura verificada en el repo esta organizada como un pipeline cuantitativo por capas. El flujo dominante entra por ingestion y market data, pasa por feature engineering, estrategia y riesgo, y termina en la capa de ejecucion y portfolio. La observabilidad y la logica operativa actuan como capacidad transversal.</p></section>
+<section><h2>Bloques principales</h2><table><thead><tr><th>Bloque</th><th>Paquetes o modulos visibles</th><th>Responsabilidad principal</th></tr></thead><tbody><tr><td>Configuracion y arranque</td><td><code>app.config</code>, <code>app.main</code>, <code>app.__main__</code></td><td>Cargar configuracion, resolver modo, validar opciones y arrancar el pipeline.</td></tr><tr><td>Ingestion y market data</td><td><code>app.ingestion</code>, <code>app.marketdata</code></td><td>Capturar, validar, normalizar, deduplicar, persistir y recuperar market data.</td></tr><tr><td>Feature pipeline</td><td><code>app.features</code></td><td>Construir features, mantener estado, cache, lineage y checks asociados.</td></tr><tr><td>Decision cuantitativa</td><td><code>app.strategy</code>, <code>app.risk</code></td><td>Transformar <code>FeatureVector</code> en senales y despues en intenciones filtradas por riesgo.</td></tr><tr><td>Ejecucion y estado</td><td><code>app.execution</code>, <code>app.portfolio</code></td><td>Materializar la ejecucion paper verificada y actualizar posiciones o cash.</td></tr><tr><td>Ops y observabilidad</td><td><code>app.ops</code>, <code>app.observability</code></td><td>Emitir logs, gates, readiness, evidencias operativas y soporte de promocion.</td></tr></tbody></table></section>
+<section><h2>Cadena principal de procesamiento</h2><table><thead><tr><th>Paso</th><th>Entrada visible</th><th>Salida visible</th></tr></thead><tbody><tr><td>1. Ingestion</td><td>WS o REST del venue y metadata de instrumentos</td><td><code>IngestionEvent</code> o eventos normalizados persistidos</td></tr><tr><td>2. Features</td><td>Eventos aceptados por ingestion</td><td><code>FeatureVector</code></td></tr><tr><td>3. Strategy</td><td><code>FeatureVector</code></td><td>Signals</td></tr><tr><td>4. Risk</td><td>Signals y mapa de precios</td><td><code>OrderIntent</code></td></tr><tr><td>5. Execution</td><td><code>OrderIntent</code></td><td><code>ExecutionReport</code></td></tr><tr><td>6. Portfolio</td><td><code>ExecutionReport</code></td><td><code>PortfolioState</code></td></tr></tbody></table></section>
+<section><h2>Responsabilidades y limites por bloque</h2><ul><li>La capa de ingestion esta desacoplada para poder ejecutarse sola y para soportar validacion, replay y persistencia.</li><li>La capa de features concentra el estado cuantitativo reutilizable por research y runtime.</li><li>La capa de decision separa generacion de senal y control de riesgo antes de llegar a ejecucion.</li><li>La capa de ejecucion visible en el repo revisado esta representada por la ruta paper; no se documenta aqui un ejecutor live no verificado.</li><li>Ops y observabilidad no son un modulo de negocio, sino una capacidad transversal sobre ingestion, features y promotion.</li></ul></section>
+<section><h2>Huecos conocidos</h2><ul><li>No se ha verificado un message bus, cola o scheduler dedicado entre capas; el repo revisado expone principalmente una orquestacion por proceso y paquetes Python.</li><li>No se ha verificado una persistencia transaccional adicional para portfolio, ordenes o auditoria fuera de filesystem y artefactos locales visibles.</li><li>No se ha verificado una topologia de despliegue distribuida; esa vista debe completarse en las paginas de deployment y topologia runtime.</li></ul></section>
+
+<section><h2>Enlaces cruzados recomendados</h2><p>Usa estas referencias para completar el contexto de esta pagina desde arquitectura, dominio, datos, flujos u operacion, segun corresponda.</p><ul class="related-links"><li><div class="related-link-body"><p class="related-link-meta">Modulos</p><a class="related-link-title" href="../modulos/index.html">Indice de Modulos</a><p class="related-link-copy">Relaciona la vista tecnica con los modulos funcionales que la implementan.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Datos</p><a class="related-link-title" href="../datos/index.html">Indice de Datos</a><p class="related-link-copy">Conecta la arquitectura con contratos, modelos y calidad de datos.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Flujos y Secuencias</p><a class="related-link-title" href="../flujos/index.html">Indice de Flujos y Secuencias</a><p class="related-link-copy">Aterriza la arquitectura en secuencias operativas y temporales.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Operacion</p><a class="related-link-title" href="../operacion/index.html">Indice de Operacion</a><p class="related-link-copy">Vincula la estructura del sistema con observabilidad, incidentes y releases.</p></div></li></ul></section>
+<section><h2>Fuentes de verdad y referencias operativas</h2><p>Este bloque resume las referencias verificadas en el repo y en el portal para ampliar o validar esta pagina. Cuando no existe una fuente enlazable verificada, el hueco se deja marcado como pendiente.</p><div class="truth-grid"><article class="truth-card"><h3>Repositorio y codigo</h3><ul class="truth-list"><li><p class="truth-path-label">Especificacion tecnica base</p><code class="truth-path">docs/tech_spec.md</code><p class="truth-note">Documento tecnico existente en el repo.</p></li><li><p class="truth-path-label">Documento base de arquitectura</p><code class="truth-path">docs/architecture.md</code><p class="truth-note">Referencia documental previa a este portal HTML.</p></li><li><p class="truth-path-label">Codigo fuente principal</p><code class="truth-path">app/</code><p class="truth-note">Arbol principal de implementacion.</p></li><li><p class="truth-path-label">Configuraciones de entorno</p><code class="truth-path">config.dev.yaml, config.prod.yaml, config.test.yaml</code><p class="truth-note">Parametros y perfiles de ejecucion.</p></li></ul></article><article class="truth-card"><h3>Referencias operativas</h3><ul class="truth-list"><li><a class="truth-link" href="../operacion/index.html">Indice de Operacion</a><p class="truth-note">Puerta de entrada a runbooks, release e incidentes.</p></li><li><a class="truth-link" href="../operacion/service-catalog.html">Catalogo de Servicios</a><p class="truth-note">Relaciona la vista tecnica con capacidades operativas.</p></li></ul></article><article class="truth-card"><h3>ADRs y decisiones</h3><ul class="truth-list"><li><p class="truth-path-label">Repositorio de ADRs</p><code class="truth-path">docs/adr/</code><p class="truth-note">Decision log real del repo.</p></li><li><a class="truth-link" href="../decisiones/index.html">Indice ADR HTML</a><p class="truth-note">Indice navegable dentro del portal.</p></li></ul></article><article class="truth-card"><h3>Dashboards y telemetria</h3><ul class="truth-list"><li><p class="truth-path-label">Codigo de observabilidad</p><code class="truth-path">app/observability/</code><p class="truth-note">Implementacion local verificada en el repo.</p></li><li><p class="truth-path-label">Pendiente de enlace verificado</p><p class="truth-note truth-note-pending">No se ha verificado una URL de dashboard real en esta iteracion.</p></li></ul></article><article class="truth-card"><h3>Artefactos vivos</h3><ul class="truth-list"><li><p class="truth-path-label">Pendiente de enlace verificado</p><p class="truth-note truth-note-pending">No se ha verificado un artefacto vivo transversal especifico para esta vista en esta iteracion.</p></li></ul></article></div></section>
+<section><h2>Placeholders estructurados</h2><ul><li>Completar detalles reales de la plataforma sin inventar implementacion no verificada.</li><li>Anadir enlaces a codigo, dashboards, runbooks o ADRs reales cuando existan.</li><li>Confirmar responsable de mantenimiento de esta pagina.</li></ul></section>
+  </main>
+  <div class="diagram-lightbox" hidden aria-hidden="true">
+    <div class="diagram-lightbox-backdrop" data-close-lightbox="true"></div>
+    <div class="diagram-lightbox-dialog" role="dialog" aria-modal="true" aria-label="Vista ampliada del diagrama">
+      <button class="diagram-lightbox-close" type="button" aria-label="Cerrar vista ampliada">Cerrar</button>
+      <figure class="diagram-lightbox-figure">
+        <img class="diagram-lightbox-image" src="" alt="" />
+        <figcaption class="diagram-lightbox-caption">Vista ampliada del diagrama generado.</figcaption>
+      </figure>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <p>Base documental HTML estatica preparada para actualizaciones incrementales.</p>
+    <p>Ultima generacion: 2026-04-06</p>
+  </footer>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
