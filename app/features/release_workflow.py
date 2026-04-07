@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.features.metrics import FeatureMetrics
+from app.features.live_readiness import FeatureLiveReadinessDecision
 from app.features.parity import ParityReport
 from app.features.release_checks import FeatureReleaseGateReport, run_feature_release_gate
 from app.features.releases import FeatureReleaseRegistry, ReleasedFeatureSet
@@ -36,6 +37,7 @@ def _append_audit_event(
     released: ReleasedFeatureSet,
     target: str | None,
     gate_report: FeatureReleaseGateReport | None,
+    live_readiness: FeatureLiveReadinessDecision | None,
     actor: str,
 ) -> Path:
     audit_path = _audit_path_for(registry_path)
@@ -60,6 +62,12 @@ def _append_audit_event(
             "cardinality_breaches": gate_report.cardinality_breaches,
             "reasons": list(gate_report.reasons),
         }
+    if live_readiness is not None:
+        payload["live_readiness"] = {
+            "pass_ok": live_readiness.pass_ok,
+            "action": live_readiness.action,
+            "reasons": list(live_readiness.reasons),
+        }
     with audit_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
     return audit_path
@@ -74,6 +82,7 @@ def gate_and_publish_feature_release(
     metrics: FeatureMetrics,
     target: str,
     actor: str = "system",
+    live_readiness: FeatureLiveReadinessDecision | None = None,
 ) -> ReleaseWorkflowResult:
     gate_report = run_feature_release_gate(parity_report=parity_report, metrics=metrics, target=target)
     return publish_feature_release(
@@ -83,6 +92,7 @@ def gate_and_publish_feature_release(
         gate_report=gate_report,
         target=target,
         actor=actor,
+        live_readiness=live_readiness,
     )
 
 
@@ -94,9 +104,15 @@ def publish_feature_release(
     gate_report: FeatureReleaseGateReport,
     target: str | None = None,
     actor: str = "system",
+    live_readiness: FeatureLiveReadinessDecision | None = None,
 ) -> ReleaseWorkflowResult:
     if not gate_report.pass_ok:
         raise ValueError(f"release gate failed for {feature_set_name}: {', '.join(gate_report.reasons)}")
+    if (target or gate_report.target) == "live":
+        if live_readiness is None:
+            raise ValueError("live release requires live readiness decision")
+        if not live_readiness.pass_ok:
+            raise ValueError(f"live readiness failed for {feature_set_name}: {', '.join(live_readiness.reasons)}")
     registry = FeatureReleaseRegistry(registry_path)
     released = registry.activate(name=feature_set_name, version=version)
     audit_path = _append_audit_event(
@@ -105,6 +121,7 @@ def publish_feature_release(
         released=released,
         target=target or gate_report.target,
         gate_report=gate_report,
+        live_readiness=live_readiness,
         actor=actor,
     )
     return ReleaseWorkflowResult(action="publish", released=released, gate_report=gate_report, audit_path=audit_path)
@@ -125,6 +142,7 @@ def rollback_feature_release(
         released=released,
         target=target,
         gate_report=None,
+        live_readiness=None,
         actor=actor,
     )
     return ReleaseWorkflowResult(action="rollback", released=released, gate_report=None, audit_path=audit_path)

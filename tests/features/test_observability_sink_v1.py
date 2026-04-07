@@ -1,7 +1,7 @@
 import json
 
 from app.features.metrics import FeatureMetrics
-from app.features.observability import HttpObservabilitySink, JsonlObservabilitySink, MemoryObservabilitySink, emit_feature_observability_bundle
+from app.features.observability import CompositeObservabilitySink, HttpObservabilitySink, JsonlObservabilitySink, MemoryObservabilitySink, emit_feature_observability_bundle
 from tests.features.http_test_support import feature_http_server
 
 
@@ -25,3 +25,16 @@ def test_observability_can_emit_to_http_sink():
         payload = emit_feature_observability_bundle(metrics=FeatureMetrics(parity_mismatches=1), target="paper", sink=sink)
         assert payload["alerts"] == ["feature_parity_mismatch_detected"]
         assert handler.observability_payloads[-1]["alerts"] == ["feature_parity_mismatch_detected"]
+
+
+def test_observability_can_emit_to_composite_sink(tmp_path):
+    memory = MemoryObservabilitySink()
+    jsonl = JsonlObservabilitySink(tmp_path / "observability.jsonl")
+    sink = CompositeObservabilitySink(memory, jsonl)
+    payloads = emit_feature_observability_bundle(
+        metrics=FeatureMetrics(contract_validation_failures=1),
+        target="paper",
+        sink=sink,
+    )
+    assert len(payloads) == 2
+    assert memory.bundles[-1].alerts == ("training_serving_contract_failures_detected",)

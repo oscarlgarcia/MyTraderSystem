@@ -37,8 +37,6 @@ class FeatureDefinition:
     def __post_init__(self) -> None:
         if not tuple(self.entity_keys):
             raise ValueError("entity_keys must not be empty")
-        if "symbol" not in tuple(self.entity_keys):
-            raise ValueError("entity_keys must include symbol")
 
     @property
     def definition_hash(self) -> str:
@@ -84,11 +82,9 @@ class FeatureSetDefinition:
     def __post_init__(self) -> None:
         if not tuple(self.entity_keys):
             raise ValueError("entity_keys must not be empty")
-        if "symbol" not in tuple(self.entity_keys):
-            raise ValueError("entity_keys must include symbol")
         for auxiliary_input in self.auxiliary_inputs:
-            if "symbol" not in tuple(auxiliary_input.entity_keys):
-                raise ValueError("auxiliary input entity_keys must include symbol")
+            if not tuple(auxiliary_input.entity_keys):
+                raise ValueError("auxiliary input entity_keys must not be empty")
 
     @property
     def definition_hash(self) -> str:

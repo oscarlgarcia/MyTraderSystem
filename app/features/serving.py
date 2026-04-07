@@ -4,13 +4,19 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Mapping, Optional
 
 from app.common.dto import FeatureVector
+from app.features.model_contract import (
+    FeatureConsumerContract,
+    FeatureConsumerMetadata,
+    validate_feature_contract,
+)
 from app.features.metrics import FeatureMetrics
 from app.features.offline_store import OfflineFeatureStore
 from app.features.online_store_base import FeatureOnlineStore
 from app.features.releases import FeatureReleaseRegistry
+from app.features.training_bundle_registry import TrainingBundleRegistry
 from app.features.validation_profiles import get_validation_profile
 
 
@@ -29,6 +35,12 @@ class ServingResult:
     staleness_seconds: float = 0.0
 
 
+def default_serving_policy(*, target: str) -> ServingPolicy:
+    if target == "live":
+        return ServingPolicy(max_staleness_seconds=30.0, on_missing="fail", on_invalid="fail")
+    return ServingPolicy(max_staleness_seconds=300.0, on_missing="fail", on_invalid="degrade")
+
+
 class FeatureServingService:
     def __init__(
         self,
@@ -40,14 +52,16 @@ class FeatureServingService:
         logger: logging.Logger | None = None,
         release_registry: FeatureReleaseRegistry | None = None,
         release_registry_path: str | None = None,
+        training_bundle_registry: TrainingBundleRegistry | None = None,
         target: str = "paper",
     ) -> None:
         self.online_store = online_store
         self.offline_store = offline_store
-        self.policy = policy or ServingPolicy()
+        self.policy = policy or default_serving_policy(target=target)
         self.metrics = metrics or FeatureMetrics()
         self.logger = logger or logging.getLogger("features.serving")
         self.release_registry = release_registry or (FeatureReleaseRegistry(release_registry_path) if release_registry_path else None)
+        self.training_bundle_registry = training_bundle_registry
         self.target = target
 
     def _resolve_version(self, *, feature_set_name: str, feature_set_version: str | None) -> str:
@@ -60,7 +74,17 @@ class FeatureServingService:
             raise ValueError(f"no active release found for feature set {feature_set_name}")
         return released.active_version
 
-    def _record_result(self, *, symbol: str, decision_ts: datetime, feature_set_name: str, feature_set_version: str, result: ServingResult, elapsed: float) -> ServingResult:
+    def _record_result(
+        self,
+        *,
+        symbol: str,
+        decision_ts: datetime,
+        feature_set_name: str,
+        feature_set_version: str,
+        result: ServingResult,
+        elapsed: float,
+        contract_reasons: tuple[str, ...] = (),
+    ) -> ServingResult:
         self.metrics.serving_requests += 1
         self.metrics.serving_latency_total += elapsed
         self.metrics.serving_latency_max = max(self.metrics.serving_latency_max, elapsed)
@@ -72,6 +96,8 @@ class FeatureServingService:
             self.metrics.stale_serves += 1
         if result.reason == "quality_flags":
             self.metrics.invalid_serves += 1
+        if contract_reasons:
+            self.metrics.contract_validation_failures += 1
         feature_vector = result.feature_vector
         self.logger.info(
             "feature serving request",
@@ -85,6 +111,7 @@ class FeatureServingService:
                 "staleness_seconds": result.staleness_seconds,
                 "lineage_id": feature_vector.lineage_id if feature_vector else "",
                 "quality_flags": list(feature_vector.quality_flags) if feature_vector else [],
+                "contract_reasons": list(contract_reasons),
                 "elapsed_seconds": elapsed,
             },
         )
@@ -98,6 +125,8 @@ class FeatureServingService:
         feature_set_version: str | None = None,
         symbol: str | None = None,
         entity_keys: dict[str, str] | None = None,
+        contract: FeatureConsumerContract | None = None,
+        consumer_metadata: FeatureConsumerMetadata | Mapping[str, str] | None = None,
     ) -> ServingResult:
         start = time.perf_counter()
         resolved_version = self._resolve_version(feature_set_name=feature_set_name, feature_set_version=feature_set_version)
@@ -171,6 +200,29 @@ class FeatureServingService:
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
+        if contract is not None:
+            contract_result = validate_feature_contract(
+                contract=contract,
+                feature_vector=fv,
+                consumer_metadata=consumer_metadata,
+                training_bundle_registry=self.training_bundle_registry,
+            )
+            if not contract_result.pass_ok:
+                result = ServingResult(
+                    status="fail" if self.policy.on_missing == "fail" else "degrade",
+                    feature_vector=fv,
+                    reason="contract_validation",
+                    staleness_seconds=staleness,
+                )
+                return self._record_result(
+                    symbol=resolved_symbol or fv.symbol,
+                    decision_ts=decision_ts,
+                    feature_set_name=feature_set_name,
+                    feature_set_version=resolved_version,
+                    result=result,
+                    elapsed=time.perf_counter() - start,
+                    contract_reasons=contract_result.reasons,
+                )
         result = ServingResult(status="ok", feature_vector=fv, staleness_seconds=staleness)
         return self._record_result(
             symbol=resolved_symbol or fv.symbol,
@@ -189,6 +241,8 @@ class FeatureServingService:
         feature_set_version: str | None = None,
         symbol: str | None = None,
         entity_keys: dict[str, str] | None = None,
+        contract: FeatureConsumerContract | None = None,
+        consumer_metadata: FeatureConsumerMetadata | Mapping[str, str] | None = None,
     ) -> ServingResult:
         start = time.perf_counter()
         resolved_version = self._resolve_version(feature_set_name=feature_set_name, feature_set_version=feature_set_version)
@@ -234,6 +288,24 @@ class FeatureServingService:
                 result=result,
                 elapsed=time.perf_counter() - start,
             )
+        if contract is not None:
+            contract_result = validate_feature_contract(
+                contract=contract,
+                feature_vector=fv,
+                consumer_metadata=consumer_metadata,
+                training_bundle_registry=self.training_bundle_registry,
+            )
+            if not contract_result.pass_ok:
+                result = ServingResult(status="fail" if self.policy.on_missing == "fail" else "degrade", feature_vector=fv, reason="contract_validation")
+                return self._record_result(
+                    symbol=resolved_symbol or fv.symbol,
+                    decision_ts=decision_ts,
+                    feature_set_name=feature_set_name,
+                    feature_set_version=resolved_version,
+                    result=result,
+                    elapsed=time.perf_counter() - start,
+                    contract_reasons=contract_result.reasons,
+                )
         result = ServingResult(status="ok", feature_vector=fv)
         return self._record_result(
             symbol=resolved_symbol or fv.symbol,

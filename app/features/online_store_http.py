@@ -15,14 +15,17 @@ class RemoteHttpOnlineFeatureStore(FeatureOnlineStore):
     def __init__(self, base_url: str, *, timeout_seconds: float = 5.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self._client = httpx.Client(timeout=self.timeout_seconds)
+
+    def close(self) -> None:
+        self._client.close()
 
     def _request(self, method: str, path: str, *, params: dict[str, Any] | None = None, json_body: dict[str, Any] | None = None) -> httpx.Response:
-        return httpx.request(
+        return self._client.request(
             method,
             f"{self.base_url}{path}",
             params=params,
             json=json_body,
-            timeout=self.timeout_seconds,
         )
 
     def _vector_params(

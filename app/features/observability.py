@@ -36,6 +36,14 @@ class MemoryObservabilitySink:
         return bundle
 
 
+class CompositeObservabilitySink:
+    def __init__(self, *sinks: FeatureObservabilitySink) -> None:
+        self.sinks = sinks
+
+    def emit(self, bundle: FeatureObservabilityBundle) -> tuple[object, ...]:
+        return tuple(sink.emit(bundle) for sink in self.sinks)
+
+
 class JsonlObservabilitySink:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -103,6 +111,8 @@ def build_feature_observability_bundle(*, metrics: FeatureMetrics, target: str) 
         alerts.append("feature_parity_mismatch_detected")
     if metrics.shadow_failures > 0:
         alerts.append("shadow_divergence_detected")
+    if metrics.contract_validation_failures > 0:
+        alerts.append("training_serving_contract_failures_detected")
     return FeatureObservabilityBundle(
         target=target,
         generated_at=datetime.now(timezone.utc),

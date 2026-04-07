@@ -27,6 +27,25 @@ def test_feature_set_definition_accepts_composite_entity_keys():
     assert feature_set.entity_keys == ("symbol", "account")
 
 
+def test_feature_definitions_can_declare_symbolless_entity_contract():
+    feature = FeatureDefinition(
+        name="account_nav",
+        version="1.0.0",
+        description="account nav",
+        owner="test",
+        entity_keys=("account",),
+    )
+    feature_set = FeatureSetDefinition(
+        name="account",
+        version="1.0.0",
+        description="account scoped",
+        entity_keys=("account",),
+        feature_definitions=(feature,),
+    )
+    assert feature.entity_keys == ("account",)
+    assert feature_set.entity_keys == ("account",)
+
+
 def test_stores_accept_composite_entity_keys(tmp_path):
     ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
     vector = FeatureVector(

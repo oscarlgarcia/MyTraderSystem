@@ -19,9 +19,20 @@ class DecisionAuditRecord:
     feature_set_name: str
     feature_set_version: str
     quality_flags: tuple[str, ...]
+    dataset_id: str = ""
+    feature_schema_hash: str = ""
+    training_bundle_id: str = ""
+    consumer_name: str = ""
+    consumer_kind: str = ""
 
 
-def build_decision_audit_record(feature: FeatureVector, signal: Signal) -> DecisionAuditRecord:
+def build_decision_audit_record(
+    feature: FeatureVector,
+    signal: Signal,
+    *,
+    consumer_metadata: dict[str, str] | None = None,
+) -> DecisionAuditRecord:
+    metadata = consumer_metadata or {}
     return DecisionAuditRecord(
         symbol=signal.symbol,
         decision_ts=signal.ts,
@@ -31,6 +42,11 @@ def build_decision_audit_record(feature: FeatureVector, signal: Signal) -> Decis
         feature_set_name=feature.feature_set_name,
         feature_set_version=feature.feature_set_version,
         quality_flags=tuple(feature.quality_flags),
+        dataset_id=metadata.get("dataset_id", ""),
+        feature_schema_hash=metadata.get("feature_schema_hash", ""),
+        training_bundle_id=metadata.get("training_bundle_id", ""),
+        consumer_name=metadata.get("consumer_name", ""),
+        consumer_kind=metadata.get("consumer_kind", ""),
     )
 
 
@@ -48,4 +64,9 @@ def persist_decision_audits(records: Iterable[DecisionAuditRecord], path: str | 
                 "feature_set_name": record.feature_set_name,
                 "feature_set_version": record.feature_set_version,
                 "quality_flags": list(record.quality_flags),
+                "dataset_id": record.dataset_id,
+                "feature_schema_hash": record.feature_schema_hash,
+                "training_bundle_id": record.training_bundle_id,
+                "consumer_name": record.consumer_name,
+                "consumer_kind": record.consumer_kind,
             }, ensure_ascii=False) + "\n")
