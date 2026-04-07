@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.features.online_store import OnlineFeatureStore
 from app.features.online_store_base import FeatureOnlineStore
+from app.features.online_store_http import RemoteHttpOnlineFeatureStore
 from app.features.online_store_json import JsonOnlineFeatureStore
 from app.features.online_store_memory import MemoryOnlineFeatureStore
 
@@ -13,6 +14,8 @@ from app.features.online_store_memory import MemoryOnlineFeatureStore
 class OnlineStoreConfig:
     backend: str = "local_sqlite"
     path: str | Path | None = None
+    url: str | None = None
+    timeout_seconds: float = 5.0
     history_max_rows_per_scope: int | None = None
     history_retention_seconds: float | None = None
 
@@ -32,4 +35,8 @@ def create_online_store(config: OnlineStoreConfig) -> FeatureOnlineStore:
         if config.path is None:
             raise ValueError("json_file backend requires path")
         return JsonOnlineFeatureStore(config.path)
+    if config.backend == "http":
+        if not config.url:
+            raise ValueError("http backend requires url")
+        return RemoteHttpOnlineFeatureStore(config.url, timeout_seconds=float(config.timeout_seconds))
     raise ValueError(f"unsupported online store backend: {config.backend}")

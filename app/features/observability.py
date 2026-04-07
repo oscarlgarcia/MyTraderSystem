@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+import httpx
+
 from app.features.metrics import FeatureMetrics
 
 logger = logging.getLogger("features.observability")
@@ -72,6 +74,23 @@ class LoggerObservabilitySink:
             },
         )
         return bundle
+
+
+class HttpObservabilitySink:
+    def __init__(self, url: str, *, timeout_seconds: float = 5.0) -> None:
+        self.url = url
+        self.timeout_seconds = timeout_seconds
+
+    def emit(self, bundle: FeatureObservabilityBundle) -> dict[str, Any]:
+        payload = {
+            "target": bundle.target,
+            "generated_at": bundle.generated_at.isoformat(),
+            "metrics": bundle.metrics,
+            "alerts": list(bundle.alerts),
+        }
+        response = httpx.post(self.url, json=payload, timeout=self.timeout_seconds)
+        response.raise_for_status()
+        return payload
 
 
 def build_feature_observability_bundle(*, metrics: FeatureMetrics, target: str) -> FeatureObservabilityBundle:

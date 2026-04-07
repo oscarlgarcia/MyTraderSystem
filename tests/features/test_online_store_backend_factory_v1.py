@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 
 from app.common.dto import FeatureVector
 from app.features.online_store_factory import OnlineStoreConfig, create_online_store
+from app.features.online_store_http import RemoteHttpOnlineFeatureStore
+from tests.features.http_test_support import feature_http_server
 
 
 def _vector() -> FeatureVector:
@@ -35,3 +37,16 @@ def test_online_store_factory_creates_json_backend(tmp_path):
         feature_set_version="1.0.0",
         entity_keys=vector.entity_keys,
     ) is not None
+
+
+def test_online_store_factory_creates_http_backend():
+    with feature_http_server() as (server, _):
+        store = create_online_store(OnlineStoreConfig(backend="http", url=f"http://127.0.0.1:{server.server_port}"))
+        assert isinstance(store, RemoteHttpOnlineFeatureStore)
+        vector = _vector()
+        store.upsert(vector)
+        assert store.get_latest(
+            feature_set_name="default",
+            feature_set_version="1.0.0",
+            entity_keys=vector.entity_keys,
+        ) is not None

@@ -4,6 +4,10 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+from _script_bootstrap import bootstrap_repo_path
+
+bootstrap_repo_path()
+
 from app.ops.ingestion_validation import run_canary_validation, run_ws_live_canary
 
 

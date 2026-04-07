@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,8 @@ def build_app(
     builder: ReadModelBuilder | None = None,
 ) -> FastAPI:
     cfg = cfg or load_config()
+    repo_root = Path(__file__).resolve().parents[2]
+    docs_root = repo_root / "docs-html"
     configure_control_plane_telemetry(cfg.control_plane_telemetry_dir)
     store = store or create_control_plane_store(cfg)
     builder = builder or ReadModelBuilder(cfg.control_plane_telemetry_dir, store)
@@ -54,6 +57,25 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     def root() -> RedirectResponse:
         return RedirectResponse(url="/ui/overview", status_code=302)
+
+    @app.get("/docs", response_class=HTMLResponse)
+    def docs_root_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/docs/index.html", status_code=302)
+
+    @app.get("/docs/{docs_path:path}")
+    def docs_static(docs_path: str) -> Response:
+        requested = docs_root / (docs_path or "index.html")
+        resolved = requested.resolve()
+        try:
+            resolved.relative_to(docs_root.resolve())
+        except ValueError:
+            return Response(status_code=404)
+        if resolved.is_dir():
+            resolved = resolved / "index.html"
+        if not resolved.exists() or not resolved.is_file():
+            return Response(status_code=404)
+        media_type, _ = mimetypes.guess_type(str(resolved))
+        return Response(content=resolved.read_bytes(), media_type=media_type or "application/octet-stream")
 
     @app.get("/ui/overview", response_class=HTMLResponse)
     def ui_overview(request: Request) -> HTMLResponse:

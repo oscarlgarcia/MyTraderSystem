@@ -3,6 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from _script_bootstrap import bootstrap_repo_path
+
+bootstrap_repo_path()
+
 from app.ops.ingestion_validation import run_soak_validation
 
 

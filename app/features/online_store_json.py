@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
@@ -8,37 +7,9 @@ from threading import RLock
 from app.common.dto import FeatureVector
 from app.features.entity_codec import entity_scope, normalize_entity_keys
 from app.features.online_store_base import FeatureOnlineStore
+from app.features.online_store_codec import deserialize_feature_vector, serialize_feature_vector
 from app.features.pit import feature_vector_is_servable_at
-
-
-def _serialize_vector(vector: FeatureVector) -> dict[str, object]:
-    return {
-        "symbol": vector.symbol,
-        "ts": vector.ts.isoformat(),
-        "available_ts": vector.available_ts.isoformat(),
-        "source_cutoff_ts": vector.source_cutoff_ts.isoformat(),
-        "values": dict(vector.values),
-        "feature_set_name": vector.feature_set_name,
-        "feature_set_version": vector.feature_set_version,
-        "lineage_id": vector.lineage_id,
-        "quality_flags": list(vector.quality_flags),
-        "entity_keys": dict(vector.entity_keys),
-    }
-
-
-def _deserialize_vector(payload: dict[str, object]) -> FeatureVector:
-    return FeatureVector(
-        symbol=str(payload["symbol"]),
-        ts=datetime.fromisoformat(str(payload["ts"])),
-        available_ts=datetime.fromisoformat(str(payload["available_ts"])),
-        source_cutoff_ts=datetime.fromisoformat(str(payload["source_cutoff_ts"])),
-        values={str(key): float(value) for key, value in dict(payload["values"]).items()},
-        feature_set_name=str(payload["feature_set_name"]),
-        feature_set_version=str(payload["feature_set_version"]),
-        lineage_id=str(payload.get("lineage_id", "")),
-        quality_flags=tuple(payload.get("quality_flags", [])),
-        entity_keys={str(key): str(value) for key, value in dict(payload.get("entity_keys", {})).items()},
-    )
+import json
 
 
 class JsonOnlineFeatureStore(FeatureOnlineStore):
@@ -67,15 +38,15 @@ class JsonOnlineFeatureStore(FeatureOnlineStore):
         payload = json.loads(self.path.read_text(encoding="utf-8"))
         for raw_key, vector_payload in payload.get("latest", {}).items():
             scope, feature_set_name, feature_set_version = raw_key.split("|", 2)
-            self._latest[(scope, feature_set_name, feature_set_version)] = _deserialize_vector(vector_payload)
+            self._latest[(scope, feature_set_name, feature_set_version)] = deserialize_feature_vector(vector_payload)
         for raw_key, vector_payloads in payload.get("history", {}).items():
             scope, feature_set_name, feature_set_version = raw_key.split("|", 2)
-            self._history[(scope, feature_set_name, feature_set_version)] = [_deserialize_vector(item) for item in vector_payloads]
+            self._history[(scope, feature_set_name, feature_set_version)] = [deserialize_feature_vector(item) for item in vector_payloads]
 
     def _dump(self) -> None:
         payload = {
-            "latest": {"|".join(key): _serialize_vector(value) for key, value in self._latest.items()},
-            "history": {"|".join(key): [_serialize_vector(item) for item in values] for key, values in self._history.items()},
+            "latest": {"|".join(key): serialize_feature_vector(value) for key, value in self._latest.items()},
+            "history": {"|".join(key): [serialize_feature_vector(item) for item in values] for key, values in self._history.items()},
         }
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 

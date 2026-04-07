@@ -3,6 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from _script_bootstrap import bootstrap_repo_path
+
+bootstrap_repo_path()
+
 from app.ops.normalized_contract import validate_normalized_contract, write_normalized_contract_report
 
 

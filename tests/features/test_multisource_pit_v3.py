@@ -23,3 +23,16 @@ def test_prepare_events_uses_asof_join_without_future_leakage():
     assert event.metadata["join:aux:event_ts"] == auxiliary[0].event_ts.isoformat()
     assert event.metadata["join:aux:available_ts"] == auxiliary[0].available_ts.isoformat()
     assert cutoff == primary[0].available_ts
+
+
+def test_prepare_events_defaults_to_symbol_scope_when_auxiliary_input_is_undeclared():
+    materializer = FeatureMaterializer()
+    primary = [_ev("BTCUSDT", 60, 101.0, available_offset=60)]
+    auxiliary = [
+        _ev("ETHUSDT", 30, 88.0, available_offset=30, source="kline"),
+        _ev("BTCUSDT", 30, 99.0, available_offset=30, source="kline"),
+    ]
+    prepared = materializer._prepare_events(primary, auxiliary_events={"aux": auxiliary})
+    event, _ = prepared[0]
+    assert event.metadata["join:aux:present"] == "true"
+    assert event.metadata["join:aux:symbol"] == "BTCUSDT"

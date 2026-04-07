@@ -4,6 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
+from _script_bootstrap import bootstrap_repo_path
+
+bootstrap_repo_path()
+
 from app.config import load_config
 from app.ingestion.compaction import CompactionJobPolicy, run_compaction_job
 

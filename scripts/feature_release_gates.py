@@ -4,6 +4,10 @@ import json
 import sys
 from pathlib import Path
 
+from _script_bootstrap import bootstrap_repo_path
+
+bootstrap_repo_path()
+
 from app.features.metrics import FeatureMetrics
 from app.features.parity import ParityReport
 from app.features.release_checks import run_feature_release_gate

@@ -32,13 +32,16 @@ run-dev:
 	$(PYTHON_CMD) -m app.main
 
 controlplane-web:
-	$(PYTHON_CMD) -m app.controlplane.api --env dev --host 127.0.0.1 --port 8001
+	$(PYTHON_CMD) -m app.controlplane.api --env dev --host 127.0.0.1 --port 8000
+
+webui:
+	$(PYTHON_CMD) -m app.controlplane.api --env dev --host 127.0.0.1 --port 8000
 
 controlplane-worker:
 	$(PYTHON_CMD) -m app.controlplane.worker --env dev
 
 run-live:
-	$(PYTHON_CMD) -m app --env dev --mode live --duration 60 --max-events 200
+	$(PYTHON_CMD) -m app --env dev --mode live --duration 60 --max-events 200 --feature-audit-path $(FEATURE_AUDIT_PATH)
 
 ingest-dev:
 	$(PYTHON_CMD) -m app.ingestion.runner --env dev --duration 600
@@ -52,6 +55,7 @@ END ?= 2024-01-01T01:00:00+00:00
 INTERVAL ?= 1m
 BATCH ?= 500
 FEED_TYPE ?= kline
+FEATURE_AUDIT_PATH ?= docs/validation/feature_decision_audit.jsonl
 
 backfill-dev:
 	$(PYTHON_CMD) -m app.ingestion.backfill --env dev --symbol $(SYMBOL) --feed-type $(FEED_TYPE) --start $(START) --end $(END) --interval $(INTERVAL) --batch $(BATCH) --dry-run
@@ -66,7 +70,7 @@ docker-build:
 	docker compose build
 
 docker-up:
-	docker compose up -d app control-plane-web control-plane-worker
+	docker compose up -d app webUI control-plane-worker
 
 docker-down:
 	docker compose down
@@ -78,25 +82,25 @@ docker-exec:
 	docker compose exec app bash
 
 docker-test:
-	docker compose run --rm app sh -c "poetry install && poetry run pytest"
+	docker compose run --rm app sh -c "/opt/poetry/bin/poetry install && /opt/poetry/bin/poetry run pytest"
 
 docker-test-all:
-	docker compose exec app poetry run pytest
+	docker compose exec app /opt/poetry/bin/poetry run pytest
 
 docker-test-slow:
-	docker compose exec app poetry run pytest -m slow -q
+	docker compose exec app /opt/poetry/bin/poetry run pytest -m slow -q
 
 docker-test-ingestion-readiness:
-	docker compose exec app poetry run pytest tests/slow/test_ingestion_readiness.py -m slow -q
+	docker compose exec app /opt/poetry/bin/poetry run pytest tests/slow/test_ingestion_readiness.py -m slow -q
 
 docker-test-ingestion-strict:
-	docker compose exec app poetry run pytest tests/ops/test_readiness_orchestrator.py tests/ops/test_ingestion_validation.py tests/ops/test_release_gates.py tests/ops/test_live_cutover.py tests/ops/test_operational_claims.py -q
+	docker compose exec app /opt/poetry/bin/poetry run pytest tests/ops/test_readiness_orchestrator.py tests/ops/test_ingestion_validation.py tests/ops/test_release_gates.py tests/ops/test_live_cutover.py tests/ops/test_operational_claims.py -q
 
 docker-ingestion-soak:
-	docker compose exec app poetry run python scripts/ingestion_soak.py
+	docker compose exec app /opt/poetry/bin/poetry run python scripts/ingestion_soak.py
 
 docker-ingestion-canary:
-	docker compose exec app poetry run python scripts/ingestion_canary.py
+	docker compose exec app /opt/poetry/bin/poetry run python scripts/ingestion_canary.py
 
 demo-ingest:
 	$(PYTHON_CMD) -m app.ingestion.demo --env dev --duration 30 --max-events 200

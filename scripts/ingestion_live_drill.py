@@ -3,6 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from _script_bootstrap import bootstrap_repo_path
+
+bootstrap_repo_path()
+
 from app.config import load_config
 from app.ops.live_cutover import render_live_cutover_summary, run_live_cutover_drill
 

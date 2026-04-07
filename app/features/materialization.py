@@ -61,6 +61,7 @@ class FeatureMaterializer:
         declared = {item.alias: item for item in (feature_set.auxiliary_inputs if feature_set else ())}
         for alias, aux_events in auxiliary_events.items():
             declaration = declared.get(alias)
+            declaration_entity_keys = tuple(declaration.entity_keys) if declaration else ("symbol",)
             aux_sorted = sorted(list(aux_events), key=lambda event: (_available_ts(event), _event_ts(event), getattr(event, "symbol", "")))
             joined = asof_join(
                 [item[0] for item in prepared],
@@ -68,14 +69,14 @@ class FeatureMaterializer:
                 left_ts_getter=lambda event: _available_ts(event),
                 right_ts_getter=lambda event: _available_ts(event),
                 predicate=lambda left, right: normalize_entity_keys(
-                    {key: left.metadata.get(key) or left.metadata.get(f"entity:{key}") for key in tuple(declaration.entity_keys) if key != "symbol"},
+                    {key: left.metadata.get(key) or left.metadata.get(f"entity:{key}") for key in declaration_entity_keys if key != "symbol"},
                     symbol=getattr(left, "symbol", None),
-                    required_keys=tuple(declaration.entity_keys) if declaration else ("symbol",),
+                    required_keys=declaration_entity_keys,
                 )
                 == normalize_entity_keys(
-                    {key: right.metadata.get(key) or right.metadata.get(f"entity:{key}") for key in tuple(declaration.entity_keys) if key != "symbol"},
+                    {key: right.metadata.get(key) or right.metadata.get(f"entity:{key}") for key in declaration_entity_keys if key != "symbol"},
                     symbol=getattr(right, "symbol", None),
-                    required_keys=tuple(declaration.entity_keys) if declaration else ("symbol",),
+                    required_keys=declaration_entity_keys,
                 ),
             )
             next_prepared: list[tuple[MarketEvent, datetime]] = []

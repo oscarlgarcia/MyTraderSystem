@@ -5,7 +5,7 @@ Gap detection helpers for market data streams.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.marketdata.temporal_state import TemporalStreamState, cursor_from_event
 from app.marketdata.models import BarEvent, IngestionEvent
@@ -64,10 +64,23 @@ def _expected_bar_cadence_seconds(event: IngestionEvent) -> float | None:
 
 
 def _weak_gap_threshold_seconds(event: IngestionEvent, lag_threshold_seconds: float) -> float:
-    expected_cadence_seconds = _expected_bar_cadence_seconds(event)
-    if expected_cadence_seconds is None:
-        return lag_threshold_seconds
-    return max(lag_threshold_seconds, expected_cadence_seconds + lag_threshold_seconds)
+    del event
+    return lag_threshold_seconds
+
+
+def _bar_cursor_ts(kind: str | None, value: str | None) -> datetime | None:
+    if kind != "source_id" or value in (None, ""):
+        return None
+    try:
+        cursor_value = int(value)
+    except (TypeError, ValueError):
+        return None
+    if cursor_value < 946684800000:
+        return None
+    try:
+        return datetime.fromtimestamp(cursor_value / 1000, tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
 
 
 def detect_gap(
@@ -89,6 +102,29 @@ def detect_gap(
             strong=True,
             irreparable=not recovery_available,
         )
+
+    if isinstance(event, BarEvent):
+        previous_bar_cursor = _bar_cursor_ts(stream_state.cursor_kind, stream_state.cursor_value)
+        current_bar_cursor = _bar_cursor_ts(cursor_kind, cursor_value)
+        expected_cadence_seconds = _expected_bar_cadence_seconds(event)
+        if (
+            previous_bar_cursor is not None
+            and current_bar_cursor is not None
+            and expected_cadence_seconds is not None
+            and expected_cadence_seconds > 0.0
+        ):
+            delta_seconds = max(0.0, (current_bar_cursor - previous_bar_cursor).total_seconds())
+            if delta_seconds > expected_cadence_seconds + lag_threshold_seconds:
+                missing = max(0, round(delta_seconds / expected_cadence_seconds) - 1)
+                return GapObservation(
+                    detected=True,
+                    mode="bar_cursor_gap_detection",
+                    missing_count=int(missing),
+                    gap_seconds=delta_seconds,
+                    strong=True,
+                    irreparable=not recovery_available,
+                )
+            return GapObservation(detected=False)
 
     if stream_state.last_event_ts is None:
         return GapObservation(detected=False)

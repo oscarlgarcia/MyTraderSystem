@@ -77,6 +77,17 @@ def _contains_forbidden_secret_keys(value: Any) -> bool:
     return False
 
 
+def _resolve_data_dir(value: str | os.PathLike[str]) -> Path:
+    raw_path = Path(value)
+    if raw_path.is_absolute():
+        return raw_path
+    raw_text = str(value)
+    if os.name == "nt" and raw_text.startswith(("/", "\\")):
+        drive_root = Path.cwd().anchor or "C:\\"
+        return Path(drive_root) / raw_text.lstrip("/\\")
+    return raw_path
+
+
 def load_config(env: str | None = None) -> AppConfig:
     env_name = env or os.getenv("APP_ENV", DEFAULT_ENV)
     path = Path(f"config.{env_name}.yaml")
@@ -94,7 +105,7 @@ def load_config(env: str | None = None) -> AppConfig:
         raise ValueError(f"log_level must be one of {sorted(ALLOWED_LOG_LEVELS)}")
 
     data_dir_override = os.getenv("APP_DATA_DIR")
-    data_dir = Path(data_dir_override) if data_dir_override else Path(raw["data_dir"])
+    data_dir = Path(data_dir_override) if data_dir_override else _resolve_data_dir(raw["data_dir"])
     control_plane_backend = str(raw.get("control_plane_backend", "sqlite")).strip().lower() or "sqlite"
     control_plane_db_root = data_dir / raw["env"] / "control-plane"
     control_plane_db_path = Path(raw.get("control_plane_db_path", control_plane_db_root / "control_plane.sqlite"))

@@ -13,6 +13,11 @@ class FeatureConsumerContract:
     feature_set_version: str
     required_features: tuple[str, ...]
     required_metadata_keys: tuple[str, ...] = ()
+    required_entity_values: tuple[tuple[str, str], ...] = ()
+    required_dataset_id: str = ""
+    required_schema_hash: str = ""
+    required_training_bundle_id: str = ""
+    require_feature_bundle_match: bool = False
     target: str = "paper"
     notes: str = ""
 
@@ -41,6 +46,28 @@ def validate_feature_contract(
     missing_metadata = [key for key in contract.required_metadata_keys if key not in metadata]
     if missing_metadata:
         reasons.append(f"missing_metadata:{','.join(missing_metadata)}")
+    if contract.require_feature_bundle_match:
+        feature_bundle_id = metadata.get("feature_bundle_id")
+        if not feature_bundle_id:
+            reasons.append("missing_metadata:feature_bundle_id")
+        elif feature_bundle_id != feature_vector.lineage_id:
+            reasons.append("feature_bundle_id_mismatch")
+    if contract.required_dataset_id:
+        if metadata.get("dataset_id") != contract.required_dataset_id:
+            reasons.append("dataset_id_mismatch")
+    if contract.required_schema_hash:
+        if metadata.get("feature_schema_hash") != contract.required_schema_hash:
+            reasons.append("schema_hash_mismatch")
+    if contract.required_training_bundle_id:
+        if metadata.get("training_bundle_id") != contract.required_training_bundle_id:
+            reasons.append("training_bundle_id_mismatch")
+    entity_mismatches = [
+        key
+        for key, expected_value in contract.required_entity_values
+        if feature_vector.entity_keys.get(key) != expected_value
+    ]
+    if entity_mismatches:
+        reasons.append(f"entity_key_mismatch:{','.join(entity_mismatches)}")
     if not feature_vector.lineage_id:
         reasons.append("missing_lineage_id")
     return FeatureContractValidationResult(pass_ok=not reasons, reasons=tuple(reasons))

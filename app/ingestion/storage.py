@@ -138,7 +138,6 @@ def _event_metadata_for_row(
             metadata_cache[cache_key] = dict(cached)
     if cached:
         metadata.update({key: value for key, value in cached.items() if key not in metadata})
-    metadata.pop("instrument_catalog_snapshot_json", None)
     return metadata
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -274,7 +274,7 @@ class OnlineFeatureStore(FeatureOnlineStore):
         now: datetime | None = None,
     ) -> int:
         total_deleted = 0
-        now = now or datetime.utcnow().astimezone()
+        now = now or datetime.now(timezone.utc)
         filters = []
         params: list[str] = []
         if entity_keys is not None:

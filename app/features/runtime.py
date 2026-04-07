@@ -75,6 +75,15 @@ class FeatureRuntimeEngine:
         self.runtime_mode = runtime_mode
         self.event_journal = event_journal or (FeatureEventJournal(journal_path) if journal_path is not None else None)
 
+    def _max_recent_events(self) -> int:
+        return max(self.state.effective_window * 4, 32)
+
+    def _truncate_recent_events(self, scope: str) -> None:
+        max_recent = self._max_recent_events()
+        recent = self.state.recent_events[scope]
+        if len(recent) > max_recent:
+            self.state.recent_events[scope] = recent[-max_recent:]
+
     def _entity_keys_for_event(self, event: MarketEvent) -> dict[str, str]:
         payload = {}
         for key in self.feature_set.entity_keys:
@@ -108,9 +117,7 @@ class FeatureRuntimeEngine:
         prices.append(float(event.price))
         if record_event:
             self.state.recent_events[scope].append(event)
-            max_recent = max(self.state.effective_window * 4, 32)
-            if len(self.state.recent_events[scope]) > max_recent:
-                self.state.recent_events[scope] = self.state.recent_events[scope][-max_recent:]
+            self._truncate_recent_events(scope)
         values: Dict[str, float] = {}
         context: Dict[str, float] = {}
         for node in self.plan.nodes:
@@ -145,6 +152,7 @@ class FeatureRuntimeEngine:
         self.state.reset_scope(scope)
         out: List[FeatureVector] = []
         self.state.recent_events[scope] = list(events)
+        self._truncate_recent_events(scope)
         for ev in events:
             fv = self._compute_from_event(ev, record_event=False)
             if fv is not None:
