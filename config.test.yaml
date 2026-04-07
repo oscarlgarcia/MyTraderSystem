@@ -4,5 +4,10 @@
   "log_level": "WARNING",
   "ws_base": "wss://stream.binance.com:9443",
   "rest_base": "https://api.binance.com",
-  "symbols": ["BTCUSDT"]
+  "symbols": ["BTCUSDT"],
+  "feature_online_backend": "local_sqlite",
+  "feature_online_store_path": "./data/test/feature-store/online.sqlite",
+  "feature_offline_store_path": "./data/test/feature-store/offline.sqlite",
+  "feature_release_registry_path": "docs/validation/feature_releases.test.json",
+  "feature_training_bundle_registry_dir": "./data/test/feature-store/training-bundles"
 }

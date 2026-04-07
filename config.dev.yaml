@@ -4,5 +4,10 @@
   "log_level": "INFO",
   "ws_base": "wss://stream.binance.com:9443",
   "rest_base": "https://api.binance.com",
-  "symbols": ["BTCUSDT", "ETHUSDT"]
+  "symbols": ["BTCUSDT", "ETHUSDT"],
+  "feature_online_backend": "local_sqlite",
+  "feature_online_store_path": "./data/dev/feature-store/online.sqlite",
+  "feature_offline_store_path": "./data/dev/feature-store/offline.sqlite",
+  "feature_release_registry_path": "docs/validation/feature_releases.json",
+  "feature_training_bundle_registry_dir": "./data/dev/feature-store/training-bundles"
 }

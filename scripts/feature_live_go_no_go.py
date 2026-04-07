@@ -7,7 +7,8 @@ from _script_bootstrap import bootstrap_repo_path
 
 bootstrap_repo_path()
 
-from app.features.release_workflow import gate_and_publish_feature_release
+from app.features.live_readiness import FeatureLiveReadinessDecision
+from app.features.release_workflow import publish_feature_release
 from app.ops.feature_release_gates import render_feature_release_summary, run_feature_release_gates
 
 
@@ -53,15 +54,21 @@ def main() -> int:
         return 1
     if not args.publish:
         return 0
-    gate_and_publish_feature_release(
+    live_readiness = None
+    if report.live_readiness is not None:
+        live_readiness = FeatureLiveReadinessDecision(
+            pass_ok=bool(report.live_readiness.get("pass_ok", False)),
+            action=str(report.live_readiness.get("action", "")),
+            reasons=tuple(str(reason) for reason in report.live_readiness.get("reasons", [])),
+        )
+    publish_feature_release(
         registry_path=Path(args.registry_path),
         feature_set_name=args.feature_set_name,
         version=args.feature_set_version,
-        parity_report=report.parity_report,
-        metrics=report.metrics,
-        target=args.target,
+        gate_report=report.gate_report,
+        target=report.target,
         actor="scripts.feature_live_go_no_go",
-        live_readiness=report.live_readiness,
+        live_readiness=live_readiness,
     )
     print(f"feature_release published {args.feature_set_name}:{args.feature_set_version} target={args.target}")
     return 0
