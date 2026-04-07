@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Streams</h1>
+<table>
+  <thead><tr><th>Scope</th><th>Status</th><th>Run</th><th>Last Seen</th></tr></thead>
+  <tbody>
+    {% for stream in streams %}
+    <tr>
+      <td><a href="/ui/streams/{{ stream.scope }}">{{ stream.scope }}</a></td>
+      <td class="status-{{ stream.status }}">{{ stream.status }}</td>
+      <td>{{ stream.run_id or "-" }}</td>
+      <td>{{ stream.updated_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No streams available.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

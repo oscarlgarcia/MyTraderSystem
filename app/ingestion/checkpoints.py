@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import AppConfig
+from app.controlplane.telemetry import emit_control_plane_event
 from app.ingestion.dedup import DedupStateEntry, EventIdentity, deserialize_identity, serialize_identity
 from app.marketdata.temporal_state import CursorState, TemporalPartitionKey
 
@@ -36,8 +37,12 @@ CheckpointKey = EventIdentity
 
 
 class CheckpointStore:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, telemetry_dir: Path | None = None):
         self.path = Path(path)
+        try:
+            self.telemetry_dir = Path(telemetry_dir) if telemetry_dir not in (None, "") else None
+        except (TypeError, ValueError):
+            self.telemetry_dir = None
 
     @property
     def audit_path(self) -> Path:
@@ -110,6 +115,11 @@ class CheckpointStore:
         with self.audit_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
             handle.write("\n")
+        event_payload = dict(payload)
+        event_payload["checkpoint_event_type"] = str(payload.get("event_type", "unknown"))
+        event_payload["event_type"] = "checkpoint_audit_ref"
+        event_payload["audit_path"] = str(self.audit_path)
+        emit_control_plane_event("checkpoint_audit_ref", event_payload, telemetry_dir=self.telemetry_dir)
 
     def record_checkpoint_event(
         self,

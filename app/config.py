@@ -40,6 +40,12 @@ class AppConfig:
     ws_base: str
     rest_base: str
     symbols: list[str]
+    control_plane_backend: str = "sqlite"
+    control_plane_db_path: Path = Path("control_plane.sqlite")
+    control_plane_db_url: str | None = None
+    control_plane_telemetry_dir: Path = Path("ui-telemetry")
+    control_plane_poll_interval_seconds: float = 5.0
+    control_plane_command_poll_interval_seconds: float = 2.0
 
 
 def get_secret_env(name: str, *, required: bool = False) -> str | None:
@@ -89,6 +95,13 @@ def load_config(env: str | None = None) -> AppConfig:
 
     data_dir_override = os.getenv("APP_DATA_DIR")
     data_dir = Path(data_dir_override) if data_dir_override else Path(raw["data_dir"])
+    control_plane_backend = str(raw.get("control_plane_backend", "sqlite")).strip().lower() or "sqlite"
+    control_plane_db_root = data_dir / raw["env"] / "control-plane"
+    control_plane_db_path = Path(raw.get("control_plane_db_path", control_plane_db_root / "control_plane.sqlite"))
+    control_plane_db_url = raw.get("control_plane_db_url")
+    control_plane_telemetry_dir = Path(raw.get("control_plane_telemetry_dir", data_dir / raw["env"] / "ui-telemetry"))
+    control_plane_poll_interval_seconds = float(raw.get("control_plane_poll_interval_seconds", 5.0))
+    control_plane_command_poll_interval_seconds = float(raw.get("control_plane_command_poll_interval_seconds", 2.0))
 
     symbols = [str(symbol).upper() for symbol in raw.get("symbols", [])]
     if not symbols:
@@ -106,6 +119,12 @@ def load_config(env: str | None = None) -> AppConfig:
         ws_base=str(raw["ws_base"]),
         rest_base=str(raw["rest_base"]),
         symbols=symbols,
+        control_plane_backend=control_plane_backend,
+        control_plane_db_path=control_plane_db_path,
+        control_plane_db_url=str(control_plane_db_url) if control_plane_db_url not in (None, "") else None,
+        control_plane_telemetry_dir=control_plane_telemetry_dir,
+        control_plane_poll_interval_seconds=control_plane_poll_interval_seconds,
+        control_plane_command_poll_interval_seconds=control_plane_command_poll_interval_seconds,
     )
 
 

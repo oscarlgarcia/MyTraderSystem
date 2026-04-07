@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Runs</h1>
+<table>
+  <thead><tr><th>Run</th><th>Mode</th><th>Result</th><th>Updated</th><th>Summary</th></tr></thead>
+  <tbody>
+    {% for run in runs %}
+    <tr>
+      <td><a href="/ui/runs/{{ run.run_id }}">{{ run.run_id }}</a></td>
+      <td>{{ run.mode }}</td>
+      <td class="status-{{ run.result }}">{{ run.result }}</td>
+      <td>{{ run.updated_at }}</td>
+      <td>{{ run.summary.get("events_persisted", 0) }} persisted / {{ run.summary.get("reconnects", 0) }} reconnects</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No runs available.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

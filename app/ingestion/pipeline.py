@@ -32,6 +32,7 @@ from app.ingestion.storage import ParquetWriter
 from app.marketdata.models import IngestionEvent, TradeEvent
 from app.marketdata.raw_sink import JsonlRawSink, NullRawSink
 from app.marketdata.support_matrix import validate_live_feed_support
+from app.controlplane.telemetry import emit_control_plane_event
 from app.observability.alerts import emit_operational_alert
 from app.observability.logger import get_trace_id
 
@@ -306,6 +307,12 @@ def _emit_ingestion_summary(
         payload["error_category"] = error_category
     if error_severity is not None:
         payload["error_severity"] = error_severity
+    payload["trace_id"] = get_trace_id()
+    emit_control_plane_event(
+        "ingestion_summary",
+        payload,
+        telemetry_dir=getattr(cfg, "control_plane_telemetry_dir", None),
+    )
     logger.info(
         "ingestion summary",
         extra=payload,
@@ -343,38 +350,42 @@ def _emit_health_summary(
     stream_metrics: list[dict[str, object]] | None = None,
 ) -> None:
     stream_metrics = stream_metrics or []
-    logger.info(
-        "ingestion health",
-        extra={
-            "mode": mode,
-            "env": cfg.env,
-            "result": result,
-            "source_events_in": int(source_events_in),
-            "events_invalid": int(events_invalid),
-            "events_dedup_skipped": int(events_dedup_skipped),
-            "events_buffer_dropped": int(events_buffer_dropped),
-            "events_persisted": int(events_persisted),
-            "snapshot_runs": int(snapshot_runs),
-            "reconnects": int(reconnects),
-            "processing_latency_seconds": float(processing_latency_seconds),
-            "write_latency_seconds": float(write_latency_seconds),
-            "temporal_policy": temporal_policy,
-            "event_gap_seconds": float(event_gap_seconds),
-            "gaps_total": int(gaps_total),
-            "gap_irreparable_total": int(gap_irreparable_total),
-            "late_events": int(late_events),
-            "handoff_inconsistent": int(handoff_inconsistent),
-            "handoff_post_validation_rows": int(handoff_post_validation_rows),
-            "handoff_post_inconsistent": int(handoff_post_inconsistent),
-            "exchange_receive_skew_seconds": float(exchange_receive_skew_seconds),
-            "receive_process_skew_seconds": float(receive_process_skew_seconds),
-            "invalid_timestamp_total": int(invalid_timestamp_total),
-            "shadow_row_diff_total": int(shadow_row_diff_total),
-            "shadow_checksum_diff_total": int(shadow_checksum_diff_total),
-            "streams_observed": len(stream_metrics),
-            "streams_degraded": _degraded_streams(stream_metrics),
-        },
+    payload = {
+        "mode": mode,
+        "env": cfg.env,
+        "result": result,
+        "source_events_in": int(source_events_in),
+        "events_invalid": int(events_invalid),
+        "events_dedup_skipped": int(events_dedup_skipped),
+        "events_buffer_dropped": int(events_buffer_dropped),
+        "events_persisted": int(events_persisted),
+        "snapshot_runs": int(snapshot_runs),
+        "reconnects": int(reconnects),
+        "processing_latency_seconds": float(processing_latency_seconds),
+        "write_latency_seconds": float(write_latency_seconds),
+        "temporal_policy": temporal_policy,
+        "event_gap_seconds": float(event_gap_seconds),
+        "gaps_total": int(gaps_total),
+        "gap_irreparable_total": int(gap_irreparable_total),
+        "late_events": int(late_events),
+        "handoff_inconsistent": int(handoff_inconsistent),
+        "handoff_post_validation_rows": int(handoff_post_validation_rows),
+        "handoff_post_inconsistent": int(handoff_post_inconsistent),
+        "exchange_receive_skew_seconds": float(exchange_receive_skew_seconds),
+        "receive_process_skew_seconds": float(receive_process_skew_seconds),
+        "invalid_timestamp_total": int(invalid_timestamp_total),
+        "shadow_row_diff_total": int(shadow_row_diff_total),
+        "shadow_checksum_diff_total": int(shadow_checksum_diff_total),
+        "streams_observed": len(stream_metrics),
+        "streams_degraded": _degraded_streams(stream_metrics),
+        "trace_id": get_trace_id(),
+    }
+    emit_control_plane_event(
+        "ingestion_health",
+        payload,
+        telemetry_dir=getattr(cfg, "control_plane_telemetry_dir", None),
     )
+    logger.info("ingestion health", extra=payload)
 
 
 class _LiveBatchHandler:
@@ -571,7 +582,10 @@ def collect_events(
     source_stats = getattr(source_impl, "stats", None)
     checkpoint_store_impl = checkpoint_store
     if checkpoint_store_impl is None and source is None and sink is None:
-        checkpoint_store_impl = CheckpointStore(default_checkpoint_path(cfg))
+            checkpoint_store_impl = CheckpointStore(
+                default_checkpoint_path(cfg),
+                telemetry_dir=getattr(cfg, "control_plane_telemetry_dir", None),
+            )
     checkpoint_state = None
     if checkpoint_store_impl is not None:
         try:

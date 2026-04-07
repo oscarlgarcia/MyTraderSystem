@@ -125,9 +125,9 @@ REQUIRED_METRIC_THRESHOLDS: dict[str, MetricThresholdSpec] = {
     "invalid_timestamp_total": MetricThresholdSpec(
         unit="count_per_run",
         paper_warning=0.0,
-        paper_critical=0.0,
+        paper_critical=1.0,
         live_warning=0.0,
-        live_critical=0.0,
+        live_critical=1.0,
     ),
     "gap_irreparable_total": MetricThresholdSpec(
         unit="count_per_run",

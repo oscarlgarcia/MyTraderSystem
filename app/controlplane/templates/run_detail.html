@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Run Detail</h1>
+{% if run %}
+<p><strong>{{ run.run_id }}</strong> · {{ run.mode }} · <span class="status-{{ run.result }}">{{ run.result }}</span></p>
+<h2>Summary</h2>
+<pre class="json">{{ run.summary | tojson(indent=2) }}</pre>
+<h2>Health</h2>
+<pre class="json">{{ run.health | tojson(indent=2) }}</pre>
+{% else %}
+<p>Run not found.</p>
+{% endif %}
+{% endblock %}

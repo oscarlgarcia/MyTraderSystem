@@ -15,6 +15,7 @@ from typing import Optional
 
 from app.common.dto import MarketEvent
 from app.config import load_config
+from app.controlplane.telemetry import configure_control_plane_telemetry
 from app.ingestion.client import normalize_kline, normalize_trade
 from app.ingestion.checkpoints import CheckpointStore, default_checkpoint_path
 from app.ingestion.resilience import ResilientRunner
@@ -61,6 +62,7 @@ def _dry_source() -> StaticSource:
 def run(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
     cfg = load_config(args.env)
+    configure_control_plane_telemetry(getattr(cfg, "control_plane_telemetry_dir", None))
     logger = get_logger(name="ingest", level=cfg.log_level)
     trace_id = f"ingest-{int(time.time())}"
     set_trace_id(trace_id)
@@ -81,7 +83,14 @@ def run(argv: Optional[list[str]] = None) -> int:
     if not args.dry_run and isinstance(getattr(source, "raw_sink", None), NullRawSink):
         source.raw_sink = JsonlRawSink(cfg.data_dir / "raw", env=cfg.env)
     sink = ParquetEventSink(ParquetWriter(base_dir=cfg.data_dir, env=cfg.env, flush_size=args.flush_size))
-    checkpoint_store = None if args.dry_run else CheckpointStore(default_checkpoint_path(cfg))
+    checkpoint_store = (
+        None
+        if args.dry_run
+        else CheckpointStore(
+            default_checkpoint_path(cfg),
+            telemetry_dir=getattr(cfg, "control_plane_telemetry_dir", None),
+        )
+    )
 
     def stream():
         end_time = stats.start_time + (args.duration or 0)

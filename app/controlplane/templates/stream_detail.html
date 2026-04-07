@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Stream Detail</h1>
+{% if stream %}
+<p><strong>{{ stream.scope }}</strong> · <span class="status-{{ stream.status }}">{{ stream.status }}</span></p>
+<pre class="json">{{ stream.metrics | tojson(indent=2) }}</pre>
+{% else %}
+<p>Stream not found.</p>
+{% endif %}
+{% endblock %}

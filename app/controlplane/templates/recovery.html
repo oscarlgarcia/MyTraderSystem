@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Recovery Center</h1>
+<div id="command-feedback"></div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Resync Stream</h2>
+    <form hx-post="/api/commands/resync" hx-target="#command-feedback" hx-swap="innerHTML">
+      <input name="symbol" placeholder="BTCUSDT" required />
+      <select name="stream_type">
+        <option value="kline">kline</option>
+        <option value="trade">trade</option>
+      </select>
+      <input name="interval" placeholder="1m" value="1m" />
+      <input name="start_ts" placeholder="2026-04-07T10:00:00+00:00" />
+      <input name="end_ts" placeholder="2026-04-07T10:10:00+00:00" />
+      <input name="limit" placeholder="500" />
+      <input type="hidden" name="write_normalized" value="true" />
+      <input type="hidden" name="requested_by" value="ui-operator" />
+      <button type="submit">Queue Resync</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Replay Raw Range</h2>
+    <form hx-post="/api/commands/replay" hx-target="#command-feedback" hx-swap="innerHTML">
+      <input name="symbol" placeholder="BTCUSDT" required />
+      <select name="stream_type">
+        <option value="trade">trade</option>
+        <option value="kline">kline</option>
+      </select>
+      <input name="start_ts" placeholder="2026-04-07T10:00:00+00:00" />
+      <input name="end_ts" placeholder="2026-04-07T10:10:00+00:00" />
+      <input type="hidden" name="mode" value="range" />
+      <input type="hidden" name="write_normalized" value="true" />
+      <input type="hidden" name="requested_by" value="ui-operator" />
+      <button type="submit">Queue Replay</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Replay Quarantine</h2>
+    <form hx-post="/api/commands/replay" hx-target="#command-feedback" hx-swap="innerHTML">
+      <input name="trace_id" placeholder="trace id" />
+      <input name="record_id" placeholder="record id" />
+      <input name="symbol" placeholder="BTCUSDT" />
+      <input name="stream_type" placeholder="trade" />
+      <input name="limit" placeholder="50" />
+      <input type="hidden" name="mode" value="quarantine" />
+      <input type="hidden" name="write_normalized" value="true" />
+      <input type="hidden" name="requested_by" value="ui-operator" />
+      <button type="submit">Queue Quarantine Replay</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Checkpoints</h1>
+<table>
+  <thead><tr><th>Stream</th><th>Cursor</th><th>Last Event</th><th>Recorded</th></tr></thead>
+  <tbody>
+    {% for checkpoint in checkpoints %}
+    <tr>
+      <td>{{ checkpoint.stream_key }}</td>
+      <td>{{ checkpoint.cursor_kind or "-" }} / {{ checkpoint.cursor_value or "-" }}</td>
+      <td>{{ checkpoint.cursor_last_event_ts or checkpoint.checkpoint_last_event_ts or "-" }}</td>
+      <td>{{ checkpoint.recorded_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No checkpoint summaries available.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

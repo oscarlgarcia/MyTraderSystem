@@ -31,6 +31,12 @@ test:
 run-dev:
 	$(PYTHON_CMD) -m app.main
 
+controlplane-web:
+	$(PYTHON_CMD) -m app.controlplane.api --env dev --host 127.0.0.1 --port 8001
+
+controlplane-worker:
+	$(PYTHON_CMD) -m app.controlplane.worker --env dev
+
 run-live:
 	$(PYTHON_CMD) -m app --env dev --mode live --duration 60 --max-events 200
 
@@ -60,7 +66,7 @@ docker-build:
 	docker compose build
 
 docker-up:
-	docker compose up -d app
+	docker compose up -d app control-plane-web control-plane-worker
 
 docker-down:
 	docker compose down

@@ -11,6 +11,34 @@ services:
       - POETRY_VIRTUALENVS_IN_PROJECT=true
       - POETRY_NO_INTERACTION=1
     tty: true
+  control-plane-web:
+    build: .
+    container_name: mytradersystem-control-plane-web
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - poetry_venv:/workspace/.venv
+    command: sh -c "poetry install && poetry run python -m app.controlplane.api --env dev --host 0.0.0.0 --port 8001"
+    environment:
+      - POETRY_VIRTUALENVS_IN_PROJECT=true
+      - POETRY_NO_INTERACTION=1
+    ports:
+      - "8001:8001"
+    depends_on:
+      - app
+  control-plane-worker:
+    build: .
+    container_name: mytradersystem-control-plane-worker
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - poetry_venv:/workspace/.venv
+    command: sh -c "poetry install && poetry run python -m app.controlplane.worker --env dev"
+    environment:
+      - POETRY_VIRTUALENVS_IN_PROJECT=true
+      - POETRY_NO_INTERACTION=1
+    depends_on:
+      - app
 
 volumes:
   poetry_venv:

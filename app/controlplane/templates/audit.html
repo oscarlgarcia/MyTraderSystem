@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Audit</h1>
+<table>
+  <thead><tr><th>Command</th><th>Event</th><th>Timestamp</th><th>Payload</th></tr></thead>
+  <tbody>
+    {% for command in commands %}
+    <tr>
+      <td>{{ command.command_id }}</td>
+      <td>{{ command.event_type }}</td>
+      <td>{{ command.event_ts }}</td>
+      <td><pre class="json">{{ command.payload | tojson(indent=2) }}</pre></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No command audit events.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

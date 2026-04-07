@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Alerts</h1>
+<div id="command-feedback"></div>
+<table>
+  <thead><tr><th>Alert</th><th>Severity</th><th>Status</th><th>Created</th><th>Action</th></tr></thead>
+  <tbody>
+    {% for alert in alerts %}
+    <tr>
+      <td>{{ alert.alert_type }}</td>
+      <td class="status-open">{{ alert.severity }}</td>
+      <td>{{ alert.ack_status }}</td>
+      <td>{{ alert.created_at }}</td>
+      <td>
+        {% if alert.ack_status == "open" %}
+        <form hx-post="/api/commands/ack-alert" hx-target="#command-feedback" hx-swap="innerHTML">
+          <input type="hidden" name="alert_id" value="{{ alert.alert_id }}" />
+          <input type="hidden" name="requested_by" value="ui-operator" />
+          <button type="submit">Ack</button>
+        </form>
+        {% else %}
+        acked by {{ alert.acked_by or "-" }}
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No alerts available.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

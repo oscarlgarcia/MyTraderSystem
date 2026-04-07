@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass
 from typing import Literal
 
+from app.controlplane.telemetry import emit_control_plane_event
+
 
 AlertSeverity = Literal["warning", "error"]
 AlertType = Literal[
@@ -154,4 +156,5 @@ def emit_operational_alert(
     }
     if extra:
         payload.update(extra)
+    emit_control_plane_event("operational_alert", payload)
     logger.log(level, "operational alert", extra=payload)

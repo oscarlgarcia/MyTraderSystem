@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Overview</h1>
+<p class="muted">Polling every {{ refresh_seconds }}s from the control-plane read model.</p>
+<div class="grid">
+  <div class="card"><strong>Runs</strong><div>{{ overview.total_runs }}</div></div>
+  <div class="card"><strong>Streams</strong><div>{{ overview.streams_total }}</div></div>
+  <div class="card"><strong>Degraded Streams</strong><div>{{ overview.streams_degraded | length }}</div></div>
+  <div class="card"><strong>Open Alerts</strong><div>{{ overview.alerts_open | length }}</div></div>
+  <div class="card"><strong>Pending Commands</strong><div>{{ overview.commands_pending }}</div></div>
+  <div class="card"><strong>Checkpoint Summaries</strong><div>{{ overview.checkpoints_total }}</div></div>
+</div>
+
+<h2>Recent Runs</h2>
+<table>
+  <thead><tr><th>Run</th><th>Mode</th><th>Result</th><th>Updated</th></tr></thead>
+  <tbody>
+    {% for run in overview.recent_runs %}
+    <tr>
+      <td><a href="/ui/runs/{{ run.run_id }}">{{ run.run_id }}</a></td>
+      <td>{{ run.mode }}</td>
+      <td class="status-{{ run.result }}">{{ run.result }}</td>
+      <td>{{ run.updated_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No runs materialized yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Degraded Streams</h2>
+<table>
+  <thead><tr><th>Scope</th><th>Status</th><th>Last Seen</th></tr></thead>
+  <tbody>
+    {% for stream in overview.streams_degraded %}
+    <tr>
+      <td><a href="/ui/streams/{{ stream.scope }}">{{ stream.scope }}</a></td>
+      <td class="status-degraded">{{ stream.status }}</td>
+      <td>{{ stream.updated_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No degraded streams.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Open Alerts</h2>
+<table>
+  <thead><tr><th>Alert</th><th>Severity</th><th>Created</th></tr></thead>
+  <tbody>
+    {% for alert in overview.alerts_open %}
+    <tr>
+      <td>{{ alert.alert_type }}</td>
+      <td class="status-open">{{ alert.severity }}</td>
+      <td>{{ alert.created_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No open alerts.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

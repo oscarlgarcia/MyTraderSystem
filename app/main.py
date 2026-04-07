@@ -17,6 +17,7 @@ from uuid import uuid4
 from app import common, execution, features, ingestion, observability, ops, portfolio, risk, strategy  # noqa: F401
 from app.common.dto import TraceContext
 from app.config import AppConfig, DEFAULT_INGEST_STREAM_TYPES, load_config, parse_args
+from app.controlplane.telemetry import configure_control_plane_telemetry
 from app.ingestion.service import run_ingestion_service
 from app.marketdata.support_matrix import validate_live_feed_support
 from app.marketdata.models import IngestionEvent
@@ -296,6 +297,7 @@ def run() -> int:
     """Bootstrap principal; devuelve 0 en éxito."""
     args = parse_args()
     config = load_config(args.env)
+    configure_control_plane_telemetry(config.control_plane_telemetry_dir)
     if getattr(args, "feature_release_action", None):
         if not getattr(args, "feature_release_name", None):
             raise ValueError("feature release action requires --feature-release-name")
