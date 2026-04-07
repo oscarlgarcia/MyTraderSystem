@@ -46,6 +46,12 @@ class AppConfig:
     control_plane_telemetry_dir: Path = Path("ui-telemetry")
     control_plane_poll_interval_seconds: float = 5.0
     control_plane_command_poll_interval_seconds: float = 2.0
+    feature_online_backend: str = "local_sqlite"
+    feature_online_store_path: Path = Path("feature-store/online.sqlite")
+    feature_online_store_url: str | None = None
+    feature_offline_store_path: Path = Path("feature-store/offline.sqlite")
+    feature_release_registry_path: Path = Path("docs/validation/feature_releases.json")
+    feature_training_bundle_registry_dir: Path = Path("feature-store/training-bundles")
 
 
 def get_secret_env(name: str, *, required: bool = False) -> str | None:
@@ -113,6 +119,15 @@ def load_config(env: str | None = None) -> AppConfig:
     control_plane_telemetry_dir = Path(raw.get("control_plane_telemetry_dir", data_dir / raw["env"] / "ui-telemetry"))
     control_plane_poll_interval_seconds = float(raw.get("control_plane_poll_interval_seconds", 5.0))
     control_plane_command_poll_interval_seconds = float(raw.get("control_plane_command_poll_interval_seconds", 2.0))
+    feature_root = data_dir / raw["env"] / "feature-store"
+    feature_online_backend = str(raw.get("feature_online_backend", "local_sqlite")).strip().lower() or "local_sqlite"
+    feature_online_store_path = Path(raw.get("feature_online_store_path", feature_root / "online.sqlite"))
+    feature_online_store_url = raw.get("feature_online_store_url")
+    feature_offline_store_path = Path(raw.get("feature_offline_store_path", feature_root / "offline.sqlite"))
+    feature_release_registry_path = Path(raw.get("feature_release_registry_path", Path("docs") / "validation" / "feature_releases.json"))
+    feature_training_bundle_registry_dir = Path(
+        raw.get("feature_training_bundle_registry_dir", feature_root / "training-bundles")
+    )
 
     symbols = [str(symbol).upper() for symbol in raw.get("symbols", [])]
     if not symbols:
@@ -136,6 +151,12 @@ def load_config(env: str | None = None) -> AppConfig:
         control_plane_telemetry_dir=control_plane_telemetry_dir,
         control_plane_poll_interval_seconds=control_plane_poll_interval_seconds,
         control_plane_command_poll_interval_seconds=control_plane_command_poll_interval_seconds,
+        feature_online_backend=feature_online_backend,
+        feature_online_store_path=feature_online_store_path,
+        feature_online_store_url=str(feature_online_store_url) if feature_online_store_url not in (None, "") else None,
+        feature_offline_store_path=feature_offline_store_path,
+        feature_release_registry_path=feature_release_registry_path,
+        feature_training_bundle_registry_dir=feature_training_bundle_registry_dir,
     )
 
 
@@ -356,6 +377,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--feature-observability-output",
         default=None,
         help="Ruta opcional para exportar observabilidad agregada del pipeline de features.",
+    )
+    parser.add_argument(
+        "--feature-online-backend",
+        choices=["memory", "local_sqlite", "json_file", "http"],
+        default=None,
+        help="Backend canonico del online feature store usado por el runtime operativo.",
+    )
+    parser.add_argument(
+        "--feature-online-store-path",
+        default=None,
+        help="Ruta del backend persistido del online feature store.",
+    )
+    parser.add_argument(
+        "--feature-online-store-url",
+        default=None,
+        help="URL base del feature store HTTP cuando feature-online-backend=http.",
+    )
+    parser.add_argument(
+        "--feature-offline-store-path",
+        default=None,
+        help="Ruta del offline feature store usado para PIT y serving historico.",
     )
     parser.add_argument(
         "--trace-steps",

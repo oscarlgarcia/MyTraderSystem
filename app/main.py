@@ -27,12 +27,17 @@ from app.ingestion.storage_health import assert_storage_health_for_runtime
 from app.features.pipeline import run_feature_pipeline
 from app.features.engine import FeatureEngine
 from app.features.audit import build_decision_audit_record, persist_decision_audits
+from app.features.model_contract import FeatureConsumerContract
 from app.features.live_readiness import FeatureLiveReadinessDecision
 from app.features.metrics import FeatureMetrics
 from app.features.observability import export_feature_observability_bundle
+from app.features.offline_store import OfflineFeatureStore
+from app.features.online_store_base import FeatureOnlineStore
+from app.features.online_store_factory import OnlineStoreConfig, create_online_store
 from app.features.parity import ParityReport
 from app.features.release_workflow import gate_and_publish_feature_release, rollback_feature_release
-from app.features.training_bundle_registry import TrainingBundleRegistry
+from app.features.serving import FeatureServingService
+from app.features.training_bundle_registry import TrainingBundleRecord, TrainingBundleRegistry
 from app.ops.feature_release_gates import render_feature_release_summary as render_feature_release_gate_summary
 from app.ops.feature_release_gates import run_feature_release_gates
 from app.ops.release_gates import render_release_gate_summary, run_release_gates
@@ -128,24 +133,134 @@ def _validate_feature_consumer_metadata(
         )
     if not training_bundle_registry_path:
         raise ValueError("paper/live feature auditing requires --feature-training-bundle-registry")
-    registry = TrainingBundleRegistry(training_bundle_registry_path)
-    if registry.get(consumer_metadata["training_bundle_id"]) is None:
-        raise ValueError(
-            f"training bundle {consumer_metadata['training_bundle_id']} not found in {training_bundle_registry_path}"
+
+
+def _build_runtime_feature_contract(*, feature_vector, consumer_metadata: dict[str, str], target: str) -> FeatureConsumerContract:
+    return FeatureConsumerContract(
+        consumer_name=consumer_metadata["consumer_name"],
+        consumer_kind=consumer_metadata["consumer_kind"],
+        feature_set_name=feature_vector.feature_set_name,
+        feature_set_version=feature_vector.feature_set_version,
+        required_features=tuple(sorted(feature_vector.values.keys())),
+        required_metadata_keys=REQUIRED_FEATURE_CONSUMER_METADATA_KEYS,
+        required_dataset_id=consumer_metadata["dataset_id"],
+        required_schema_hash=consumer_metadata["feature_schema_hash"],
+        required_training_bundle_id=consumer_metadata["training_bundle_id"],
+        target=target,
+    )
+
+
+def _create_runtime_online_store(cfg: AppConfig, args_store_override: dict[str, str | None] | None = None) -> FeatureOnlineStore:
+    overrides = args_store_override or {}
+    backend = str(overrides.get("backend") or cfg.feature_online_backend)
+    path = overrides.get("path") or str(cfg.feature_online_store_path)
+    url = overrides.get("url") or cfg.feature_online_store_url
+    return create_online_store(
+        OnlineStoreConfig(
+            backend=backend,
+            path=path,
+            url=url,
         )
+    )
+
+
+def _ensure_training_bundle_record(
+    *,
+    registry: TrainingBundleRegistry,
+    consumer_metadata: dict[str, str],
+    feature_vector,
+) -> None:
+    registry.register(
+        TrainingBundleRecord(
+            bundle_id=consumer_metadata["training_bundle_id"],
+            dataset_id=consumer_metadata["dataset_id"],
+            feature_schema_hash=consumer_metadata["feature_schema_hash"],
+            feature_set_name=feature_vector.feature_set_name,
+            feature_set_version=feature_vector.feature_set_version,
+            feature_bundle_id=feature_vector.lineage_id,
+            owner=consumer_metadata["consumer_name"] or "runtime",
+            metadata={"consumer_kind": consumer_metadata["consumer_kind"], "target": consumer_metadata.get("target", "")},
+        )
+    )
+
+
+def _serve_operational_feature_vectors(
+    *,
+    cfg: AppConfig,
+    feature_vectors,
+    feature_consumer_metadata: dict[str, str],
+    training_bundle_registry_path: str,
+    mode: str,
+    online_backend_override: str | None = None,
+    online_store_path_override: str | None = None,
+    online_store_url_override: str | None = None,
+) -> tuple[list, FeatureMetrics]:
+    online_store = _create_runtime_online_store(
+        cfg,
+        args_store_override={
+            "backend": online_backend_override,
+            "path": online_store_path_override,
+            "url": online_store_url_override,
+        },
+    )
+    offline_store = OfflineFeatureStore(cfg.feature_offline_store_path)
+    training_registry = TrainingBundleRegistry(training_bundle_registry_path)
+    service = FeatureServingService(
+        online_store=online_store,
+        offline_store=offline_store,
+        training_bundle_registry=training_registry,
+        target=mode,
+    )
+    try:
+        served_vectors = []
+        for idx, vector in enumerate(feature_vectors):
+            _ensure_training_bundle_record(
+                registry=training_registry,
+                consumer_metadata=feature_consumer_metadata,
+                feature_vector=vector,
+            )
+            online_store.upsert(vector)
+            offline_store.put_many([vector], run_id=f"runtime-{mode}-{idx}")
+            result = service.get_latest_servable(
+                decision_ts=vector.available_ts,
+                symbol=vector.symbol,
+                entity_keys=vector.entity_keys,
+                feature_set_name=vector.feature_set_name,
+                feature_set_version=vector.feature_set_version,
+                contract=_build_runtime_feature_contract(
+                    feature_vector=vector,
+                    consumer_metadata=feature_consumer_metadata,
+                    target=mode,
+                ),
+                consumer_metadata=feature_consumer_metadata,
+            )
+            if result.status != "ok" or result.feature_vector is None:
+                raise ValueError(f"operational feature serving failed: {result.reason}")
+            served_vectors.append(result.feature_vector)
+        return served_vectors, service.metrics
+    finally:
+        close = getattr(online_store, "close", None)
+        if callable(close):
+            close()
 
 
 def run_trading_cycle(
     events: List[IngestionEvent],
     *,
+    cfg: AppConfig | None = None,
     logger,
     recorder: Optional[List[str]] = None,
     trace_steps: bool = False,
     feature_audit_path: str | None = None,
     feature_consumer_metadata: dict[str, str] | None = None,
     feature_observability_output: str | None = None,
+    feature_training_bundle_registry_path: str | None = None,
+    feature_online_backend: str | None = None,
+    feature_online_store_path: str | None = None,
+    feature_online_store_url: str | None = None,
     mode: str = "dry",
 ):
+    cfg = cfg or load_config()
     if mode != "dry" and not feature_audit_path:
         raise ValueError("feature_audit_path is required outside dry mode")
 
@@ -153,6 +268,22 @@ def run_trading_cycle(
     runtime_mode = "live" if mode == "live" else ("paper" if mode == "paper" else "research")
     feature_engine = FeatureEngine(strict_temporal_semantics=mode != "dry", runtime_mode=runtime_mode)
     fvs = run_feature_pipeline(events, engine=feature_engine)
+    serving_metrics = feature_engine.runtime.metrics
+    if mode in {"paper", "live"}:
+        if not feature_consumer_metadata:
+            raise ValueError("paper/live feature serving requires consumer metadata")
+        if not feature_training_bundle_registry_path:
+            raise ValueError("paper/live feature serving requires training bundle registry path")
+        fvs, serving_metrics = _serve_operational_feature_vectors(
+            cfg=cfg,
+            feature_vectors=fvs,
+            feature_consumer_metadata=feature_consumer_metadata,
+            training_bundle_registry_path=feature_training_bundle_registry_path,
+            mode=mode,
+            online_backend_override=feature_online_backend,
+            online_store_path_override=feature_online_store_path,
+            online_store_url_override=feature_online_store_url,
+        )
     _trace(logger, trace_steps, "features", "done", {"count": len(fvs)})
     _mark(recorder, "features")
 
@@ -166,7 +297,7 @@ def run_trading_cycle(
         persist_decision_audits(audits, feature_audit_path)
     if feature_observability_output:
         export_feature_observability_bundle(
-            metrics=feature_engine.metrics,
+            metrics=serving_metrics,
             target=mode,
             output_path=feature_observability_output,
         )
@@ -322,6 +453,10 @@ def run_cycle(
     feature_audit_path: str | None = None,
     feature_consumer_metadata: dict[str, str] | None = None,
     feature_observability_output: str | None = None,
+    feature_training_bundle_registry_path: str | None = None,
+    feature_online_backend: str | None = None,
+    feature_online_store_path: str | None = None,
+    feature_online_store_url: str | None = None,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -360,12 +495,17 @@ def run_cycle(
 
     return run_trading_cycle(
         events,
+        cfg=cfg,
         logger=logger,
         recorder=recorder,
         trace_steps=trace_steps,
         feature_audit_path=feature_audit_path,
         feature_consumer_metadata=feature_consumer_metadata,
         feature_observability_output=feature_observability_output,
+        feature_training_bundle_registry_path=feature_training_bundle_registry_path,
+        feature_online_backend=feature_online_backend,
+        feature_online_store_path=feature_online_store_path,
+        feature_online_store_url=feature_online_store_url,
         mode=mode,
     )
 
@@ -443,11 +583,15 @@ def run() -> int:
     logger = get_logger(level=config.log_level)
     _ = TraceContext(trace_id=trace_id)
     feature_consumer_metadata = _feature_consumer_metadata_from_args(args)
+    feature_training_bundle_registry_path = (
+        getattr(args, "feature_training_bundle_registry", None)
+        or str(config.feature_training_bundle_registry_dir)
+    )
     _validate_feature_consumer_metadata(
         mode=args.mode,
         feature_audit_path=args.feature_audit_path,
         consumer_metadata=feature_consumer_metadata,
-        training_bundle_registry_path=getattr(args, "feature_training_bundle_registry", None),
+        training_bundle_registry_path=feature_training_bundle_registry_path,
     )
 
     metrics = run_cycle(
@@ -477,6 +621,10 @@ def run() -> int:
         feature_audit_path=args.feature_audit_path,
         feature_consumer_metadata=feature_consumer_metadata,
         feature_observability_output=getattr(args, "feature_observability_output", None),
+        feature_training_bundle_registry_path=feature_training_bundle_registry_path,
+        feature_online_backend=getattr(args, "feature_online_backend", None),
+        feature_online_store_path=getattr(args, "feature_online_store_path", None),
+        feature_online_store_url=getattr(args, "feature_online_store_url", None),
     )
 
     logger.info(

@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
-from app.common.dto import MarketEvent
+from app import main as main_module
+from app.common.dto import FeatureVector, MarketEvent
 from app.config import load_config
 from app.features.training_bundle_registry import TrainingBundleRecord, TrainingBundleRegistry
 from app.main import run, run_cycle
@@ -107,3 +109,78 @@ def test_run_cycle_live_without_audit_path_fails(monkeypatch):
 
     with pytest.raises(ValueError, match="feature_audit_path"):
         run_cycle(cfg=cfg, logger=get_logger(level="INFO"), mode="live", max_events=1)
+
+
+def test_operational_feature_serving_roundtrips_vectors(tmp_path):
+    cfg = replace(
+        load_config("dev"),
+        feature_online_store_path=tmp_path / "online.sqlite",
+        feature_offline_store_path=tmp_path / "offline.sqlite",
+        feature_training_bundle_registry_dir=tmp_path / "training-bundles",
+    )
+    fv = FeatureVector(
+        symbol="BTCUSDT",
+        ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        available_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        values={"price": 100.0, "ret_1": 0.01, "sma_3": 99.0},
+        feature_set_name="legacy",
+        feature_set_version="legacy",
+        lineage_id="bundle-1",
+    )
+    served, metrics = main_module._serve_operational_feature_vectors(
+        cfg=cfg,
+        feature_vectors=[fv],
+        feature_consumer_metadata={
+            "dataset_id": "dataset-2024-01",
+            "feature_schema_hash": "schema-v1",
+            "training_bundle_id": "train-bundle-1",
+            "consumer_name": "paper-strategy",
+            "consumer_kind": "strategy",
+            "target": "paper",
+        },
+        training_bundle_registry_path=str(cfg.feature_training_bundle_registry_dir),
+        mode="paper",
+    )
+    assert len(served) == 1
+    assert served[0].values["price"] == 100.0
+    assert metrics.serving_requests == 1
+
+
+def test_run_trading_cycle_paper_uses_operational_serving_and_writes_artifacts(monkeypatch, tmp_path):
+    cfg = replace(
+        load_config("dev"),
+        feature_online_store_path=tmp_path / "online.sqlite",
+        feature_offline_store_path=tmp_path / "offline.sqlite",
+        feature_training_bundle_registry_dir=tmp_path / "training-bundles",
+    )
+    event = _event()
+    fv = FeatureVector(
+        symbol="BTCUSDT",
+        ts=event.event_ts,
+        available_ts=event.available_ts,
+        values={"price": 100.0, "ret_1": 0.01, "sma_3": 99.0},
+        feature_set_name="legacy",
+        feature_set_version="legacy",
+        lineage_id="bundle-1",
+    )
+    monkeypatch.setattr("app.main.run_feature_pipeline", lambda *args, **kwargs: [fv])
+    result = main_module.run_trading_cycle(
+        [event],
+        cfg=cfg,
+        logger=get_logger(level="INFO"),
+        mode="paper",
+        feature_audit_path=str(tmp_path / "feature-audit.jsonl"),
+        feature_observability_output=str(tmp_path / "feature-observability.json"),
+        feature_training_bundle_registry_path=str(cfg.feature_training_bundle_registry_dir),
+        feature_consumer_metadata={
+            "dataset_id": "dataset-2024-01",
+            "feature_schema_hash": "schema-v1",
+            "training_bundle_id": "train-bundle-1",
+            "consumer_name": "paper-strategy",
+            "consumer_kind": "strategy",
+            "target": "paper",
+        },
+    )
+    assert result["features"] == 1
+    assert (tmp_path / "feature-audit.jsonl").exists()
+    assert (tmp_path / "feature-observability.json").exists()
