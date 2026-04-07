@@ -27,6 +27,7 @@ from app.ingestion.storage_health import assert_storage_health_for_runtime
 from app.features.pipeline import run_feature_pipeline
 from app.features.engine import FeatureEngine
 from app.features.audit import build_decision_audit_record, persist_decision_audits
+from app.features.live_readiness import FeatureLiveReadinessDecision
 from app.features.metrics import FeatureMetrics
 from app.features.parity import ParityReport
 from app.features.release_workflow import gate_and_publish_feature_release, rollback_feature_release
@@ -39,16 +40,33 @@ from app.portfolio.state import update_portfolio
 FAST_PATH_BATCH_SIZE = 256
 
 
-def _load_feature_release_gate_inputs(path: str | None) -> tuple[ParityReport, FeatureMetrics]:
+def _load_feature_release_gate_inputs(path: str | None) -> tuple[ParityReport, FeatureMetrics, FeatureLiveReadinessDecision | None]:
     if not path:
         raise ValueError("feature release publish requires --feature-release-gate-input")
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    mismatches = int(payload.get("parity_mismatches", 0))
-    stale_serves = int(payload.get("stale_serves", 0))
-    serving_latency_max = float(payload.get("serving_latency_max", 0.0))
+    gate_payload = payload.get("gate_report", payload)
+    mismatches = int(gate_payload.get("parity_mismatches", payload.get("parity_mismatches", 0)))
+    if mismatches == 0 and gate_payload.get("pass_ok") is False:
+        mismatches = 1
+    stale_serves = int(gate_payload.get("stale_count", payload.get("stale_serves", 0)))
+    serving_latency_max = float(gate_payload.get("latency_breaches", payload.get("serving_latency_max", 0.0)))
+    invalid_ratio_breaches = int(gate_payload.get("invalid_ratio_breaches", 0))
     parity_report = ParityReport(pass_ok=mismatches == 0, mismatches=tuple(object() for _ in range(mismatches)))
-    metrics = FeatureMetrics(stale_serves=stale_serves, serving_latency_max=serving_latency_max)
-    return parity_report, metrics
+    metrics = FeatureMetrics(
+        stale_serves=stale_serves,
+        serving_latency_max=serving_latency_max,
+        invalid_serves=invalid_ratio_breaches,
+        serving_requests=max(invalid_ratio_breaches, 1),
+    )
+    live_readiness_payload = payload.get("live_readiness")
+    live_readiness = None
+    if isinstance(live_readiness_payload, dict):
+        live_readiness = FeatureLiveReadinessDecision(
+            pass_ok=bool(live_readiness_payload.get("pass_ok", False)),
+            action=str(live_readiness_payload.get("action", "hold")),
+            reasons=tuple(str(item) for item in live_readiness_payload.get("reasons", [])),
+        )
+    return parity_report, metrics, live_readiness
 
 
 def _trace(logger, enabled: bool, phase: str, status: str, extra: Optional[Dict[str, object]] = None) -> None:
@@ -305,7 +323,7 @@ def run() -> int:
         if args.feature_release_action == "publish":
             if not getattr(args, "feature_release_version", None):
                 raise ValueError("feature release publish requires --feature-release-version")
-            parity_report, metrics = _load_feature_release_gate_inputs(getattr(args, "feature_release_gate_input", None))
+            parity_report, metrics, live_readiness = _load_feature_release_gate_inputs(getattr(args, "feature_release_gate_input", None))
             gate_and_publish_feature_release(
                 registry_path=registry_path,
                 feature_set_name=args.feature_release_name,
@@ -314,6 +332,7 @@ def run() -> int:
                 metrics=metrics,
                 target=args.feature_release_target,
                 actor="app.main.run",
+                live_readiness=live_readiness,
             )
             return 0
         rollback_feature_release(
