@@ -257,6 +257,107 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="JSON con parity/latency/staleness para evaluar el gate antes de publish.",
     )
     parser.add_argument(
+        "--feature-release-gates",
+        action="store_true",
+        help="Ejecuta los release gates operativos del modulo de features y termina.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-target",
+        choices=["paper", "live"],
+        default="paper",
+        help="Objetivo de los release gates de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-output",
+        default="docs/validation/feature_release_gates.json",
+        help="Ruta del reporte JSON de release gates de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-parity-path",
+        default="docs/validation/feature_parity_report.json",
+        help="Ruta al artifact de parity online/offline de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-benchmark-path",
+        default="docs/validation/feature_benchmark_report.json",
+        help="Ruta al artifact de benchmark de serving/features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-observability-path",
+        default="docs/validation/feature_observability.json",
+        help="Ruta al artifact de observabilidad de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-contract-path",
+        default="docs/validation/feature_contract_validation.json",
+        help="Ruta al artifact de validacion contractual training-serving.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-shadow-path",
+        default=None,
+        help="Ruta al artifact JSONL de shadow validation de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-soak-path",
+        default=None,
+        help="Ruta al artifact JSON del soak operativo de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-concurrency-path",
+        default=None,
+        help="Ruta al artifact JSON del test de concurrencia de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-rollout-audit-path",
+        default=None,
+        help="Ruta al artifact JSON del rollout audit de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-online-backend",
+        default="http",
+        help="Backend online declarado para el release gate de features.",
+    )
+    parser.add_argument(
+        "--feature-release-gates-observability-sink",
+        default="http",
+        help="Sink de observabilidad declarado para el release gate de features.",
+    )
+    parser.add_argument(
+        "--feature-consumer-name",
+        default="",
+        help="Nombre del consumidor de features para auditoria/contract validation.",
+    )
+    parser.add_argument(
+        "--feature-consumer-kind",
+        default="",
+        help="Tipo del consumidor de features: strategy, model, risk, execution, etc.",
+    )
+    parser.add_argument(
+        "--feature-dataset-id",
+        default="",
+        help="Dataset id asociado al consumidor/modelo para auditoria contractual.",
+    )
+    parser.add_argument(
+        "--feature-schema-hash",
+        default="",
+        help="Schema hash esperado del vector de features para auditoria contractual.",
+    )
+    parser.add_argument(
+        "--feature-training-bundle-id",
+        default="",
+        help="Training bundle id requerido para paper/live.",
+    )
+    parser.add_argument(
+        "--feature-training-bundle-registry",
+        default=None,
+        help="Ruta del registry persistido de training bundles.",
+    )
+    parser.add_argument(
+        "--feature-observability-output",
+        default=None,
+        help="Ruta opcional para exportar observabilidad agregada del pipeline de features.",
+    )
+    parser.add_argument(
         "--trace-steps",
         action="store_true",
         help="Emite trazas start/done por fase del pipeline para debugging visual",

@@ -29,8 +29,12 @@ from app.features.engine import FeatureEngine
 from app.features.audit import build_decision_audit_record, persist_decision_audits
 from app.features.live_readiness import FeatureLiveReadinessDecision
 from app.features.metrics import FeatureMetrics
+from app.features.observability import export_feature_observability_bundle
 from app.features.parity import ParityReport
 from app.features.release_workflow import gate_and_publish_feature_release, rollback_feature_release
+from app.features.training_bundle_registry import TrainingBundleRegistry
+from app.ops.feature_release_gates import render_feature_release_summary as render_feature_release_gate_summary
+from app.ops.feature_release_gates import run_feature_release_gates
 from app.ops.release_gates import render_release_gate_summary, run_release_gates
 from app.strategy.basic import generate_signals
 from app.risk.rules import apply_risk
@@ -38,6 +42,13 @@ from app.execution.paper import paper_execute
 from app.portfolio.state import update_portfolio
 
 FAST_PATH_BATCH_SIZE = 256
+REQUIRED_FEATURE_CONSUMER_METADATA_KEYS = (
+    "dataset_id",
+    "feature_schema_hash",
+    "training_bundle_id",
+    "consumer_name",
+    "consumer_kind",
+)
 
 
 def _load_feature_release_gate_inputs(path: str | None) -> tuple[ParityReport, FeatureMetrics, FeatureLiveReadinessDecision | None]:
@@ -90,6 +101,40 @@ def _price_map_from_events(events: List[IngestionEvent]) -> Dict[str, float]:
     return price_by_symbol
 
 
+def _feature_consumer_metadata_from_args(args) -> dict[str, str]:
+    return {
+        "dataset_id": getattr(args, "feature_dataset_id", "") or "",
+        "feature_schema_hash": getattr(args, "feature_schema_hash", "") or "",
+        "training_bundle_id": getattr(args, "feature_training_bundle_id", "") or "",
+        "consumer_name": getattr(args, "feature_consumer_name", "") or "",
+        "consumer_kind": getattr(args, "feature_consumer_kind", "") or "",
+        "target": getattr(args, "mode", "") or "",
+    }
+
+
+def _validate_feature_consumer_metadata(
+    *,
+    mode: str,
+    feature_audit_path: str | None,
+    consumer_metadata: dict[str, str],
+    training_bundle_registry_path: str | None,
+) -> None:
+    if mode == "dry" or not feature_audit_path:
+        return
+    missing = [key for key in REQUIRED_FEATURE_CONSUMER_METADATA_KEYS if not consumer_metadata.get(key)]
+    if missing:
+        raise ValueError(
+            "paper/live feature auditing requires consumer metadata: " + ", ".join(sorted(missing))
+        )
+    if not training_bundle_registry_path:
+        raise ValueError("paper/live feature auditing requires --feature-training-bundle-registry")
+    registry = TrainingBundleRegistry(training_bundle_registry_path)
+    if registry.get(consumer_metadata["training_bundle_id"]) is None:
+        raise ValueError(
+            f"training bundle {consumer_metadata['training_bundle_id']} not found in {training_bundle_registry_path}"
+        )
+
+
 def run_trading_cycle(
     events: List[IngestionEvent],
     *,
@@ -97,6 +142,8 @@ def run_trading_cycle(
     recorder: Optional[List[str]] = None,
     trace_steps: bool = False,
     feature_audit_path: str | None = None,
+    feature_consumer_metadata: dict[str, str] | None = None,
+    feature_observability_output: str | None = None,
     mode: str = "dry",
 ):
     if mode != "dry" and not feature_audit_path:
@@ -112,8 +159,17 @@ def run_trading_cycle(
     _trace(logger, trace_steps, "strategy", "start")
     signals = generate_signals(fvs)
     if feature_audit_path:
-        audits = [build_decision_audit_record(fv, sig) for fv, sig in zip(fvs, signals)]
+        audits = [
+            build_decision_audit_record(fv, sig, consumer_metadata=feature_consumer_metadata)
+            for fv, sig in zip(fvs, signals)
+        ]
         persist_decision_audits(audits, feature_audit_path)
+    if feature_observability_output:
+        export_feature_observability_bundle(
+            metrics=feature_engine.metrics,
+            target=mode,
+            output_path=feature_observability_output,
+        )
     _trace(logger, trace_steps, "strategy", "done", {"count": len(signals)})
     _mark(recorder, "strategy")
 
@@ -264,6 +320,8 @@ def run_cycle(
     allow_live_fallback: bool = False,
     error_policy: str | None = None,
     feature_audit_path: str | None = None,
+    feature_consumer_metadata: dict[str, str] | None = None,
+    feature_observability_output: str | None = None,
 ):
     """
     Ejecuta el pipeline completo (determinista por defecto).
@@ -306,6 +364,8 @@ def run_cycle(
         recorder=recorder,
         trace_steps=trace_steps,
         feature_audit_path=feature_audit_path,
+        feature_consumer_metadata=feature_consumer_metadata,
+        feature_observability_output=feature_observability_output,
         mode=mode,
     )
 
@@ -342,6 +402,23 @@ def run() -> int:
             actor="app.main.run",
         )
         return 0
+    if getattr(args, "feature_release_gates", False):
+        report = run_feature_release_gates(
+            target=args.feature_release_gates_target,
+            parity_path=args.feature_release_gates_parity_path,
+            benchmark_path=args.feature_release_gates_benchmark_path,
+            observability_path=args.feature_release_gates_observability_path,
+            contract_path=args.feature_release_gates_contract_path,
+            online_backend=args.feature_release_gates_online_backend,
+            observability_sink=args.feature_release_gates_observability_sink,
+            shadow_path=args.feature_release_gates_shadow_path,
+            soak_path=args.feature_release_gates_soak_path,
+            concurrency_path=args.feature_release_gates_concurrency_path,
+            rollout_audit_path=args.feature_release_gates_rollout_audit_path,
+            output_path=args.feature_release_gates_output,
+        )
+        print(render_feature_release_gate_summary(report))
+        return 0 if report.pass_ok else 1
     if getattr(args, "release_gates", False):
         report = run_release_gates(
             base_dir=config.data_dir,
@@ -365,6 +442,13 @@ def run() -> int:
     set_trace_id(trace_id)
     logger = get_logger(level=config.log_level)
     _ = TraceContext(trace_id=trace_id)
+    feature_consumer_metadata = _feature_consumer_metadata_from_args(args)
+    _validate_feature_consumer_metadata(
+        mode=args.mode,
+        feature_audit_path=args.feature_audit_path,
+        consumer_metadata=feature_consumer_metadata,
+        training_bundle_registry_path=getattr(args, "feature_training_bundle_registry", None),
+    )
 
     metrics = run_cycle(
         cfg=config,
@@ -391,6 +475,8 @@ def run() -> int:
         allow_live_fallback=runtime["allow_live_fallback"],
         error_policy=runtime["error_policy"],
         feature_audit_path=args.feature_audit_path,
+        feature_consumer_metadata=feature_consumer_metadata,
+        feature_observability_output=getattr(args, "feature_observability_output", None),
     )
 
     logger.info(

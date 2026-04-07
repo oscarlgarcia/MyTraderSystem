@@ -10,6 +10,7 @@ from app.common.dto import FeatureVector
 from app.features.model_contract import (
     FeatureConsumerContract,
     FeatureConsumerMetadata,
+    normalize_consumer_metadata,
     validate_feature_contract,
 )
 from app.features.metrics import FeatureMetrics
@@ -35,6 +36,10 @@ class ServingResult:
     staleness_seconds: float = 0.0
 
 
+STRICT_CONTRACT_TARGETS = {"paper", "live"}
+REQUIRED_CONSUMER_METADATA_KEYS = ("dataset_id", "feature_schema_hash", "training_bundle_id")
+
+
 def default_serving_policy(*, target: str) -> ServingPolicy:
     if target == "live":
         return ServingPolicy(max_staleness_seconds=30.0, on_missing="fail", on_invalid="fail")
@@ -53,7 +58,7 @@ class FeatureServingService:
         release_registry: FeatureReleaseRegistry | None = None,
         release_registry_path: str | None = None,
         training_bundle_registry: TrainingBundleRegistry | None = None,
-        target: str = "paper",
+        target: str = "research",
     ) -> None:
         self.online_store = online_store
         self.offline_store = offline_store
@@ -63,6 +68,27 @@ class FeatureServingService:
         self.release_registry = release_registry or (FeatureReleaseRegistry(release_registry_path) if release_registry_path else None)
         self.training_bundle_registry = training_bundle_registry
         self.target = target
+
+    def _contract_preflight(
+        self,
+        *,
+        contract: FeatureConsumerContract | None,
+        consumer_metadata: FeatureConsumerMetadata | Mapping[str, str] | None,
+    ) -> tuple[bool, tuple[str, ...]]:
+        metadata = normalize_consumer_metadata(consumer_metadata)
+        reasons: list[str] = []
+        if self.target not in STRICT_CONTRACT_TARGETS:
+            return True, ()
+        if contract is None:
+            reasons.append("contract_required")
+        missing_metadata = [key for key in REQUIRED_CONSUMER_METADATA_KEYS if not metadata.get(key)]
+        if missing_metadata:
+            reasons.append(f"missing_metadata:{','.join(missing_metadata)}")
+        if self.training_bundle_registry is None:
+            reasons.append("training_bundle_registry_required")
+        elif metadata.get("training_bundle_id") and self.training_bundle_registry.get(metadata["training_bundle_id"]) is None:
+            reasons.append("training_bundle_missing")
+        return not reasons, tuple(reasons)
 
     def _resolve_version(self, *, feature_set_name: str, feature_set_version: str | None) -> str:
         if feature_set_version:
@@ -130,6 +156,18 @@ class FeatureServingService:
     ) -> ServingResult:
         start = time.perf_counter()
         resolved_version = self._resolve_version(feature_set_name=feature_set_name, feature_set_version=feature_set_version)
+        preflight_ok, preflight_reasons = self._contract_preflight(contract=contract, consumer_metadata=consumer_metadata)
+        if not preflight_ok:
+            result = ServingResult(status="fail", feature_vector=None, reason="contract_required")
+            return self._record_result(
+                symbol=symbol or (entity_keys or {}).get("symbol", ""),
+                decision_ts=decision_ts,
+                feature_set_name=feature_set_name,
+                feature_set_version=resolved_version,
+                result=result,
+                elapsed=time.perf_counter() - start,
+                contract_reasons=preflight_reasons,
+            )
         fv = self.online_store.get_latest_servable(
             decision_ts=decision_ts,
             feature_set_name=feature_set_name,
@@ -247,6 +285,18 @@ class FeatureServingService:
         start = time.perf_counter()
         resolved_version = self._resolve_version(feature_set_name=feature_set_name, feature_set_version=feature_set_version)
         resolved_symbol = symbol or (entity_keys or {}).get("symbol", "")
+        preflight_ok, preflight_reasons = self._contract_preflight(contract=contract, consumer_metadata=consumer_metadata)
+        if not preflight_ok:
+            result = ServingResult(status="fail", feature_vector=None, reason="contract_required")
+            return self._record_result(
+                symbol=resolved_symbol,
+                decision_ts=decision_ts,
+                feature_set_name=feature_set_name,
+                feature_set_version=resolved_version,
+                result=result,
+                elapsed=time.perf_counter() - start,
+                contract_reasons=preflight_reasons,
+            )
         if self.offline_store is None:
             result = ServingResult(status="fail", feature_vector=None, reason="offline_store_unavailable")
             return self._record_result(

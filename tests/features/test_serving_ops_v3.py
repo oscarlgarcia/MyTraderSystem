@@ -87,3 +87,29 @@ def test_serving_fails_when_training_serving_contract_is_invalid(tmp_path):
     assert result.status == "fail"
     assert result.reason == "contract_validation"
     assert service.metrics.contract_validation_failures == 1
+
+
+def test_serving_requires_contract_metadata_for_live_targets(tmp_path):
+    ts = datetime.fromtimestamp(1700000000, tz=timezone.utc)
+    online = OnlineFeatureStore(tmp_path / "online.sqlite")
+    online.upsert(_fv(0))
+    registry = TrainingBundleRegistry(tmp_path / "training-bundles")
+    registry.register(
+        TrainingBundleRecord(
+            bundle_id="train-bundle-1",
+            dataset_id="dataset-2024-01",
+            feature_schema_hash="schema-v1",
+            feature_set_name="default",
+            feature_set_version="1.0.0",
+        )
+    )
+    service = FeatureServingService(online_store=online, training_bundle_registry=registry, target="live")
+    result = service.get_latest_servable(
+        symbol="BTCUSDT",
+        decision_ts=ts,
+        feature_set_name="default",
+        feature_set_version="1.0.0",
+    )
+    assert result.status == "fail"
+    assert result.reason == "contract_required"
+    assert service.metrics.contract_validation_failures == 1

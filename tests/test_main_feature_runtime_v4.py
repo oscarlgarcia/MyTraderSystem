@@ -5,6 +5,7 @@ import pytest
 
 from app.common.dto import MarketEvent
 from app.config import load_config
+from app.features.training_bundle_registry import TrainingBundleRecord, TrainingBundleRegistry
 from app.main import run, run_cycle
 from app.observability.logger import get_logger
 
@@ -41,13 +42,32 @@ def test_run_cycle_wires_feature_audit_path(monkeypatch, tmp_path):
 
 def test_run_wires_feature_audit_path_from_args(monkeypatch, tmp_path):
     cfg = load_config("dev")
+    registry_dir = tmp_path / "training-bundles"
+    TrainingBundleRegistry(registry_dir).register(
+        TrainingBundleRecord(
+            bundle_id="train-bundle-1",
+            dataset_id="dataset-2024-01",
+            feature_schema_hash="schema-v1",
+            feature_set_name="legacy",
+            feature_set_version="legacy",
+        )
+    )
     args = SimpleNamespace(
         env="dev",
         release_gates=False,
+        feature_release_action=None,
+        feature_release_gates=False,
         mode="live",
         max_events=1,
         duration=None,
         feature_audit_path=str(tmp_path / "features-audit.jsonl"),
+        feature_dataset_id="dataset-2024-01",
+        feature_schema_hash="schema-v1",
+        feature_training_bundle_id="train-bundle-1",
+        feature_consumer_name="paper-strategy",
+        feature_consumer_kind="strategy",
+        feature_training_bundle_registry=str(registry_dir),
+        feature_observability_output=None,
         fast_path=False,
         production_mode=False,
         trace_steps=False,
