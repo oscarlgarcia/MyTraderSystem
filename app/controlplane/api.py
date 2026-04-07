@@ -441,7 +441,8 @@ app = build_app()
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    uvicorn.run("app.controlplane.api:app", host=args.host, port=args.port, reload=False)
+    runtime_app = build_app(load_config(args.env))
+    uvicorn.run(runtime_app, host=args.host, port=args.port, reload=False)
     return 0
 
 
