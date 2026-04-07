@@ -1,37 +1,46 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Recovery Center</h1>
+<section class="page-header">
+  <div>
+    <h1>Recovery Center</h1>
+    <p>Queue recovery commands with stream context and inspect recent command activity.</p>
+  </div>
+</section>
 <div id="command-feedback"></div>
 
-<div class="grid">
-  <div class="card">
+<div class="split">
+  <div class="panel">
     <h2>Resync Stream</h2>
     <form hx-post="/api/commands/resync" hx-target="#command-feedback" hx-swap="innerHTML">
-      <input name="symbol" placeholder="BTCUSDT" required />
-      <select name="stream_type">
-        <option value="kline">kline</option>
-        <option value="trade">trade</option>
-      </select>
-      <input name="interval" placeholder="1m" value="1m" />
-      <input name="start_ts" placeholder="2026-04-07T10:00:00+00:00" />
-      <input name="end_ts" placeholder="2026-04-07T10:10:00+00:00" />
-      <input name="limit" placeholder="500" />
+      <div class="form-grid">
+        <label>Symbol<input name="symbol" placeholder="BTCUSDT" required value="{{ prefill.symbol }}" /></label>
+        <label>Stream type<select name="stream_type">
+          <option value="kline" {% if prefill.stream_type == "kline" %}selected{% endif %}>kline</option>
+          <option value="trade" {% if prefill.stream_type == "trade" %}selected{% endif %}>trade</option>
+        </select></label>
+        <label>Interval<input name="interval" placeholder="1m" value="{{ prefill.interval }}" /></label>
+        <label>Start ts<input name="start_ts" placeholder="2026-04-07T10:00:00+00:00" value="{{ prefill.start_ts }}" /></label>
+        <label>End ts<input name="end_ts" placeholder="2026-04-07T10:10:00+00:00" value="{{ prefill.end_ts }}" /></label>
+        <label>Limit<input name="limit" placeholder="500" /></label>
+      </div>
       <input type="hidden" name="write_normalized" value="true" />
       <input type="hidden" name="requested_by" value="ui-operator" />
       <button type="submit">Queue Resync</button>
     </form>
   </div>
 
-  <div class="card">
+  <div class="panel">
     <h2>Replay Raw Range</h2>
     <form hx-post="/api/commands/replay" hx-target="#command-feedback" hx-swap="innerHTML">
-      <input name="symbol" placeholder="BTCUSDT" required />
-      <select name="stream_type">
-        <option value="trade">trade</option>
-        <option value="kline">kline</option>
-      </select>
-      <input name="start_ts" placeholder="2026-04-07T10:00:00+00:00" />
-      <input name="end_ts" placeholder="2026-04-07T10:10:00+00:00" />
+      <div class="form-grid">
+        <label>Symbol<input name="symbol" placeholder="BTCUSDT" required value="{{ prefill.symbol }}" /></label>
+        <label>Stream type<select name="stream_type">
+          <option value="trade" {% if prefill.stream_type == "trade" %}selected{% endif %}>trade</option>
+          <option value="kline" {% if prefill.stream_type == "kline" %}selected{% endif %}>kline</option>
+        </select></label>
+        <label>Start ts<input name="start_ts" placeholder="2026-04-07T10:00:00+00:00" value="{{ prefill.start_ts }}" /></label>
+        <label>End ts<input name="end_ts" placeholder="2026-04-07T10:10:00+00:00" value="{{ prefill.end_ts }}" /></label>
+      </div>
       <input type="hidden" name="mode" value="range" />
       <input type="hidden" name="write_normalized" value="true" />
       <input type="hidden" name="requested_by" value="ui-operator" />
@@ -39,19 +48,43 @@
     </form>
   </div>
 
-  <div class="card">
+  <div class="panel">
     <h2>Replay Quarantine</h2>
     <form hx-post="/api/commands/replay" hx-target="#command-feedback" hx-swap="innerHTML">
-      <input name="trace_id" placeholder="trace id" />
-      <input name="record_id" placeholder="record id" />
-      <input name="symbol" placeholder="BTCUSDT" />
-      <input name="stream_type" placeholder="trade" />
-      <input name="limit" placeholder="50" />
+      <div class="form-grid">
+        <label>Trace id<input name="trace_id" placeholder="trace id" value="{{ prefill.trace_id }}" /></label>
+        <label>Record id<input name="record_id" placeholder="record id" value="{{ prefill.record_id }}" /></label>
+        <label>Symbol<input name="symbol" placeholder="BTCUSDT" value="{{ prefill.symbol }}" /></label>
+        <label>Stream type<input name="stream_type" placeholder="trade" value="{{ prefill.stream_type }}" /></label>
+        <label>Limit<input name="limit" placeholder="50" /></label>
+      </div>
       <input type="hidden" name="mode" value="quarantine" />
       <input type="hidden" name="write_normalized" value="true" />
       <input type="hidden" name="requested_by" value="ui-operator" />
       <button type="submit">Queue Quarantine Replay</button>
     </form>
+  </div>
+
+  <div class="panel">
+    <h2>Recent commands</h2>
+    <table>
+      <thead><tr><th>Command</th><th>Status</th><th>Requested</th><th>Scope</th></tr></thead>
+      <tbody>
+        {% for command in recent_commands %}
+        <tr>
+          <td>
+            <code>{{ command.command_id }}</code>
+            <div class="small muted">{{ command.command_type }}</div>
+          </td>
+          <td class="status-{{ command.status }}">{{ command.status }}</td>
+          <td>{{ command.requested_at }}</td>
+          <td>{{ command.scope }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">No recent commands.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
 {% endblock %}

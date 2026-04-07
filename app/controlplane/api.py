@@ -16,6 +16,13 @@ import uvicorn
 from app.config import AppConfig, load_config
 from app.controlplane.builder import ReadModelBuilder
 from app.controlplane.models import CommandAuditRecord, CommandRequestRecord
+from app.controlplane.presenters import (
+    build_command_summary,
+    build_overview_view,
+    build_stream_detail,
+    build_stream_view,
+    filter_streams,
+)
 from app.controlplane.store import ControlPlaneStore
 from app.controlplane.store_factory import create_control_plane_store
 from app.controlplane.telemetry import configure_control_plane_telemetry, emit_control_plane_event
@@ -81,12 +88,18 @@ def build_app(
     def ui_overview(request: Request) -> HTMLResponse:
         current = sync()
         overview = current.store.overview()
+        checkpoints = {item.stream_key: item for item in current.store.list_checkpoints()}
+        runs = {item.run_id: item for item in current.store.list_runs(limit=100)}
         return current.templates.TemplateResponse(
             request,
             "overview.html",
             {
                 "cfg": current.cfg,
-                "overview": overview,
+                "overview": build_overview_view(
+                    overview,
+                    checkpoints_by_scope=checkpoints,
+                    runs_by_id=runs,
+                ),
                 "refresh_seconds": current.cfg.control_plane_poll_interval_seconds,
             },
         )
@@ -117,14 +130,42 @@ def build_app(
         )
 
     @app.get("/ui/streams", response_class=HTMLResponse)
-    def ui_streams(request: Request) -> HTMLResponse:
+    def ui_streams(
+        request: Request,
+        status: str = "",
+        symbol: str = "",
+        stream_type: str = "",
+        q: str = "",
+    ) -> HTMLResponse:
         current = sync()
+        checkpoints = {item.stream_key: item for item in current.store.list_checkpoints()}
+        runs = {item.run_id: item for item in current.store.list_runs(limit=100)}
+        streams = filter_streams(
+            current.store.list_streams(),
+            status=status,
+            symbol=symbol,
+            stream_type=stream_type,
+            query=q,
+        )
         return current.templates.TemplateResponse(
             request,
             "streams.html",
             {
                 "cfg": current.cfg,
-                "streams": current.store.list_streams(),
+                "streams": [
+                    build_stream_view(
+                        stream,
+                        checkpoint=checkpoints.get(stream.scope),
+                        run=runs.get(stream.run_id) if stream.run_id else None,
+                    )
+                    for stream in streams
+                ],
+                "filters": {
+                    "status": status,
+                    "symbol": symbol,
+                    "stream_type": stream_type,
+                    "q": q,
+                },
             },
         )
 
@@ -132,12 +173,20 @@ def build_app(
     def ui_stream_detail(scope: str, request: Request) -> HTMLResponse:
         current = sync()
         stream = current.store.get_stream(scope)
+        checkpoints = {item.stream_key: item for item in current.store.list_checkpoints()}
+        run = current.store.get_run(stream.run_id) if stream is not None and stream.run_id else None
         return current.templates.TemplateResponse(
             request,
             "stream_detail.html",
             {
                 "cfg": current.cfg,
-                "stream": stream,
+                "stream": build_stream_detail(
+                    stream,
+                    checkpoint=checkpoints.get(scope),
+                    run=run,
+                )
+                if stream is not None
+                else None,
             },
         )
 
@@ -178,13 +227,32 @@ def build_app(
         )
 
     @app.get("/ui/recovery", response_class=HTMLResponse)
-    def ui_recovery(request: Request) -> HTMLResponse:
+    def ui_recovery(
+        request: Request,
+        symbol: str = "",
+        stream_type: str = "",
+        interval: str = "",
+        start_ts: str = "",
+        end_ts: str = "",
+        trace_id: str = "",
+        record_id: str = "",
+    ) -> HTMLResponse:
         current = sync()
         return current.templates.TemplateResponse(
             request,
             "recovery.html",
             {
                 "cfg": current.cfg,
+                "prefill": {
+                    "symbol": symbol,
+                    "stream_type": stream_type or "kline",
+                    "interval": interval or "1m",
+                    "start_ts": start_ts,
+                    "end_ts": end_ts,
+                    "trace_id": trace_id,
+                    "record_id": record_id,
+                },
+                "recent_commands": [build_command_summary(item) for item in current.store.list_commands(limit=12)],
             },
         )
 
@@ -338,7 +406,12 @@ def _command_response(request: Request, record: CommandRequestRecord) -> Respons
     if request.headers.get("HX-Request") == "true":
         body = (
             f"<div class='command-feedback success'>"
-            f"Command queued: <code>{record.command_id}</code> ({record.command_type})"
+            f"<strong>Command queued</strong>"
+            f"<span><code>{record.command_id}</code></span>"
+            f"<span>type={record.command_type}</span>"
+            f"<span>status={record.status}</span>"
+            f"<div class='small'>scope={record.scope}</div>"
+            f"<div class='small'>status endpoint: <code>/api/commands/{record.command_id}</code></div>"
             f"</div>"
         )
         return HTMLResponse(body)

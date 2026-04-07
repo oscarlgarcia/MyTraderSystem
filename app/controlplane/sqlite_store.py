@@ -302,6 +302,14 @@ class SQLiteControlPlaneStore(ControlPlaneStore):
             row = conn.execute("SELECT * FROM command_requests WHERE command_id = ?", (command_id,)).fetchone()
         return self._command_from_row(row) if row else None
 
+    def list_commands(self, *, limit: int = 20) -> list[CommandRequestRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM command_requests ORDER BY requested_at DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [self._command_from_row(row) for row in rows]
+
     def claim_next_command(self, *, worker_id: str, started_at: str) -> CommandRequestRecord | None:
         del worker_id
         with self._connect() as conn:

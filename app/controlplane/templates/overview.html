@@ -1,62 +1,101 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Overview</h1>
-<p class="muted">Polling every {{ refresh_seconds }}s from the control-plane read model.</p>
+<section class="page-header">
+  <div>
+    <h1>Overview</h1>
+    <p>Polling every {{ refresh_seconds }}s from the control-plane read model.</p>
+  </div>
+  <div class="row-actions">
+    <a class="cta secondary" href="/ui/streams?status=degraded">Ver streams degradados</a>
+    <a class="cta" href="/ui/recovery">Abrir Recovery</a>
+  </div>
+</section>
+
 <div class="grid">
-  <div class="card"><strong>Runs</strong><div>{{ overview.total_runs }}</div></div>
-  <div class="card"><strong>Streams</strong><div>{{ overview.streams_total }}</div></div>
-  <div class="card"><strong>Degraded Streams</strong><div>{{ overview.streams_degraded | length }}</div></div>
-  <div class="card"><strong>Open Alerts</strong><div>{{ overview.alerts_open | length }}</div></div>
-  <div class="card"><strong>Pending Commands</strong><div>{{ overview.commands_pending }}</div></div>
-  <div class="card"><strong>Checkpoint Summaries</strong><div>{{ overview.checkpoints_total }}</div></div>
+  <div class="card metric-card"><div class="metric-label">Runs</div><div class="metric-value">{{ overview.total_runs }}</div><div class="muted small">runs materializados</div></div>
+  <div class="card metric-card"><div class="metric-label">Streams</div><div class="metric-value">{{ overview.streams_total }}</div><div class="muted small">scopes conocidos</div></div>
+  <div class="card metric-card"><div class="metric-label">Requires attention</div><div class="metric-value">{{ overview.degraded_streams_total }}</div><div class="muted small">streams degradados</div></div>
+  <div class="card metric-card"><div class="metric-label">Open alerts</div><div class="metric-value">{{ overview.open_alerts_total }}</div><div class="muted small">sin ack</div></div>
+  <div class="card metric-card"><div class="metric-label">Pending commands</div><div class="metric-value">{{ overview.commands_pending }}</div><div class="muted small">pending o running</div></div>
+  <div class="card metric-card"><div class="metric-label">Checkpoints</div><div class="metric-value">{{ overview.checkpoints_total }}</div><div class="muted small">resumenes persistidos</div></div>
 </div>
 
-<h2>Recent Runs</h2>
-<table>
-  <thead><tr><th>Run</th><th>Mode</th><th>Result</th><th>Updated</th></tr></thead>
-  <tbody>
-    {% for run in overview.recent_runs %}
-    <tr>
-      <td><a href="/ui/runs/{{ run.run_id }}">{{ run.run_id }}</a></td>
-      <td>{{ run.mode }}</td>
-      <td class="status-{{ run.result }}">{{ run.result }}</td>
-      <td>{{ run.updated_at }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="4">No runs materialized yet.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="split" style="margin-top: 1rem;">
+  <section class="panel">
+    <h2>Requiere atencion</h2>
+    <div class="attention-list">
+      {% for stream in overview.attention_streams %}
+      <article class="attention-item">
+        <div class="row-actions" style="justify-content: space-between;">
+          <div>
+            <strong><a href="/ui/streams/{{ stream.scope }}">{{ stream.scope }}</a></strong>
+            <div class="muted small">{{ stream.updated_at }}</div>
+          </div>
+          <span class="pill {% if stream.severity == 'critical' %}pill-critical{% else %}pill-warning{% endif %}">{{ stream.status }}</span>
+        </div>
+        <p class="small">Issues: {{ stream.issue_count }}{% if stream.key_metrics %} · {% for label, value in stream.key_metrics %}{{ label }}={{ value }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
+        <div class="row-actions">
+          <a class="cta ghost" href="/ui/streams/{{ stream.scope }}">Inspect</a>
+          <a class="cta secondary" href="/ui/recovery?symbol={{ stream.symbol }}&stream_type={{ stream.stream_type }}{% if stream.stream_type == 'kline' %}&interval=1m{% endif %}">Recovery</a>
+        </div>
+      </article>
+      {% else %}
+      <article class="attention-item">
+        <strong>No degraded streams.</strong>
+        <p class="muted small">La UI no detecta streams degradados en este momento.</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
 
-<h2>Degraded Streams</h2>
-<table>
-  <thead><tr><th>Scope</th><th>Status</th><th>Last Seen</th></tr></thead>
-  <tbody>
-    {% for stream in overview.streams_degraded %}
-    <tr>
-      <td><a href="/ui/streams/{{ stream.scope }}">{{ stream.scope }}</a></td>
-      <td class="status-degraded">{{ stream.status }}</td>
-      <td>{{ stream.updated_at }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="3">No degraded streams.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+  <section class="panel">
+    <h2>Open alerts</h2>
+    <div class="attention-list">
+      {% for alert in overview.open_alerts %}
+      <article class="attention-item">
+        <div class="row-actions" style="justify-content: space-between;">
+          <strong>{{ alert.alert_type }}</strong>
+          <span class="pill pill-critical">{{ alert.severity }}</span>
+        </div>
+        <p class="small muted">{{ alert.created_at }}</p>
+        <p class="small">Recommended action: {{ alert.recommended_action }}</p>
+        {% if alert.scope %}
+        <div class="row-actions">
+          <a class="cta ghost" href="/ui/streams/{{ alert.scope }}">Inspect scope</a>
+        </div>
+        {% endif %}
+      </article>
+      {% else %}
+      <article class="attention-item">
+        <strong>No open alerts.</strong>
+        <p class="muted small">No hay alertas abiertas en el read model actual.</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+</div>
 
-<h2>Open Alerts</h2>
-<table>
-  <thead><tr><th>Alert</th><th>Severity</th><th>Created</th></tr></thead>
-  <tbody>
-    {% for alert in overview.alerts_open %}
-    <tr>
-      <td>{{ alert.alert_type }}</td>
-      <td class="status-open">{{ alert.severity }}</td>
-      <td>{{ alert.created_at }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="3">No open alerts.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<section class="table-shell" style="margin-top: 1rem;">
+  <table>
+    <thead><tr><th>Run</th><th>Mode</th><th>Result</th><th>Updated</th><th>Operational summary</th></tr></thead>
+    <tbody>
+      {% for run in overview.recent_runs %}
+      <tr>
+        <td><a href="/ui/runs/{{ run.run_id }}">{{ run.run_id }}</a></td>
+        <td>{{ run.mode }}</td>
+        <td class="status-{{ run.result }}">{{ run.result }}</td>
+        <td>{{ run.updated_at }}</td>
+        <td>
+          <div>{{ run.summary_line }}</div>
+          {% if run.attention_line %}
+          <div class="small status-warning">{{ run.attention_line }}</div>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No runs materialized yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

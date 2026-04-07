@@ -45,6 +45,9 @@ class ControlPlaneStore(ABC):
     def get_command(self, command_id: str) -> CommandRequestRecord | None: ...
 
     @abstractmethod
+    def list_commands(self, *, limit: int = 20) -> list[CommandRequestRecord]: ...
+
+    @abstractmethod
     def claim_next_command(self, *, worker_id: str, started_at: str) -> CommandRequestRecord | None: ...
 
     @abstractmethod
@@ -123,6 +126,9 @@ class PostgresControlPlaneStore(ControlPlaneStore):
         raise NotImplementedError
 
     def get_command(self, command_id: str) -> CommandRequestRecord | None:
+        raise NotImplementedError
+
+    def list_commands(self, *, limit: int = 20) -> list[CommandRequestRecord]:
         raise NotImplementedError
 
     def claim_next_command(self, *, worker_id: str, started_at: str) -> CommandRequestRecord | None:

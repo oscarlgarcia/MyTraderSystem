@@ -96,5 +96,6 @@ def test_sqlite_store_supports_control_plane_contract(tmp_path):
     assert store.ack_alert("alert-1", acked_by="tester", acked_at="2026-04-07T10:00:08+00:00") is True
     assert len(store.list_checkpoints()) == 1
     assert store.get_command("cmd-1").status == "succeeded"
+    assert len(store.list_commands()) == 1
     assert len(store.list_command_audit()) == 1
     assert store.overview().streams_total == 1

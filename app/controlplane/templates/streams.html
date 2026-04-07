@@ -1,19 +1,99 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Streams</h1>
-<table>
-  <thead><tr><th>Scope</th><th>Status</th><th>Run</th><th>Last Seen</th></tr></thead>
-  <tbody>
-    {% for stream in streams %}
-    <tr>
-      <td><a href="/ui/streams/{{ stream.scope }}">{{ stream.scope }}</a></td>
-      <td class="status-{{ stream.status }}">{{ stream.status }}</td>
-      <td>{{ stream.run_id or "-" }}</td>
-      <td>{{ stream.updated_at }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="4">No streams available.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<section class="page-header">
+  <div>
+    <h1>Streams</h1>
+    <p>Diagnostico operativo y acceso rapido a recovery.</p>
+  </div>
+</section>
+
+<section class="toolbar">
+  <form method="get" action="/ui/streams">
+    <label>
+      Status
+      <select name="status">
+        <option value="" {% if not filters.status %}selected{% endif %}>all</option>
+        <option value="ok" {% if filters.status == "ok" %}selected{% endif %}>ok</option>
+        <option value="degraded" {% if filters.status == "degraded" %}selected{% endif %}>degraded</option>
+        <option value="failed" {% if filters.status == "failed" %}selected{% endif %}>failed</option>
+      </select>
+    </label>
+    <label>
+      Symbol
+      <input name="symbol" value="{{ filters.symbol }}" placeholder="BTCUSDT" />
+    </label>
+    <label>
+      Stream type
+      <select name="stream_type">
+        <option value="" {% if not filters.stream_type %}selected{% endif %}>all</option>
+        <option value="kline" {% if filters.stream_type == "kline" %}selected{% endif %}>kline</option>
+        <option value="trade" {% if filters.stream_type == "trade" %}selected{% endif %}>trade</option>
+      </select>
+    </label>
+    <label>
+      Scope search
+      <input name="q" value="{{ filters.q }}" placeholder="BINANCE:BTCUSDT" />
+    </label>
+    <div class="actions">
+      <button type="submit">Apply filters</button>
+      <a class="cta secondary" href="/ui/streams">Reset</a>
+    </div>
+  </form>
+</section>
+
+<section class="table-shell">
+  <table>
+    <thead><tr><th>Scope</th><th>Status</th><th>Issues</th><th>Checkpoint</th><th>Latest run</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for stream in streams %}
+      <tr>
+        <td>
+          <a href="/ui/streams/{{ stream.scope }}">{{ stream.scope }}</a>
+          <div class="muted small">{{ stream.updated_at }}</div>
+        </td>
+        <td>
+          <div class="status-{{ stream.status }}">{{ stream.status }}</div>
+          <div class="small muted">{{ stream.stream_type }} · {{ stream.symbol }}</div>
+        </td>
+        <td>
+          <div>{{ stream.issue_count }}</div>
+          <div class="small muted">
+            {% if stream.key_metrics %}
+              {% for label, value in stream.key_metrics %}
+                {{ label }}={{ value }}{% if not loop.last %}, {% endif %}
+              {% endfor %}
+            {% else %}
+              no visible issues
+            {% endif %}
+          </div>
+        </td>
+        <td>
+          {% if stream.checkpoint_cursor %}
+          <div>{{ stream.checkpoint_cursor }}</div>
+          <div class="small muted">{{ stream.checkpoint_last_event_ts or "-" }}</div>
+          {% else %}
+          <span class="muted">-</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if stream.latest_run_result %}
+          <div class="status-{{ stream.latest_run_result }}">{{ stream.latest_run_result }}</div>
+          <div class="small muted">{{ stream.latest_run_updated_at }}</div>
+          {% else %}
+          <span class="muted">-</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="row-actions">
+            <a class="cta ghost" href="/ui/streams/{{ stream.scope }}">Inspect</a>
+            <a class="cta secondary" href="/ui/recovery?symbol={{ stream.recovery_params.symbol }}&stream_type={{ stream.recovery_params.stream_type }}{% if stream.recovery_params.interval %}&interval={{ stream.recovery_params.interval }}{% endif %}">{{ stream.suggested_action|title }}</a>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">No streams available for the current filters.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
 {% endblock %}

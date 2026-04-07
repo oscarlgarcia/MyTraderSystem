@@ -1,10 +1,88 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Stream Detail</h1>
 {% if stream %}
-<p><strong>{{ stream.scope }}</strong> · <span class="status-{{ stream.status }}">{{ stream.status }}</span></p>
-<pre class="json">{{ stream.metrics | tojson(indent=2) }}</pre>
+<section class="page-header">
+  <div>
+    <h1>{{ stream.stream.scope }}</h1>
+    <p>{{ stream.stream.symbol }} · {{ stream.stream.stream_type }} · <span class="status-{{ stream.stream.status }}">{{ stream.stream.status }}</span></p>
+  </div>
+  <div class="row-actions">
+    <a class="cta secondary" href="/ui/recovery?symbol={{ stream.stream.recovery_params.symbol }}&stream_type={{ stream.stream.recovery_params.stream_type }}{% if stream.stream.recovery_params.interval %}&interval={{ stream.stream.recovery_params.interval }}{% endif %}">{{ stream.stream.suggested_action|title }}</a>
+    <a class="cta ghost" href="/ui/streams">Back to streams</a>
+  </div>
+</section>
+
+<div class="split">
+  <section class="panel">
+    <h2>Resumen</h2>
+    <table>
+      <tbody>
+        <tr><th>Status</th><td class="status-{{ stream.stream.status }}">{{ stream.stream.status }}</td></tr>
+        <tr><th>Last seen</th><td>{{ stream.stream.updated_at }}</td></tr>
+        <tr><th>Issue count</th><td>{{ stream.stream.issue_count }}</td></tr>
+        <tr><th>Run</th><td>{{ stream.stream.run_id or "-" }}</td></tr>
+        <tr><th>Suggested action</th><td>{{ stream.stream.suggested_action }}</td></tr>
+      </tbody>
+    </table>
+
+    <h2 style="margin-top: 1rem;">Metricas clave</h2>
+    <table>
+      <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+      <tbody>
+        {% for label, value in stream.stream.key_metrics %}
+        <tr><td>{{ label }}</td><td>{{ value }}</td></tr>
+        {% else %}
+        <tr><td colspan="2">No visible operational issues.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>Checkpoint</h2>
+    {% if stream.checkpoint_path %}
+    <p><strong>Path:</strong> <code>{{ stream.checkpoint_path }}</code></p>
+    <p><strong>Cursor:</strong> {{ stream.stream.checkpoint_cursor or "-" }}</p>
+    <p><strong>Last event:</strong> {{ stream.stream.checkpoint_last_event_ts or "-" }}</p>
+    <details>
+      <summary>Checkpoint metadata</summary>
+      <pre class="json">{{ stream.checkpoint_metadata | tojson(indent=2) }}</pre>
+    </details>
+    {% else %}
+    <p class="muted">No checkpoint summary available for this scope.</p>
+    {% endif %}
+
+    <h2 style="margin-top: 1rem;">Last run</h2>
+    {% if stream.run %}
+    <p><a href="/ui/runs/{{ stream.run.run_id }}">{{ stream.run.run_id }}</a></p>
+    <p><span class="status-{{ stream.run.result }}">{{ stream.run.result }}</span> · {{ stream.run.updated_at }}</p>
+    <p class="small">{{ stream.run.summary_line }}</p>
+    {% if stream.run.attention_line %}
+    <p class="small status-warning">{{ stream.run.attention_line }}</p>
+    {% endif %}
+    {% else %}
+    <p class="muted">No related run found in the current read model.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="panel" style="margin-top: 1rem;">
+  <h2>Recommended actions</h2>
+  <div class="row-actions">
+    {% for action in stream.recommended_actions %}
+    <span class="pill {% if 'queue' in action %}pill-warning{% endif %}">{{ action }}</span>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel" style="margin-top: 1rem;">
+  <details>
+    <summary>Raw metrics JSON</summary>
+    <pre class="json">{{ stream.raw_metrics | tojson(indent=2) }}</pre>
+  </details>
+</section>
 {% else %}
+<h1>Stream Detail</h1>
 <p>Stream not found.</p>
 {% endif %}
 {% endblock %}

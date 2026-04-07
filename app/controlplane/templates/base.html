@@ -1,46 +1,145 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ cfg.env | upper }} Control Plane</title>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <style>
-      :root { color-scheme: light; font-family: "Segoe UI", sans-serif; }
-      body { margin: 0; background: #f5f7fb; color: #13233a; }
-      header { background: #13233a; color: #fff; padding: 1rem 1.5rem; }
-      nav { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }
-      nav a { color: #d7e6ff; text-decoration: none; font-weight: 600; }
-      main { padding: 1.5rem; }
-      .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-      .card { background: #fff; border-radius: 14px; padding: 1rem; box-shadow: 0 10px 24px rgba(19,35,58,.08); }
-      table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; }
-      th, td { padding: 0.7rem; border-bottom: 1px solid #e4e8f0; text-align: left; vertical-align: top; }
-      th { background: #edf2fb; }
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", sans-serif;
+        --navy: #11243f;
+        --ink: #13233a;
+        --muted: #5d6c83;
+        --line: #dde6f1;
+        --surface: #ffffff;
+        --surface-soft: #f4f7fb;
+        --accent: #163d6c;
+        --ok: #0f7b47;
+        --warn: #b25a00;
+        --crit: #a42020;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: linear-gradient(180deg, #eef4fb 0%, #f8fbff 100%); color: var(--ink); }
+      header {
+        background: linear-gradient(135deg, #11243f 0%, #153b6d 100%);
+        color: #fff;
+        padding: 1rem 1.5rem 1.25rem;
+        box-shadow: 0 12px 32px rgba(17,36,63,.18);
+      }
+      .header-top { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
+      .brand-title { font-size: 1.05rem; font-weight: 700; }
+      .brand-subtitle { color: #cfe0ff; font-size: 0.95rem; }
+      nav { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.85rem; }
+      nav a { color: #d7e6ff; text-decoration: none; font-weight: 600; padding: 0.4rem 0.75rem; border-radius: 999px; }
+      nav a:hover, nav a.active { background: rgba(255,255,255,.12); color: #fff; }
+      main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+      h1, h2, h3 { margin-top: 0; }
+      .page-header { display: flex; justify-content: space-between; gap: 1rem; align-items: end; margin-bottom: 1rem; flex-wrap: wrap; }
+      .page-header p { margin: 0.35rem 0 0; color: var(--muted); }
+      .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+      .card, .table-shell, .panel {
+        background: var(--surface);
+        border-radius: 16px;
+        padding: 1rem;
+        box-shadow: 0 12px 28px rgba(19,35,58,.08);
+        border: 1px solid rgba(221,230,241,.85);
+      }
+      .table-shell { padding: 0; overflow: hidden; }
+      .metric-card .metric-value { font-size: 1.9rem; font-weight: 700; margin: 0.35rem 0; }
+      .metric-card .metric-label { color: var(--muted); font-size: 0.9rem; text-transform: uppercase; letter-spacing: .04em; }
+      table { width: 100%; border-collapse: collapse; background: var(--surface); }
+      th, td { padding: 0.8rem 0.9rem; border-bottom: 1px solid #e4e8f0; text-align: left; vertical-align: top; }
+      th { background: #edf2fb; color: #29405f; font-size: 0.92rem; }
+      tr:last-child td { border-bottom: 0; }
       code, pre { font-family: Consolas, monospace; }
-      .status-ok { color: #0d7a46; font-weight: 700; }
-      .status-degraded, .status-failed { color: #b65000; font-weight: 700; }
-      .status-open { color: #a80000; font-weight: 700; }
-      .muted { color: #5d6c83; }
+      .status-ok, .status-healthy, .status-succeeded { color: var(--ok); font-weight: 700; }
+      .status-degraded, .status-warning, .status-failed, .status-running { color: var(--warn); font-weight: 700; }
+      .status-open, .status-critical, .status-error { color: var(--crit); font-weight: 700; }
+      .status-pending { color: #2b4b6f; font-weight: 700; }
+      .muted { color: var(--muted); }
+      .small { font-size: 0.92rem; }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        border-radius: 999px;
+        padding: 0.25rem 0.65rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+        background: #edf2fb;
+        color: #29405f;
+      }
+      .pill-ok { background: #e5f7ee; color: var(--ok); }
+      .pill-warning { background: #fff0df; color: var(--warn); }
+      .pill-critical { background: #fde7e7; color: var(--crit); }
+      .attention-list { display: grid; gap: 0.8rem; }
+      .attention-item { border: 1px solid var(--line); border-radius: 14px; padding: 0.85rem; background: var(--surface-soft); }
+      .row-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+      .cta, button {
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+        border: 0;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.65rem 0.9rem;
+        border-radius: 10px;
+        font-weight: 600;
+      }
+      .cta.secondary { background: #edf2fb; color: var(--ink); }
+      .cta.ghost { background: transparent; color: var(--accent); border: 1px solid #bfd0e7; }
       form { display: grid; gap: 0.7rem; margin-top: 1rem; }
-      input, select, button, textarea { padding: 0.6rem; border: 1px solid #c5d1e0; border-radius: 10px; font: inherit; }
-      button { background: #153b6d; color: #fff; cursor: pointer; }
+      .form-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+      label { display: grid; gap: 0.3rem; font-size: 0.92rem; color: var(--muted); }
+      input, select, button, textarea {
+        padding: 0.65rem;
+        border: 1px solid #c5d1e0;
+        border-radius: 10px;
+        font: inherit;
+        background: #fff;
+      }
+      .toolbar { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: end; margin-bottom: 1rem; }
+      .toolbar form { margin: 0; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: end; width: 100%; }
+      .toolbar .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      .split { display: grid; gap: 1rem; grid-template-columns: 2fr 1fr; }
+      .json {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #0d1623;
+        color: #dce7f8;
+        padding: 1rem;
+        border-radius: 12px;
+        overflow-x: auto;
+      }
+      details summary { cursor: pointer; font-weight: 600; }
       .command-feedback { margin: 0.8rem 0; padding: 0.8rem 1rem; border-radius: 10px; }
       .command-feedback.success { background: #e7fff2; color: #11643b; }
-      .json { white-space: pre-wrap; word-break: break-word; background: #0d1623; color: #dce7f8; padding: 1rem; border-radius: 12px; }
+      .command-feedback strong { display: inline-block; margin-right: 0.35rem; }
+      @media (max-width: 960px) {
+        .split { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
     <header>
-      <div><strong>MyTraderSystem Control Plane</strong> · env={{ cfg.env }}</div>
+      <div class="header-top">
+        <div>
+          <div class="brand-title">MyTraderSystem Control Plane</div>
+          <div class="brand-subtitle">UI operativa de ingestion v1.1 · env={{ cfg.env }}</div>
+        </div>
+      </div>
       <nav>
-        <a href="/ui/overview">Overview</a>
-        <a href="/ui/runs">Runs</a>
-        <a href="/ui/streams">Streams</a>
-        <a href="/ui/alerts">Alerts</a>
-        <a href="/ui/checkpoints">Checkpoints</a>
-        <a href="/ui/recovery">Recovery</a>
-        <a href="/ui/audit">Audit</a>
+        <a href="/ui/overview" class="{% if request.url.path == '/ui/overview' %}active{% endif %}">Overview</a>
+        <a href="/ui/runs" class="{% if request.url.path == '/ui/runs' %}active{% endif %}">Runs</a>
+        <a href="/ui/streams" class="{% if request.url.path == '/ui/streams' or request.url.path.startswith('/ui/streams/') %}active{% endif %}">Streams</a>
+        <a href="/ui/alerts" class="{% if request.url.path == '/ui/alerts' %}active{% endif %}">Alerts</a>
+        <a href="/ui/checkpoints" class="{% if request.url.path == '/ui/checkpoints' %}active{% endif %}">Checkpoints</a>
+        <a href="/ui/recovery" class="{% if request.url.path == '/ui/recovery' %}active{% endif %}">Recovery</a>
+        <a href="/ui/audit" class="{% if request.url.path == '/ui/audit' %}active{% endif %}">Audit</a>
       </nav>
     </header>
     <main>
