@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the live WS canary and persist a JSON artifact")
     parser.add_argument("--target-profile", choices=["paper", "live"], default="live")
     parser.add_argument("--symbol", default="BTCUSDT")
-    parser.add_argument("--stream-type", choices=["kline"], default="kline")
+    parser.add_argument("--stream-type", choices=["trade", "kline"], default="kline")
     parser.add_argument("--interval", default="1m")
     parser.add_argument("--max-events", type=int, default=2)
     parser.add_argument("--duration-seconds", type=float, default=130.0)

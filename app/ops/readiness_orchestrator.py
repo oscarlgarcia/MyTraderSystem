@@ -8,11 +8,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Sequence
 
-from app.marketdata.support_matrix import feed_support
+from app.marketdata.support_matrix import (
+    feed_support,
+    live_supported_feed_types,
+    paper_supported_feed_types,
+    replay_validated_paper_feed_types,
+    runtime_validated_live_feed_types,
+    runtime_validated_paper_feed_types,
+)
 
 
 ReadinessTarget = Literal["paper", "live"]
-ReadinessProfile = Literal["paper_trade", "paper_kline", "live_kline"]
+ReadinessProfile = Literal["paper_trade", "paper_kline", "live_trade", "live_kline"]
 ReadinessEvidenceBasis = Literal["replay_validated", "runtime_validated"]
 
 
@@ -42,6 +49,11 @@ class ReadinessReport:
     stream_type: str
     interval: str
     evidence_basis: ReadinessEvidenceBasis
+    paper_scope: tuple[str, ...]
+    live_scope: tuple[str, ...]
+    paper_replay_validated_scope: tuple[str, ...]
+    paper_runtime_validated_scope: tuple[str, ...]
+    live_runtime_validated_scope: tuple[str, ...]
     raw_base_dir: str
     normalized_path: str
     validation_dir: str
@@ -201,7 +213,7 @@ def run_ingestion_readiness(
         ),
     ]
 
-    if _requires_runtime_validation(profile):
+    if _requires_rest_validation(profile):
         steps[1:1] = [
             (
                 "rest_canary",
@@ -221,7 +233,11 @@ def run_ingestion_readiness(
                     str(rest_canary_path),
                 ),
                 str(rest_canary_path),
-            ),
+            )
+        ]
+
+    if _requires_runtime_validation(profile):
+        steps[2 if _requires_rest_validation(profile) else 1:2 if _requires_rest_validation(profile) else 1] = [
             (
                 "ws_canary",
                 (
@@ -282,7 +298,7 @@ def run_ingestion_readiness(
             )
         )
 
-    if profile == "live_kline":
+    if target == "live":
         steps.extend(
             [
                 (
@@ -421,6 +437,11 @@ def run_ingestion_readiness(
         stream_type=stream_type,
         interval=interval,
         evidence_basis=evidence_basis,
+        paper_scope=paper_supported_feed_types(),
+        live_scope=live_supported_feed_types(),
+        paper_replay_validated_scope=replay_validated_paper_feed_types(),
+        paper_runtime_validated_scope=runtime_validated_paper_feed_types(),
+        live_runtime_validated_scope=runtime_validated_live_feed_types(),
         raw_base_dir=str(raw_base_dir),
         normalized_path=str(normalized_path),
         validation_dir=str(validation_dir),
@@ -453,10 +474,14 @@ def _resolve_readiness_contract(
     if target == "live":
         if not support.supports_live:
             raise ValueError(f"live readiness does not support stream_type={stream_type}")
-        if normalized_stream_type != "kline":
+        if normalized_stream_type == "trade":
+            profile = "live_trade"
+            expected_gate_stream_types = ("trade",)
+        elif normalized_stream_type == "kline":
+            profile = "live_kline"
+            expected_gate_stream_types = ("kline",)
+        else:
             raise ValueError(f"live readiness profile is not implemented for stream_type={stream_type}")
-        profile: ReadinessProfile = "live_kline"
-        expected_gate_stream_types = ("kline",)
         evidence_basis: ReadinessEvidenceBasis = "runtime_validated"
     elif not support.supports_paper:
         raise ValueError(f"paper readiness does not support stream_type={stream_type}")
@@ -481,6 +506,10 @@ def _resolve_readiness_contract(
 
 
 def _requires_runtime_validation(profile: ReadinessProfile) -> bool:
+    return profile in {"paper_kline", "live_trade", "live_kline"}
+
+
+def _requires_rest_validation(profile: ReadinessProfile) -> bool:
     return profile in {"paper_kline", "live_kline"}
 
 

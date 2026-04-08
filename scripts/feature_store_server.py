@@ -4,6 +4,10 @@ import argparse
 
 import uvicorn
 
+from _script_bootstrap import bootstrap_repo_path
+
+bootstrap_repo_path()
+
 from app.config import load_config
 from app.features.api import create_feature_store_api
 from app.features.online_store_factory import OnlineStoreConfig, create_online_store

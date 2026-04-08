@@ -145,8 +145,8 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
   - Gating actual:
     - cualquier `mode=live` rechaza feeds sin `supports_live`
     - `production_mode` rechaza ademas feeds sin recovery `exact_verified` o sin handoff soportado
-    - el scope live soportado hoy es `kline`-only: `kline` es el unico feed con `supports_live=True`, `supports_handoff=True` y recovery `exact_verified`
-    - `trade` y `book` siguen con `supports_live=False` y quedan fuera del scope live
+    - el scope live soportado hoy es `trade` + `kline`
+    - `trade` y `kline` forman el scope live soportado hoy; `trade` exige exact recovery e historical-to-live handoff, mientras `book` queda fuera del scope live
 - `marketdata.handoff`
   - Define `HistoricalWindow`, `windowed_bootstrap_events(...)` y `HandoffSource`.
   - `HandoffSource` compone:
@@ -532,5 +532,6 @@ flowchart LR
 ## Scope operativo por feed
 - `paper` soporta `trade` y `kline`.
 - `trade` en `paper` se valida por `replay`, contratos del vendor y storage validation; no debe tratarse como soporte `live`.
-- `live` soporta solo `kline`.
+- `live` soporta `trade` + `kline`.
+- `trade` en `live` exige exact recovery, handoff historico-live y runtime validation continua.
 - `book` sigue fuera de `paper` y `live` hasta tener runtime, schema typed y recovery dedicados.

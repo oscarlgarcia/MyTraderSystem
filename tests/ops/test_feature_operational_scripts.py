@@ -83,6 +83,47 @@ def test_feature_store_smoke_main_checks_healthz(monkeypatch):
     assert feature_store_smoke.main() == 0
 
 
+def test_feature_bootstrap_release_inputs_creates_operational_artifacts(monkeypatch, tmp_path: Path):
+    bootstrap = _load_script("feature_bootstrap_release_inputs")
+    cfg = SimpleNamespace(
+        feature_validation_dir=tmp_path,
+        feature_offline_store_path=tmp_path / "offline.sqlite",
+        feature_store_server_path=tmp_path / "online.sqlite",
+        feature_training_bundle_registry_dir=tmp_path / "training-bundles",
+    )
+    monkeypatch.setattr(bootstrap, "load_config", lambda env: cfg)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "feature_bootstrap_release_inputs.py",
+            "--env",
+            "dev",
+            "--target",
+            "paper",
+            "--feature-set-name",
+            "legacy",
+            "--feature-set-version",
+            "legacy",
+            "--symbol",
+            "BTCUSDT",
+            "--output-dir",
+            str(tmp_path),
+            "--event-count",
+            "16",
+        ],
+    )
+
+    assert bootstrap.main() == 0
+    assert (tmp_path / "feature_parity_report.json").exists()
+    assert (tmp_path / "feature_benchmark_report.json").exists()
+    assert (tmp_path / "feature_contract_validation.json").exists()
+    assert (tmp_path / "feature_observability.json").exists()
+    assert (tmp_path / "feature_rollout_audit.json").exists()
+    registry_dir = cfg.feature_training_bundle_registry_dir
+    assert registry_dir.exists()
+    assert any(registry_dir.iterdir())
+
+
 def test_feature_release_evidence_main_generates_manifest(monkeypatch, tmp_path: Path):
     feature_evidence = _load_script("feature_release_evidence")
     with feature_http_server() as (server, handler):
@@ -401,3 +442,29 @@ def test_feature_release_rollback_drill_env_uses_config_registry(monkeypatch, tm
         ],
     )
     assert rollback_drill.main() == 0
+
+
+def test_feature_release_rollback_drill_live_restore_passes_live_readiness(monkeypatch, tmp_path: Path):
+    rollback_drill = _load_script("feature_release_rollback_drill")
+    registry_path = tmp_path / "feature_releases.json"
+    registry_path.write_text(
+        json.dumps({"legacy_live": {"active_version": "v2", "previous_version": "v1"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "feature_release_rollback_drill.py",
+            "--registry-path",
+            str(registry_path),
+            "--feature-set-name",
+            "legacy_live",
+            "--target",
+            "live",
+            "--restore",
+        ],
+    )
+
+    assert rollback_drill.main() == 0
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert registry["legacy_live"]["active_version"] == "v2"

@@ -11,10 +11,10 @@ from typing import Callable, Iterable, Protocol
 
 from app.common.dto import MarketEvent
 from app.marketdata.gaps import GapObservation
-from app.marketdata.models import BarEvent, IngestionEvent
+from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent
 from app.marketdata.temporal_state import TemporalPartitionKey
 
-LIVE_RECOVERY_SCOPE = ("kline",)
+LIVE_RECOVERY_SCOPE = ("trade", "kline")
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +128,29 @@ def _bar_open_ts(event: IngestionEvent) -> datetime | None:
     return None
 
 
+def _trade_cursor_value(event: IngestionEvent) -> int | None:
+    if isinstance(event, TradeEvent):
+        for candidate in (event.trade_id, event.source_id):
+            if candidate in (None, ""):
+                continue
+            try:
+                return int(str(candidate))
+            except (TypeError, ValueError):
+                continue
+        return None
+    metadata = getattr(event, "metadata", {})
+    if isinstance(metadata, dict):
+        for key in ("trade_id", "source_id", "aggregate_trade_id"):
+            raw = metadata.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                return int(str(raw))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 def _expected_window_timestamps(request: RecoveryRequest) -> tuple[datetime, ...]:
     if request.start_ts is None or request.end_ts is None or not request.interval:
         return ()
@@ -152,6 +175,28 @@ def build_recovery_request(
     previous_cursor_value: str | None = None,
 ) -> RecoveryRequest | None:
     stream_type = getattr(event, "source", getattr(event, "event_type", "trade"))
+    if str(stream_type) == "trade":
+        current_cursor = _trade_cursor_value(event)
+        previous_cursor = None
+        if previous_cursor_kind in {"trade_id", "sequence_id", "source_id"} and previous_cursor_value not in (None, ""):
+            try:
+                previous_cursor = int(str(previous_cursor_value))
+            except (TypeError, ValueError):
+                previous_cursor = None
+        if current_cursor is None or previous_cursor is None or current_cursor <= previous_cursor:
+            return None
+        requested_rows = max(1, current_cursor - previous_cursor)
+        return RecoveryRequest(
+            partition=partition,
+            start_ts=previous_ts,
+            end_ts=event.event_ts,
+            limit=requested_rows,
+            cursor_kind="trade_id",
+            cursor_value=str(previous_cursor + 1),
+            gap_seconds=gap_observation.gap_seconds,
+            missing_count=gap_observation.missing_count,
+            reason=gap_observation.mode,
+        )
     if str(stream_type) != "kline":
         return None
     interval = _interval_for_event(event) or "1m"
@@ -214,8 +259,7 @@ class TradeRecoveryPolicy:
     name: str = "trade_recovery_policy"
 
     def can_recover(self, snapshot_fn: Callable[..., Iterable[IngestionEvent]] | None) -> bool:
-        del snapshot_fn
-        return False
+        return snapshot_fn is not None
 
     def recover(
         self,
@@ -224,8 +268,15 @@ class TradeRecoveryPolicy:
         partition: TemporalPartitionKey,
         request: RecoveryRequest | None = None,
     ) -> Iterable[IngestionEvent]:
-        del snapshot_fn, partition, request
-        return ()
+        if snapshot_fn is None:
+            return ()
+        recovered: list[IngestionEvent] = []
+        for event in _call_snapshot_fn(snapshot_fn, request=request):
+            if not _event_partition_matches(event, partition):
+                continue
+            if getattr(event, "source", getattr(event, "event_type", None)) == "trade":
+                recovered.append(event)
+        return recovered
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +324,66 @@ def verify_recovery_window(
     events = list(recovered_events)
     if request is None:
         return RecoveryVerification(exact=True, expected_rows=0, received_rows=len(events))
+    if partition.stream_type == "trade":
+        if request.cursor_kind not in {"trade_id", "sequence_id"} or request.cursor_value in (None, ""):
+            expected_rows = int(request.limit or 0)
+            return RecoveryVerification(
+                exact=len(events) >= expected_rows if expected_rows else True,
+                expected_rows=expected_rows,
+                received_rows=len(events),
+            )
+        try:
+            start_cursor = int(str(request.cursor_value))
+        except (TypeError, ValueError):
+            expected_rows = int(request.limit or 0)
+            return RecoveryVerification(
+                exact=len(events) >= expected_rows if expected_rows else True,
+                expected_rows=expected_rows,
+                received_rows=len(events),
+            )
+        expected = tuple(str(start_cursor + offset) for offset in range(max(0, int(request.limit or 0))))
+        if not expected:
+            return RecoveryVerification(exact=True, expected_rows=0, received_rows=0)
+        expected_start = int(expected[0])
+        expected_end = int(expected[-1])
+        actual_all: list[str] = []
+        for event in events:
+            cursor = _trade_cursor_value(event)
+            if cursor is not None:
+                actual_all.append(str(cursor))
+        actual_in_window = tuple(
+            sorted(
+                (
+                    cursor
+                    for cursor in actual_all
+                    if expected_start <= int(cursor) <= expected_end
+                ),
+                key=int,
+            )
+        )
+        expected_set = set(expected)
+        actual_set = set(actual_in_window)
+        duplicates: list[str] = []
+        seen: set[str] = set()
+        for cursor in actual_in_window:
+            if cursor in seen and cursor not in duplicates:
+                duplicates.append(cursor)
+            seen.add(cursor)
+        missing = tuple(cursor for cursor in expected if cursor not in actual_set)
+        unexpected = tuple(
+            cursor
+            for cursor in sorted(actual_all, key=int)
+            if int(cursor) > expected_end
+        )
+        exact = not missing and not unexpected and actual_set == expected_set
+        return RecoveryVerification(
+            exact=exact,
+            expected_rows=len(expected),
+            received_rows=len(actual_all),
+            missing_timestamps=missing,
+            unexpected_timestamps=unexpected,
+            duplicate_timestamps=tuple(duplicates),
+        )
     if partition.stream_type != "kline":
         expected_rows = int(request.limit or 0)
         return RecoveryVerification(

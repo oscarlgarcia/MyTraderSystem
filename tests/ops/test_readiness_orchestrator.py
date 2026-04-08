@@ -158,6 +158,45 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
     assert "--phase" in final_gate and "final" in final_gate
 
 
+def test_readiness_orchestrator_runs_live_trade_without_rest_canary(tmp_path: Path):
+    commands: list[tuple[str, ...]] = []
+    raw_base_dir = tmp_path / "raw"
+    normalized_path = tmp_path / "normalized"
+    raw_base_dir.mkdir()
+    normalized_path.mkdir()
+
+    report = run_ingestion_readiness(
+        workspace=tmp_path,
+        target="live",
+        env="dev",
+        raw_base_dir=raw_base_dir,
+        normalized_path=normalized_path,
+        symbol="BTCUSDT",
+        stream_type="trade",
+        interval="1m",
+        validation_dir=tmp_path / "docs" / "validation",
+        output_path=tmp_path / "docs" / "validation" / "live-trade.json",
+        executor=_success_executor(commands),
+    )
+
+    assert report.pass_ok is True
+    assert report.profile == "live_trade"
+    assert report.evidence_basis == "runtime_validated"
+    assert report.live_scope == ("trade", "kline")
+    assert report.paper_replay_validated_scope == ("trade",)
+    assert [step.name for step in report.steps] == [
+        "replay_parity",
+        "ws_canary",
+        "storage_benchmark",
+        "vendor_contracts",
+        "soak",
+        "failure_injection",
+        "release_gates_predrill",
+        "live_drill",
+        "release_gates_final",
+    ]
+
+
 def test_readiness_orchestrator_fails_clearly_when_prereq_paths_are_missing(tmp_path: Path):
     with pytest.raises(ValueError, match="raw_base_dir does not exist"):
         run_ingestion_readiness(

@@ -532,6 +532,16 @@ class ResilientRunner:
         stream_state.last_recovery_cursor_after_kind = stream_state.cursor_kind
         stream_state.last_recovery_cursor_after_value = stream_state.cursor_value
         stream_state.last_recovery_rows_delivered = recovered_rows
+        def _serialize_recovery_audit_values(values: object) -> list[str] | None:
+            if not values:
+                return None
+            serialized: list[str] = []
+            for value in values:
+                if hasattr(value, "isoformat"):
+                    serialized.append(value.isoformat())
+                else:
+                    serialized.append(str(value))
+            return serialized or None
         recovery_audit_event = {
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             "trace_id": get_trace_id(),
@@ -552,9 +562,9 @@ class ResilientRunner:
             "recovered_rows_delivered": recovered_rows,
             "recovery_exactness_violated": bool(request is not None and request.limit is not None and not recovery_verification.exact),
             "recovery_expected_rows": recovery_verification.expected_rows or None,
-            "recovery_missing_timestamps": [timestamp.isoformat() for timestamp in recovery_verification.missing_timestamps] or None,
-            "recovery_unexpected_timestamps": [timestamp.isoformat() for timestamp in recovery_verification.unexpected_timestamps] or None,
-            "recovery_duplicate_timestamps": [timestamp.isoformat() for timestamp in recovery_verification.duplicate_timestamps] or None,
+            "recovery_missing_timestamps": _serialize_recovery_audit_values(recovery_verification.missing_timestamps),
+            "recovery_unexpected_timestamps": _serialize_recovery_audit_values(recovery_verification.unexpected_timestamps),
+            "recovery_duplicate_timestamps": _serialize_recovery_audit_values(recovery_verification.duplicate_timestamps),
         }
         self.recovery_audit_events.append(recovery_audit_event)
         self.metrics.recovery_audit_events_total += 1
@@ -795,6 +805,17 @@ class ResilientRunner:
         request: RecoveryRequest,
         verification: RecoveryVerification | None = None,
     ) -> None:
+        def _serialize_exactness_values(values: object) -> tuple[str, ...]:
+            if not values:
+                return ()
+            serialized: list[str] = []
+            for value in values:
+                if hasattr(value, "isoformat"):
+                    serialized.append(value.isoformat())
+                else:
+                    serialized.append(str(value))
+            return tuple(serialized)
+
         stream_state.recovery_exactness_violation_total += 1
         stream_state.gap_irreparable = True
         stream_state.gap_irreparable_total += 1
@@ -813,9 +834,9 @@ class ResilientRunner:
             interval=request.interval,
             gap_seconds=request.gap_seconds,
             missing_count=request.missing_count,
-            missing_timestamps=[timestamp.isoformat() for timestamp in verification.missing_timestamps] if verification else (),
-            unexpected_timestamps=[timestamp.isoformat() for timestamp in verification.unexpected_timestamps] if verification else (),
-            duplicate_timestamps=[timestamp.isoformat() for timestamp in verification.duplicate_timestamps] if verification else (),
+            missing_timestamps=_serialize_exactness_values(verification.missing_timestamps) if verification else (),
+            unexpected_timestamps=_serialize_exactness_values(verification.unexpected_timestamps) if verification else (),
+            duplicate_timestamps=_serialize_exactness_values(verification.duplicate_timestamps) if verification else (),
         )
         logger.error(
             "recovery exactness violation",

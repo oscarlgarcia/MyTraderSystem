@@ -10,14 +10,18 @@ from typing import Literal
 
 RecoveryCapability = Literal["none", "approximate", "exact", "exact_verified"]
 PaperValidationBasis = Literal["none", "replay_validated", "runtime_validated"]
+LiveValidationBasis = Literal["none", "runtime_validated"]
+OperationalTier = Literal["supported", "experimental", "excluded"]
 
 
 @dataclass(frozen=True, slots=True)
 class FeedSupport:
     feed_type: str
+    operational_tier: OperationalTier
     supports_paper: bool
     paper_validation_basis: PaperValidationBasis
     supports_live: bool
+    live_validation_basis: LiveValidationBasis
     recovery_capability: RecoveryCapability
     supports_handoff: bool
     paper_scope_note: str = ""
@@ -35,19 +39,23 @@ class FeedSupport:
 FEED_SUPPORT_MATRIX: dict[str, FeedSupport] = {
     "trade": FeedSupport(
         feed_type="trade",
+        operational_tier="supported",
         supports_paper=True,
         paper_validation_basis="replay_validated",
-        supports_live=False,
-        recovery_capability="none",
-        supports_handoff=False,
+        supports_live=True,
+        live_validation_basis="runtime_validated",
+        recovery_capability="exact_verified",
+        supports_handoff=True,
         paper_scope_note="trade is supported for paper via replay parity, vendor contracts, and storage validation",
-        live_scope_note="trade live remains blocked until exact recovery and historical-to-live handoff are implemented",
+        live_scope_note="trade live uses aggregate-trade runtime validation, exact recovery, and historical-to-live handoff via aggregate trade ids",
     ),
     "kline": FeedSupport(
         feed_type="kline",
+        operational_tier="supported",
         supports_paper=True,
         paper_validation_basis="runtime_validated",
         supports_live=True,
+        live_validation_basis="runtime_validated",
         recovery_capability="exact_verified",
         supports_handoff=True,
         paper_scope_note="kline paper readiness requires runtime canary and soak evidence",
@@ -55,13 +63,15 @@ FEED_SUPPORT_MATRIX: dict[str, FeedSupport] = {
     ),
     "book": FeedSupport(
         feed_type="book",
+        operational_tier="excluded",
         supports_paper=False,
         paper_validation_basis="none",
         supports_live=False,
+        live_validation_basis="none",
         recovery_capability="none",
         supports_handoff=False,
-        paper_scope_note="book remains an experimental placeholder without a supported paper contract",
-        live_scope_note="book remains outside supported live scope until a dedicated runtime, schema, and recovery strategy exist",
+        paper_scope_note="book is explicitly excluded from the supported paper contract until a dedicated runtime, schema, and recovery strategy exist",
+        live_scope_note="book is explicitly excluded from the supported live contract until a dedicated runtime, schema, and recovery strategy exist",
     ),
 }
 
@@ -91,6 +101,36 @@ def paper_supported_feed_types() -> tuple[str, ...]:
 
 def live_supported_feed_types() -> tuple[str, ...]:
     return tuple(stream_type for stream_type, support in FEED_SUPPORT_MATRIX.items() if support.supports_live)
+
+
+def runtime_validated_paper_feed_types() -> tuple[str, ...]:
+    return tuple(
+        stream_type
+        for stream_type, support in FEED_SUPPORT_MATRIX.items()
+        if support.supports_paper and support.paper_validation_basis == "runtime_validated"
+    )
+
+
+def replay_validated_paper_feed_types() -> tuple[str, ...]:
+    return tuple(
+        stream_type
+        for stream_type, support in FEED_SUPPORT_MATRIX.items()
+        if support.supports_paper and support.paper_validation_basis == "replay_validated"
+    )
+
+
+def runtime_validated_live_feed_types() -> tuple[str, ...]:
+    return tuple(
+        stream_type
+        for stream_type, support in FEED_SUPPORT_MATRIX.items()
+        if support.supports_live and support.live_validation_basis == "runtime_validated"
+    )
+
+
+def excluded_feed_types() -> tuple[str, ...]:
+    return tuple(
+        stream_type for stream_type, support in FEED_SUPPORT_MATRIX.items() if support.operational_tier == "excluded"
+    )
 
 
 def validate_paper_feed_support(stream_types: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:

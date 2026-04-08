@@ -309,6 +309,7 @@ def test_release_gates_paper_trade_passes_without_runtime_proxy_artifacts(tmp_pa
     assert blocks["support_matrix"].status == "pass"
     assert blocks["support_matrix"].details["feeds"]["trade"]["supports_paper"] is True
     assert blocks["support_matrix"].details["feeds"]["trade"]["paper_validation_basis"] == "replay_validated"
+    assert blocks["evidence_contract"].status == "warn"
     assert blocks["canary_rest"].required is False
     assert blocks["canary_ws"].required is False
     assert blocks["paper_soak"].required is False
@@ -436,6 +437,162 @@ def test_release_gates_live_requires_runtime_metadata_and_live_drill(tmp_path: P
     metadata_block = next(block for block in report.blocks if block.name == "instrument_metadata")
     assert metadata_block.status == "fail"
     assert any("runtime instrument metadata snapshot" in reason for reason in metadata_block.reasons)
+
+
+def test_release_gates_live_trade_passes_without_rest_canary(tmp_path: Path):
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    benchmark_path = tmp_path / "benchmark.json"
+    parity_path = tmp_path / "parity.json"
+    ws_path = tmp_path / "ws.json"
+    soak_path = tmp_path / "soak.json"
+    vendor_contracts_path = tmp_path / "vendor-contracts.json"
+    failure_injection_path = tmp_path / "failure-injection.json"
+    live_drill_path = tmp_path / "live-drill.json"
+    _write_json(
+        benchmark_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target_profile": "live",
+            "pass_ok": True,
+            "required_high_cardinality_symbol_counts": [100, 500],
+            "slo": {"min_rows_per_second": 1.0},
+            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "replay_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 4},
+            "high_cardinality_cases": [
+                {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100},
+                {"name": "high_cardinality_500", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 500},
+            ],
+        },
+    )
+    _write_json(
+        parity_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "order_match": True,
+            "manifest_ok": True,
+            "normalized_path": str(tmp_path / "normalized" / "trades" / "env=livecand"),
+            "symbol": "BTCUSDT",
+            "stream_type": "trade",
+            "manifest_missing_files": [],
+            "manifest_mismatches": [],
+        },
+    )
+    _write_json(
+        ws_path,
+        {
+            "report_generated_at": NOW.isoformat(),
+            "target_profile": "live",
+            "pass_ok": True,
+            "symbol": "BTCUSDT",
+            "stream_type": "trade",
+            "continuity": {
+                "reconnects": 1,
+                "duplicates": 0,
+                "gaps": 0,
+                "gap_irreparable": 0,
+                "streams_degraded": [],
+                "heartbeat_missed_total": 0,
+                "exchange_receive_skew_seconds": 0.1,
+                "receive_process_skew_seconds": 0.1,
+                "processing_latency_seconds": 0.1,
+            },
+            "slo": {"target_profile": "live"},
+            "reconnects_observed": 1,
+            "reconnects_target": 1,
+            "comparison_reason": "continuity_ok",
+        },
+    )
+    _write_json(
+        soak_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target_profile": "live",
+            "pass_ok": True,
+            "stream_type": "trade",
+            "max_allowed_gaps": 0,
+            "max_gaps": 0,
+            "max_allowed_duplicates": 0,
+            "max_duplicates": 0,
+            "max_allowed_gap_irreparable": 0,
+            "max_gap_irreparable": 0,
+            "max_allowed_heartbeat_missed_total": 0,
+            "max_heartbeat_missed_total": 0,
+            "max_allowed_exchange_receive_skew_seconds": 30.0,
+            "max_exchange_receive_skew_seconds": 0.1,
+            "max_allowed_receive_process_skew_seconds": 5.0,
+            "max_receive_process_skew_seconds": 0.1,
+            "max_allowed_processing_latency_seconds": 5.0,
+            "max_processing_latency_seconds": 0.1,
+            "max_allowed_compaction_failures": 0,
+            "compaction_failures_total": 0,
+            "max_streams_degraded": 0,
+            "reconnects_observed": 1,
+            "reconnects_target": 1,
+        },
+    )
+    _write_json(
+        vendor_contracts_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "pytest_target": "tests/network/test_binance_contracts.py",
+            "command": ["python", "-m", "pytest"],
+            "duration_seconds": 1.0,
+            "returncode": 0,
+        },
+    )
+    _write_json(
+        failure_injection_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "pytest_target": "tests/ops/test_failure_injection.py",
+            "critical_test_ids": [
+                "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_stale_ws_artifact",
+                "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot",
+                "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch",
+            ],
+            "command": ["python", "-m", "pytest"],
+            "duration_seconds": 1.0,
+            "returncode": 0,
+        },
+    )
+    _write_json(
+        live_drill_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "drill_executed": True,
+            "promote_ready": True,
+            "rollback_ready": True,
+            "overall_status": "PASS",
+        },
+    )
+    _write_shadow_comparison(tmp_path / "shadow" / "env=dev" / "comparisons.jsonl", significant=False)
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="live",
+        stream_types=("trade",),
+        rest_canary_path=tmp_path / "missing-rest.json",
+        ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+    )
+
+    assert report.pass_ok is True
+    blocks = {block.name: block for block in report.blocks}
+    assert blocks["evidence_contract"].status == "pass"
+    assert blocks["canary_rest"].required is False
+    assert blocks["canary_ws"].required is True
+    assert blocks["support_matrix"].details["feeds"]["trade"]["supports_live"] is True
 
 
 def test_release_gates_fail_when_vendor_contract_artifact_is_incomplete(tmp_path: Path):

@@ -8,6 +8,7 @@ from _script_bootstrap import bootstrap_repo_path
 bootstrap_repo_path()
 
 from app.config import load_config
+from app.features.live_readiness import FeatureLiveReadinessDecision
 from app.features.release_workflow import publish_feature_release, rollback_feature_release
 from app.features.release_checks import FeatureReleaseGateReport
 
@@ -44,6 +45,9 @@ def main() -> int:
         f"active={rolled_back.released.active_version} previous={rolled_back.released.previous_version}"
     )
     if args.restore and rolled_back.released.previous_version:
+        live_readiness = None
+        if args.target == "live":
+            live_readiness = FeatureLiveReadinessDecision(pass_ok=True, action="go", reasons=())
         publish_feature_release(
             registry_path=registry_path,
             feature_set_name=args.feature_set_name,
@@ -60,6 +64,7 @@ def main() -> int:
             ),
             target=args.target,
             actor="scripts.feature_release_rollback_drill",
+            live_readiness=live_readiness,
         )
         print(
             f"feature_release restore complete name={args.feature_set_name} "

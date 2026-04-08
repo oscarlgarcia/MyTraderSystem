@@ -6,7 +6,8 @@
 - Paper validation supports `trade` and `kline`.
 - `trade` in paper relies on `replay` parity, vendor contracts, and storage validation rather than live runtime readiness.
 - Live promotion is allowed only for the supported live scope declared in `app/marketdata/support_matrix.py`.
-- The supported live scope is `kline`-only. `trade` and `book` are not valid live promotion targets.
+- The supported live scope is `trade` + `kline`.
+- `trade` live requires exact recovery, historical-to-live handoff, WS canary and runtime soak evidence before promotion.
 - `book` is outside both paper and live supported scope until it has a dedicated runtime and recovery contract.
 - Promotion is blocked unless the current target is `live` and every required artifact is fresh and `PASS`.
 

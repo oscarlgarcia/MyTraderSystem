@@ -59,7 +59,7 @@ def main() -> int:
     validation_dir = Path(args.validation_dir)
     stream_type = str(args.stream_type).strip().lower()
     if args.target == "live":
-        default_profile = "live_kline"
+        default_profile = f"live_{stream_type}"
     else:
         default_profile = f"paper_{stream_type}"
     output_path = Path(args.output) if args.output else validation_dir / f"ingestion_readiness_{default_profile}.json"

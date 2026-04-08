@@ -19,7 +19,7 @@ def main() -> int:
     parser.add_argument("--duration-seconds", type=float, default=150.0)
     parser.add_argument("--pipeline-version", choices=["v1", "v2"], default="v2")
     parser.add_argument("--symbol", default="BTCUSDT")
-    parser.add_argument("--stream-type", choices=["kline"], default="kline")
+    parser.add_argument("--stream-type", choices=["trade", "kline"], default="kline")
     parser.add_argument("--interval", default="1m")
     parser.add_argument("--ws-base", default="wss://stream.binance.com:9443")
     parser.add_argument("--rest-base", default="https://api.binance.com")

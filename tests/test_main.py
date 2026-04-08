@@ -255,7 +255,7 @@ def test_production_mode_rejects_unsafe_fallback(tmp_path):
         main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 
-def test_production_mode_rejects_live_trade_without_exact_recovery(tmp_path):
+def test_production_mode_accepts_live_trade_with_exact_verified_recovery(tmp_path):
     cfg = load_config("dev")
     cfg = type(cfg)(
         env="prod",
@@ -276,11 +276,22 @@ def test_production_mode_rejects_live_trade_without_exact_recovery(tmp_path):
         "ingest_stream_types": ("trade",),
     }
 
-    with pytest.raises(ValueError, match="trade does not support live ingestion"):
-        main._validate_operational_security(cfg, mode="live", runtime=runtime)
+    metadata_path = tmp_path / "metadata" / "instruments" / "env=prod" / "venue=BINANCE" / "latest.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "metadata_snapshot_mode": "runtime",
+                "drift": {"material": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 
-def test_live_mode_rejects_trade_feed_until_exact_recovery_exists(tmp_path):
+def test_live_mode_accepts_trade_feed_when_live_scope_supports_it(tmp_path):
     cfg = load_config("dev")
     cfg = type(cfg)(
         env=cfg.env,
@@ -301,8 +312,7 @@ def test_live_mode_rejects_trade_feed_until_exact_recovery_exists(tmp_path):
         "ingest_stream_types": ("trade",),
     }
 
-    with pytest.raises(ValueError, match="trade does not support live ingestion"):
-        main._validate_operational_security(cfg, mode="live", runtime=runtime)
+    main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 
 def test_paper_mode_accepts_trade_feed(tmp_path):

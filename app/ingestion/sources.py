@@ -625,6 +625,7 @@ class BinanceSource:
         self,
         *,
         symbol: str,
+        stream_type: str,
         url: str,
         observed: int,
         reason: str,
@@ -636,34 +637,51 @@ class BinanceSource:
             extra={
                 "venue": "BINANCE",
                 "symbol": symbol,
-                "stream_type": "kline",
+                "stream_type": stream_type,
                 "endpoint": url,
                 "breaker_state": self.snapshot_breaker.state if self.snapshot_breaker else "disabled",
                 "reason": reason,
             },
         )
 
-    def _snapshot_params(self, *, symbol: str, request: RecoveryRequest | None) -> dict[str, object]:
-        interval = request.interval if request is not None and request.interval else "1m"
+    def _snapshot_endpoint(self, stream_type: str) -> str:
+        if stream_type == "kline":
+            return "/api/v3/klines"
+        if stream_type == "trade":
+            return "/api/v3/aggTrades"
+        raise KeyError(f"stream type does not support snapshots: {stream_type}")
+
+    def _snapshot_params(
+        self,
+        *,
+        symbol: str,
+        stream_type: str,
+        request: RecoveryRequest | None,
+    ) -> dict[str, object]:
         if request is not None and request.limit is not None:
             limit = request.limit
         else:
             limit = self.snapshot_default_limit
-        params: dict[str, object] = {
-            "symbol": symbol,
-            "interval": interval,
-            "limit": min(max(int(limit), 1), 1000),
-        }
+        params: dict[str, object] = {"symbol": symbol, "limit": min(max(int(limit), 1), 1000)}
+        if stream_type == "kline":
+            interval = request.interval if request is not None and request.interval else "1m"
+            params["interval"] = interval
         if request is not None and request.start_ts is not None:
             params["startTime"] = int(request.start_ts.timestamp() * 1000)
         if request is not None and request.end_ts is not None:
             params["endTime"] = int(request.end_ts.timestamp() * 1000)
+        if stream_type == "trade" and request is not None and request.cursor_kind in {"trade_id", "sequence_id"}:
+            if request.cursor_value not in (None, ""):
+                params["fromId"] = int(str(request.cursor_value))
+            params.pop("startTime", None)
+            params.pop("endTime", None)
         return params
 
-    def _snapshot_get(self, *, symbol: str, url: str, params: dict[str, object]) -> httpx.Response:
+    def _snapshot_get(self, *, symbol: str, stream_type: str, url: str, params: dict[str, object]) -> httpx.Response:
         if self.snapshot_breaker is not None and not self.snapshot_breaker.allow_request():
             self._emit_snapshot_retry_exhausted(
                 symbol=symbol,
+                stream_type=stream_type,
                 url=url,
                 observed=self.snapshot_breaker.failure_count,
                 reason="circuit_breaker_open",
@@ -699,6 +717,7 @@ class BinanceSource:
                     observed = 1
                 self._emit_snapshot_retry_exhausted(
                     symbol=symbol,
+                    stream_type=stream_type,
                     url=url,
                     observed=observed,
                     reason=type(exc).__name__,
@@ -853,9 +872,9 @@ class BinanceSource:
                     normalizer = BINANCE_FEED_NORMALIZERS.get(stream_type)
                     if normalizer is None or not getattr(normalizer, "supports_snapshot", False):
                         continue
-                    url = f"{self.cfg.rest_base.rstrip('/')}/api/v3/klines"
-                    params = self._snapshot_params(symbol=symbol, request=request)
-                    resp = self._snapshot_get(symbol=symbol, url=url, params=params)
+                    url = f"{self.cfg.rest_base.rstrip('/')}{self._snapshot_endpoint(stream_type)}"
+                    params = self._snapshot_params(symbol=symbol, stream_type=stream_type, request=request)
+                    resp = self._snapshot_get(symbol=symbol, stream_type=stream_type, url=url, params=params)
                     metric = _ensure_stream_metric(
                         self.stats,
                         venue="BINANCE",
@@ -872,7 +891,10 @@ class BinanceSource:
                             metric["recovery_exactness_violation_total"] = int(metric["recovery_exactness_violation_total"]) + 1
                     for row in rows:
                         self.stats.source_events_in += 1
-                        payload = snapshot_payload_from_row(stream_type, symbol, row, interval=str(params["interval"]))
+                        if stream_type == "kline":
+                            payload = snapshot_payload_from_row(stream_type, symbol, row, interval=str(params["interval"]))
+                        else:
+                            payload = snapshot_payload_from_row(stream_type, symbol, row)
                         try:
                             with use_instrument_catalog(self.catalog_state.catalog if self.catalog_state is not None else None):
                                 event = normalize_binance_event(
@@ -901,6 +923,8 @@ class BinanceSource:
                             events.append(event)
                             self.stats.events_valid += 1
                             self.stats.snapshot_rows += 1
+                        except MarketdataAnomalyError:
+                            continue
                         except SchemaDriftError as exc:
                             self._record_rejected(
                                 payload,

@@ -661,8 +661,8 @@ def run_soak_validation(
 ) -> SoakEvidence:
     if mode not in {"deterministic", "ws-live"}:
         raise ValueError(f"unsupported soak mode: {mode}")
-    if mode == "ws-live" and stream_type != "kline":
-        raise ValueError("ws-live soak currently supports only kline feeds")
+    if mode == "ws-live" and stream_type not in {"trade", "kline"}:
+        raise ValueError("ws-live soak supports only trade and kline feeds")
     runs: list[ValidationRun] = []
     reconnects_observed = 0
     compaction_failures_total = 0
@@ -772,7 +772,7 @@ def run_soak_validation(
         vendor="BINANCE" if mode == "ws-live" else "STATIC",
         symbol=symbol,
         stream_type=stream_type if mode == "ws-live" else "trade",
-        interval=interval if mode == "ws-live" else None,
+        interval=interval if mode == "ws-live" and stream_type == "kline" else None,
         iterations=iterations,
         max_events_per_iteration=events_per_iteration,
         duration_seconds=float(duration_seconds if mode == "ws-live" else 0.0),
@@ -942,8 +942,8 @@ def run_ws_live_canary(
     max_allowed_processing_latency_seconds: float | None = None,
     source_builder: WSCanarySourceBuilder | None = None,
 ) -> WSCanaryEvidence:
-    if stream_type != "kline":
-        raise ValueError("ws-live canary currently supports only kline feeds because live pipeline support is bars-only")
+    if stream_type not in {"trade", "kline"}:
+        raise ValueError("ws-live canary supports only trade and kline feeds")
     slo = _validation_slo(target_profile)
     allowed_duplicates = slo["max_allowed_duplicates"] if max_allowed_duplicates is None else int(max_allowed_duplicates)
     allowed_gaps = slo["max_allowed_gaps"] if max_allowed_gaps is None else int(max_allowed_gaps)

@@ -13,6 +13,16 @@ from app.marketdata.support_matrix import FEED_SUPPORT_MATRIX
 # Release-blocking registry: any feed promoted to exact recovery must point to
 # explicit tests that prove the claim.
 EXACT_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "trade": (
+        (
+            "tests.marketdata.recovery.test_recovery_guarantees",
+            "test_exact_trade_recovery_fills_gap_without_duplicate_delivery",
+        ),
+        (
+            "tests.marketdata.recovery.test_recovery_guarantees",
+            "test_verify_recovery_window_rejects_missing_and_unexpected_trade_rows",
+        ),
+    ),
     "kline": (
         (
             "tests.marketdata.recovery.test_recovery_guarantees",
@@ -25,6 +35,28 @@ EXACT_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 EXACT_VERIFIED_RECOVERY_CLAIM_TESTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "trade": (
+        (
+            "tests.marketdata.recovery.test_exact_recovery_suite",
+            "test_exact_verified_trade_recovery_handles_controlled_cuts",
+        ),
+        (
+            "tests.marketdata.recovery.test_exact_recovery_suite",
+            "test_exact_verified_trade_recovery_tolerates_duplicates_during_catchup",
+        ),
+        (
+            "tests.marketdata.recovery.test_exact_recovery_suite",
+            "test_exact_verified_trade_recovery_rejects_partial_snapshot_window",
+        ),
+        (
+            "tests.marketdata.recovery.test_exact_recovery_suite",
+            "test_exact_verified_trade_recovery_falls_back_when_cursor_state_is_mismatched",
+        ),
+        (
+            "tests.ingestion.test_exact_recovery_runtime",
+            "test_trade_reconnect_old_resend_is_deduplicated_after_exact_recovery",
+        ),
+    ),
     "kline": (
         (
             "tests.marketdata.recovery.test_exact_recovery_suite",
@@ -145,9 +177,10 @@ def test_exact_verified_recovery_registry_points_to_real_tests():
 
 def test_live_scope_claim_is_kline_only_across_support_matrix_and_cli_defaults() -> None:
     live_supported = sorted(feed_type for feed_type, support in FEED_SUPPORT_MATRIX.items() if support.supports_live)
-    assert live_supported == ["kline"]
+    assert live_supported == ["kline", "trade"]
     assert FEED_SUPPORT_MATRIX["kline"].supports_exact_verified_recovery is True
-    assert FEED_SUPPORT_MATRIX["trade"].supports_live is False
+    assert FEED_SUPPORT_MATRIX["trade"].supports_live is True
+    assert FEED_SUPPORT_MATRIX["trade"].supports_exact_verified_recovery is True
     assert FEED_SUPPORT_MATRIX["book"].supports_live is False
     assert DEFAULT_INGEST_STREAM_TYPES == ("kline",)
     assert parse_args([]).ingest_stream_types == ("kline",)
@@ -163,15 +196,14 @@ def test_paper_scope_claim_supports_trade_and_kline_but_rejects_book() -> None:
 
 def test_live_scope_docs_do_not_advertise_trade_or_book_as_supported_live_runtime() -> None:
     required_markers = (
-        "`kline`-only",
+        "`trade` + `kline`",
         "`trade`",
         "`book`",
     )
     forbidden_markers = (
-        "trade+kline",
         'stream_types=("trade", "foo")',
         "supports_exact_recovery=False",
-        "default Binance (`trade`, `kline`)",
+        "`kline`-only",
     )
 
     for path in LIVE_SCOPE_DOC_PATHS:
@@ -188,6 +220,8 @@ def test_scope_docs_explain_trade_paper_and_book_exclusion() -> None:
         "paper",
         "`trade`",
         "replay",
+        "live",
+        "exact recovery",
         "`book`",
     )
     for path in LIVE_SCOPE_DOC_PATHS:

@@ -196,7 +196,7 @@ def test_operational_shadow_diff_blocks_promotion(tmp_path: Path, monkeypatch):
     assert shadow_alert["shadow_checksum_diff_total"] >= 1
 
 
-def test_operational_production_gating_blocks_unsupported_live_trade(tmp_path: Path):
+def test_operational_production_gating_accepts_live_trade_with_runtime_metadata(tmp_path: Path):
     cfg = _cfg(tmp_path)
     cfg.env = "prod"
     runtime = {
@@ -209,9 +209,19 @@ def test_operational_production_gating_blocks_unsupported_live_trade(tmp_path: P
         "ingest_backpressure_policy": "pause",
         "ingest_stream_types": ("trade",),
     }
+    metadata_path = tmp_path / "metadata" / "instruments" / "env=prod" / "venue=BINANCE" / "latest.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "metadata_snapshot_mode": "runtime",
+                "drift": {"material": False},
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    with pytest.raises(ValueError, match="trade does not support live ingestion"):
-        main._validate_operational_security(cfg, mode="live", runtime=runtime)
+    main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 
 def test_operational_incomplete_recovery_emits_exactness_violation_and_degrades_stream(tmp_path: Path):

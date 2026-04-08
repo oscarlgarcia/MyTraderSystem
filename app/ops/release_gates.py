@@ -8,7 +8,15 @@ from typing import Literal
 
 from app.config import DEFAULT_INGEST_STREAM_TYPES
 from app.ingestion.storage_health import collect_storage_health, storage_health_payload
-from app.marketdata.support_matrix import FeedSupport, feed_support, live_supported_feed_types, normalize_feed_types
+from app.marketdata.support_matrix import (
+    FeedSupport,
+    feed_support,
+    live_supported_feed_types,
+    normalize_feed_types,
+    replay_validated_paper_feed_types,
+    runtime_validated_live_feed_types,
+    runtime_validated_paper_feed_types,
+)
 from app.ops.observability_contract import build_observability_contract_report
 
 
@@ -78,7 +86,9 @@ def run_release_gates(
 ) -> ReleaseGateReport:
     normalized_stream_types = normalize_feed_types(stream_types)
     require_runtime_artifacts = _requires_runtime_artifacts(normalized_stream_types, target=target)
+    require_rest_artifacts = _requires_rest_artifacts(normalized_stream_types, target=target)
     blocks = (
+        _evidence_contract_block(normalized_stream_types, target=target),
         _support_matrix_block(normalized_stream_types, target=target),
         _exact_recovery_block(normalized_stream_types, target=target),
         _live_scope_block(normalized_stream_types, target=target),
@@ -86,7 +96,7 @@ def run_release_gates(
         _canary_block(
             name="canary_rest",
             path=Path(rest_canary_path or "docs/validation/ingestion_canary_report.json"),
-            required=require_runtime_artifacts,
+            required=require_rest_artifacts,
             expected_keys=("pass_ok", "diffs", "comparison_reason"),
             bool_paths=(("pass_ok",),),
             max_age=timedelta(hours=24),
@@ -283,6 +293,45 @@ def _live_scope_block(stream_types: tuple[str, ...], *, target: ReleaseTarget) -
         required=True,
         reasons=tuple(reasons),
         details={"allowed_live_stream_types": allowed_live_stream_types, "requested_stream_types": list(stream_types)},
+    )
+
+
+def _evidence_contract_block(stream_types: tuple[str, ...], *, target: ReleaseTarget) -> GateBlockReport:
+    reasons: list[str] = []
+    details: dict[str, object] = {
+        "paper_runtime_validated_scope": list(runtime_validated_paper_feed_types()),
+        "paper_replay_validated_scope": list(replay_validated_paper_feed_types()),
+        "live_runtime_validated_scope": list(runtime_validated_live_feed_types()),
+        "requested_stream_types": list(stream_types),
+        "feeds": {},
+    }
+    for stream_type in stream_types:
+        support = feed_support(stream_type)
+        details["feeds"][stream_type] = {
+            "paper_validation_basis": support.paper_validation_basis,
+            "live_validation_basis": support.live_validation_basis,
+            "supports_paper": support.supports_paper,
+            "supports_live": support.supports_live,
+        }
+        if target == "paper" and support.supports_paper:
+            if support.paper_validation_basis == "replay_validated":
+                reasons.append(f"{stream_type} paper readiness is replay-backed and must not be overclaimed as runtime-live evidence")
+        if target == "live" and support.supports_live and support.live_validation_basis != "runtime_validated":
+            reasons.append(f"{stream_type} live readiness is missing runtime-validated evidence")
+    status: GateStatus
+    required: bool
+    if target == "live":
+        status = "pass" if not reasons else "fail"
+        required = True
+    else:
+        status = "pass" if not reasons else "warn"
+        required = False
+    return GateBlockReport(
+        name="evidence_contract",
+        status=status,
+        required=required,
+        reasons=tuple(reasons or ["evidence basis aligned with operational contract"]),
+        details=details,
     )
 
 
@@ -572,7 +621,19 @@ def _validate_soak_payload(
 def _requires_runtime_artifacts(stream_types: tuple[str, ...], *, target: ReleaseTarget) -> bool:
     if target == "live":
         return True
-    return any(feed_support(stream_type).supports_live for stream_type in stream_types)
+    return any(
+        feed_support(stream_type).paper_validation_basis == "runtime_validated"
+        for stream_type in stream_types
+    )
+
+
+def _requires_rest_artifacts(stream_types: tuple[str, ...], *, target: ReleaseTarget) -> bool:
+    if target == "live":
+        return any(stream_type == "kline" for stream_type in stream_types)
+    return any(
+        feed_support(stream_type).paper_validation_basis == "runtime_validated"
+        for stream_type in stream_types
+    )
 
 
 def _promotion_slo(target: ReleaseTarget) -> dict[str, float | int]:
@@ -789,9 +850,11 @@ def _observability_contract_block(*, target: ReleaseTarget, required: bool) -> G
 def _feed_support_payload(support: FeedSupport) -> dict[str, object]:
     return {
         "feed_type": support.feed_type,
+        "operational_tier": support.operational_tier,
         "supports_paper": support.supports_paper,
         "paper_validation_basis": support.paper_validation_basis,
         "supports_live": support.supports_live,
+        "live_validation_basis": support.live_validation_basis,
         "supports_handoff": support.supports_handoff,
         "recovery_capability": support.recovery_capability,
         "supports_exact_recovery": support.supports_exact_recovery,

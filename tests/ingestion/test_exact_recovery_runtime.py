@@ -6,7 +6,7 @@ from unittest import mock
 from app.ingestion import pipeline
 from app.ingestion.resilience import ResilientRunner
 from app.ingestion.sources import StaticSource
-from app.marketdata.models import BarEvent
+from app.marketdata.models import BarEvent, TradeEvent
 
 
 def _bar(ts: datetime) -> BarEvent:
@@ -25,6 +25,20 @@ def _bar(ts: datetime) -> BarEvent:
         interval="1m",
         open_ts=ts - timedelta(minutes=1),
         close_ts=ts,
+    )
+
+
+def _trade(ts: datetime, trade_id: str) -> TradeEvent:
+    return TradeEvent(
+        symbol="BTCUSDT",
+        exchange_ts=ts,
+        receive_ts=ts,
+        process_ts=ts,
+        venue="BINANCE",
+        source_id=trade_id,
+        price=100.0,
+        size=1.0,
+        trade_id=trade_id,
     )
 
 
@@ -143,3 +157,28 @@ def test_processing_latency_tracks_receive_clock_for_kline() -> None:
     runner.run(lambda _event: None, stop_on_complete=True)
 
     assert runner.metrics.max_latency_seconds < 5.0
+
+
+def test_trade_reconnect_old_resend_is_deduplicated_after_exact_recovery() -> None:
+    base = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    handled: list[str] = []
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter([
+            _trade(base, "1"),
+            _trade(base + timedelta(seconds=3), "4"),
+            _trade(base + timedelta(seconds=2), "3"),
+        ]),
+        snapshot_fn=lambda *, request=None: [
+            _trade(base + timedelta(seconds=1), "2"),
+            _trade(base + timedelta(seconds=2), "3"),
+            _trade(base + timedelta(seconds=3), "4"),
+        ],
+        lag_threshold_seconds=0.5,
+        sleeper=lambda _seconds: None,
+    )
+    runner.run(lambda event: handled.append(event.trade_id or ""), stop_on_complete=True)
+
+    assert handled == ["1", "2", "3", "4"]
+    assert runner.metrics.dedup_skipped >= 1
+    assert runner.metrics.recovery_exactness_violation_total == 0

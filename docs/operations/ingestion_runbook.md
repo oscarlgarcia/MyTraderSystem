@@ -2,7 +2,7 @@
 
 ## Objetivo
 Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo a live. Todo el flujo usa fuentes mock/deterministas salvo el canary real cuando se ejecute expresamente.
-- El scope live soportado hoy es `kline`-only. `trade` y `book` no son objetivos validos de promotion live.
+- El scope live soportado hoy es `trade` + `kline`. `trade` exige exact recovery, handoff historico-live y evidencia runtime continua; `book` no es un objetivo valido de promotion live.
 
 ## Comandos base
 - Shell del contenedor:
@@ -208,5 +208,6 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 ## Scope operativo por feed
 - `paper` soporta `trade` y `kline`.
 - `trade` en `paper` se valida por `replay`, parity y contratos del vendor; no debe promocionarse como feed `live`.
-- `live` soporta solo `kline`.
+- `live` soporta `trade` + `kline`.
+- `trade` en `live` exige exact recovery, handoff historico-live y evidencia runtime fresca.
 - `book` queda fuera de `paper` y `live`.

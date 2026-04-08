@@ -200,7 +200,7 @@ class BinanceFeedNormalizer(Protocol):
 class BinanceTradeNormalizer:
     event_type = "trade"
     stream_type = "trade"
-    supports_snapshot = False
+    supports_snapshot = True
 
     @staticmethod
     def build_stream(symbol: str) -> str:
@@ -245,6 +245,25 @@ class BinanceTradeNormalizer:
     @classmethod
     def normalize_legacy(cls, payload: dict[str, Any], **kwargs: Any) -> MarketEvent:
         return ensure_legacy_market_event(cls.normalize_typed(payload, **kwargs))
+
+    @staticmethod
+    def snapshot_payload_from_row(symbol: str, row: dict[str, Any]) -> dict[str, Any]:
+        aggregate_trade_id = int(row["a"])
+        return {
+            "e": "trade",
+            "s": normalize_symbol(symbol),
+            "E": int(row["T"]),
+            "p": str(row["p"]),
+            "q": str(row["q"]),
+            "t": aggregate_trade_id,
+            "m": bool(row.get("m")) if row.get("m") is not None else None,
+            "M": bool(row.get("M")) if row.get("M") is not None else None,
+            "a": aggregate_trade_id,
+            "f": int(row["f"]) if row.get("f") is not None else None,
+            "l": int(row["l"]) if row.get("l") is not None else None,
+            "_backfill_endpoint": "aggTrades",
+            "_historical_trade_kind": "aggregate_trade",
+        }
 
 
 class BinanceBarNormalizer:
@@ -371,6 +390,8 @@ def snapshot_payload_from_row(
     normalizer = BINANCE_FEED_NORMALIZERS.get(stream_type)
     if normalizer is None or not getattr(normalizer, "supports_snapshot", False):
         raise KeyError(f"stream type does not support snapshot payloads: {stream_type}")
+    if stream_type == "trade":
+        return BinanceTradeNormalizer.snapshot_payload_from_row(symbol, row)
     if stream_type == "kline":
         return BinanceBarNormalizer.snapshot_payload_from_row(symbol, row, interval=interval)
     raise KeyError(f"stream type does not support snapshot payloads: {stream_type}")

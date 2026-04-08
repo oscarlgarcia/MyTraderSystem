@@ -475,6 +475,7 @@ def test_snapshot_retries_use_injected_jitter_deterministically():
 
     source = BinanceSource(
         cfg,
+        stream_types=("kline",),
         http_get=fake_http_get,
         snapshot_sleeper=lambda seconds: sleeps.append(seconds),
         snapshot_jitter_fn=lambda delay: delay + 0.25,
@@ -509,6 +510,7 @@ def test_snapshot_retry_exhaustion_emits_specific_operational_alert():
 
     source = BinanceSource(
         cfg,
+        stream_types=("kline",),
         http_get=fake_http_get,
         snapshot_sleeper=lambda _seconds: None,
         snapshot_jitter_fn=lambda delay: delay,
@@ -666,6 +668,43 @@ def test_snapshot_request_records_exactness_violation_when_vendor_returns_short_
     assert metric["recovery_window_rows_requested"] == 13
     assert metric["recovery_window_rows_received"] == 1
     assert metric["recovery_exactness_violation_total"] == 1
+
+
+def test_snapshot_fail_anomaly_is_quarantined_without_aborting_snapshot(tmp_path: Path):
+    cfg = mock.Mock(
+        env="dev",
+        ws_base="wss://stream.binance.com:9443",
+        rest_base="https://api.binance.com",
+        symbols=["BTCUSDT"],
+        data_dir=tmp_path,
+        log_level="INFO",
+    )
+
+    def fake_http_get(url: str, **kwargs):
+        request = httpx.Request("GET", url, params=kwargs["params"])
+        return httpx.Response(
+            200,
+            request=request,
+            json=[
+                [1704067200000, "100", "101", "99", "100.5", "1", 1704067259999],
+                [1704067260000, "100.5", "101.5", "100", "101", "25", 1704067319999],
+            ],
+        )
+
+    source = BinanceSource(
+        cfg,
+        http_get=fake_http_get,
+        error_sink=JsonlErrorSink(tmp_path / "errors" / "ingestion-dlq.jsonl"),
+        stream_types=("kline",),
+    )
+
+    events = list(source.snapshot())
+
+    assert len(events) == 1
+    quarantine_path = tmp_path / "errors" / "marketdata-anomaly-quarantine.jsonl"
+    payloads = [json.loads(line) for line in quarantine_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert payloads[0]["incident"]["anomaly_type"] == "volume_spike"
+    assert payloads[0]["incident"]["anomaly_action"] == "fail"
 
 
 def test_sink_failure_alert_is_emitted_when_normalized_sink_fails():

@@ -10,7 +10,7 @@
 - trade historical backfill: implementado via Binance `aggTrades` con parity `raw -> replay -> normalized`
 - ADR vigente: `docs/adr/ADR-0001-historical-market-data-scope.md`
 - **Clave compartida de identidad**: `app.ingestion.client._key(event)` define la identidad canonica del evento para live, backfill y dedup en Parquet.
-- **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin tocar el scope live soportado hoy (`kline`-only; `trade` y `book` siguen bloqueados para runtime live).
+- **Streams registrables**: `app.ingestion.client.register_stream_builder(stream_type, fn)` permite extender `build_streams`/`build_ws_url` a tipos adicionales sin romper el contrato live soportado hoy (`trade` + `kline`; `book` sigue bloqueado para runtime live).
 - **Catalogo autoritativo de instrumentos**:
   - `app.marketdata.instrument_loader.load_binance_exchange_info_snapshot(...)`
   - `app.marketdata.instrument_loader.load_binance_instrument_records(...)`
@@ -568,5 +568,6 @@
 - Scope operativo por feed:
   - `paper` soporta `trade` y `kline`
   - `trade` en `paper` queda respaldado por `replay`, parity, vendor contracts y storage validation
-  - `live` soporta solo `kline`
+  - `live` soporta `trade` + `kline`
+  - `trade` en `live` queda respaldado por exact recovery, handoff historico-live y runtime validation
   - `book` permanece fuera de `paper` y `live` hasta contar con runtime y recovery propios
