@@ -498,8 +498,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_INGEST_STREAM_TYPES,
         help=(
             "Streams a ingerir, separados por coma. Ejemplo: kline. "
-            "Paper soporta `trade` y `kline`. Live soporta hoy solo `kline`; "
-            "`trade` y `book` quedan bloqueados para runtime live."
+            "Paper soporta `trade` y `kline`. Live soporta `trade` y `kline`; "
+            "`trade` exige exact recovery e handoff, y `book` queda bloqueado."
         ),
     )
     parser.add_argument(

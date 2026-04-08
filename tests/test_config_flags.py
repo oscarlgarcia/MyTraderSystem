@@ -70,12 +70,15 @@ def test_ingest_stream_types_flag():
     assert args.ingest_stream_types == ("kline",)
 
 
-def test_ingest_stream_types_help_states_live_scope_is_kline_only(capsys: pytest.CaptureFixture[str]):
+def test_ingest_stream_types_help_states_live_scope_supports_trade_and_kline(capsys: pytest.CaptureFixture[str]):
     with pytest.raises(SystemExit):
         parse_args(["--help"])
     help_text = capsys.readouterr().out
-    assert "scope live soportado hoy es solo `kline`" in help_text
-    assert "`trade` y `book` quedan bloqueados" in help_text
+    assert "Paper soporta `trade` y `kline`." in help_text
+    assert "Live soporta `trade`" in help_text
+    assert "y `kline`;" in help_text
+    assert "`trade` exige exact recovery e handoff" in help_text
+    assert "`book` queda bloqueado" in help_text
 
 
 def test_release_gate_paths_flags():

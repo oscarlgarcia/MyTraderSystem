@@ -525,7 +525,7 @@ def test_gap_alerts_are_emitted_with_stream_context():
     assert irreparable["error_type"] == "IrrecoverableGapError"
 
 
-def test_trade_gap_without_exact_recovery_is_marked_irreparable_even_with_snapshot():
+def test_trade_gap_with_incompatible_snapshot_remains_irreparable():
     base = datetime(2024, 1, 1, tzinfo=timezone.utc)
     trade_events = [
         TradeEvent(
@@ -563,7 +563,7 @@ def test_trade_gap_without_exact_recovery_is_marked_irreparable_even_with_snapsh
 
     stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:trade"]
     assert len(handled) == 2
-    assert runner.metrics.snapshot_runs == 0
+    assert runner.metrics.snapshot_runs == 1
     assert runner.metrics.gap_irreparable_total == 1
     assert stream_metrics["gap_irreparable"] is True
     assert stream_metrics["last_gap_detection_mode"] == "sequence_gap_detection"
