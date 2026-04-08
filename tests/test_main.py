@@ -305,6 +305,55 @@ def test_live_mode_rejects_trade_feed_until_exact_recovery_exists(tmp_path):
         main._validate_operational_security(cfg, mode="live", runtime=runtime)
 
 
+def test_paper_mode_accepts_trade_feed(tmp_path):
+    cfg = load_config("dev")
+    cfg = type(cfg)(
+        env=cfg.env,
+        data_dir=tmp_path.resolve(),
+        log_level=cfg.log_level,
+        ws_base=cfg.ws_base,
+        rest_base=cfg.rest_base,
+        symbols=cfg.symbols,
+    )
+    runtime = {
+        "production_mode": False,
+        "fast_path": False,
+        "allow_live_fallback": False,
+        "error_policy": None,
+        "ingest_dedup": True,
+        "summary_logging": True,
+        "ingest_backpressure_policy": "pause",
+        "ingest_stream_types": ("trade",),
+    }
+
+    main._validate_operational_security(cfg, mode="paper", runtime=runtime)
+
+
+def test_paper_mode_rejects_book_feed(tmp_path):
+    cfg = load_config("dev")
+    cfg = type(cfg)(
+        env=cfg.env,
+        data_dir=tmp_path.resolve(),
+        log_level=cfg.log_level,
+        ws_base=cfg.ws_base,
+        rest_base=cfg.rest_base,
+        symbols=cfg.symbols,
+    )
+    runtime = {
+        "production_mode": False,
+        "fast_path": False,
+        "allow_live_fallback": False,
+        "error_policy": None,
+        "ingest_dedup": True,
+        "summary_logging": True,
+        "ingest_backpressure_policy": "pause",
+        "ingest_stream_types": ("book",),
+    }
+
+    with pytest.raises(ValueError, match="book does not support paper ingestion"):
+        main._validate_operational_security(cfg, mode="paper", runtime=runtime)
+
+
 def test_production_mode_accepts_live_kline_with_exact_verified_recovery(tmp_path):
     cfg = load_config("dev")
     cfg = type(cfg)(

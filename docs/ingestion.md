@@ -528,3 +528,9 @@ flowchart LR
   K[_key(event)] --> LiveEvents
   K --> BackfillRows
 ```
+
+## Scope operativo por feed
+- `paper` soporta `trade` y `kline`.
+- `trade` en `paper` se valida por `replay`, contratos del vendor y storage validation; no debe tratarse como soporte `live`.
+- `live` soporta solo `kline`.
+- `book` sigue fuera de `paper` y `live` hasta tener runtime, schema typed y recovery dedicados.

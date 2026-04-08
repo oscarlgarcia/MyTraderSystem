@@ -153,6 +153,14 @@ def test_live_scope_claim_is_kline_only_across_support_matrix_and_cli_defaults()
     assert parse_args([]).ingest_stream_types == ("kline",)
 
 
+def test_paper_scope_claim_supports_trade_and_kline_but_rejects_book() -> None:
+    paper_supported = sorted(feed_type for feed_type, support in FEED_SUPPORT_MATRIX.items() if support.supports_paper)
+    assert paper_supported == ["kline", "trade"]
+    assert FEED_SUPPORT_MATRIX["trade"].paper_validation_basis == "replay_validated"
+    assert FEED_SUPPORT_MATRIX["kline"].paper_validation_basis == "runtime_validated"
+    assert FEED_SUPPORT_MATRIX["book"].supports_paper is False
+
+
 def test_live_scope_docs_do_not_advertise_trade_or_book_as_supported_live_runtime() -> None:
     required_markers = (
         "`kline`-only",
@@ -173,6 +181,19 @@ def test_live_scope_docs_do_not_advertise_trade_or_book_as_supported_live_runtim
             assert marker in content, f"{path} must document live scope markers: missing {marker}"
         for marker in forbidden_markers:
             assert marker not in content, f"{path} still advertises stale live scope wording: {marker}"
+
+
+def test_scope_docs_explain_trade_paper_and_book_exclusion() -> None:
+    required_markers = (
+        "paper",
+        "`trade`",
+        "replay",
+        "`book`",
+    )
+    for path in LIVE_SCOPE_DOC_PATHS:
+        content = path.read_text(encoding="utf-8").lower()
+        for marker in required_markers:
+            assert marker in content, f"{path} must document paper/live feed scope markers: missing {marker}"
 
 
 @pytest.mark.parametrize("feed_type,support", FEED_SUPPORT_MATRIX.items(), ids=sorted(FEED_SUPPORT_MATRIX))

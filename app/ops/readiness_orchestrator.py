@@ -8,9 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Sequence
 
+from app.marketdata.support_matrix import feed_support
+
 
 ReadinessTarget = Literal["paper", "live"]
 ReadinessProfile = Literal["paper_trade", "paper_kline", "live_kline"]
+ReadinessEvidenceBasis = Literal["replay_validated", "runtime_validated"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +41,7 @@ class ReadinessReport:
     symbol: str
     stream_type: str
     interval: str
+    evidence_basis: ReadinessEvidenceBasis
     raw_base_dir: str
     normalized_path: str
     validation_dir: str
@@ -93,7 +97,7 @@ def run_ingestion_readiness(
     validation_dir = Path(validation_dir)
     output_path = Path(output_path)
     runtime_env = str(runtime_env or env)
-    profile, gate_stream_types = _resolve_readiness_contract(
+    profile, gate_stream_types, evidence_basis = _resolve_readiness_contract(
         target=target,
         stream_type=stream_type,
         gate_stream_types=gate_stream_types,
@@ -416,6 +420,7 @@ def run_ingestion_readiness(
         symbol=symbol,
         stream_type=stream_type,
         interval=interval,
+        evidence_basis=evidence_basis,
         raw_base_dir=str(raw_base_dir),
         normalized_path=str(normalized_path),
         validation_dir=str(validation_dir),
@@ -442,19 +447,27 @@ def _resolve_readiness_contract(
     target: ReadinessTarget,
     stream_type: str,
     gate_stream_types: tuple[str, ...] | None,
-) -> tuple[ReadinessProfile, tuple[str, ...]]:
+) -> tuple[ReadinessProfile, tuple[str, ...], ReadinessEvidenceBasis]:
     normalized_stream_type = str(stream_type).strip().lower()
+    support = feed_support(normalized_stream_type)
     if target == "live":
+        if not support.supports_live:
+            raise ValueError(f"live readiness does not support stream_type={stream_type}")
         if normalized_stream_type != "kline":
-            raise ValueError("live readiness only supports stream_type=kline")
+            raise ValueError(f"live readiness profile is not implemented for stream_type={stream_type}")
         profile: ReadinessProfile = "live_kline"
         expected_gate_stream_types = ("kline",)
+        evidence_basis: ReadinessEvidenceBasis = "runtime_validated"
+    elif not support.supports_paper:
+        raise ValueError(f"paper readiness does not support stream_type={stream_type}")
     elif normalized_stream_type == "trade":
         profile = "paper_trade"
         expected_gate_stream_types = ("trade",)
+        evidence_basis = "replay_validated"
     elif normalized_stream_type == "kline":
         profile = "paper_kline"
         expected_gate_stream_types = ("kline",)
+        evidence_basis = "runtime_validated"
     else:
         raise ValueError(f"unsupported readiness stream_type={stream_type}")
     requested_gate_stream_types = tuple(gate_stream_types or expected_gate_stream_types)
@@ -464,7 +477,7 @@ def _resolve_readiness_contract(
             f"profile={profile} expects gate_stream_types={expected_gate_stream_types}, "
             f"got {requested_gate_stream_types}"
         )
-    return profile, requested_gate_stream_types
+    return profile, requested_gate_stream_types, evidence_basis
 
 
 def _requires_runtime_validation(profile: ReadinessProfile) -> bool:

@@ -565,3 +565,8 @@
 - **Compaction**:
   - `app.ingestion.compaction.compact_partition(...)` fusiona segmentos de una particion y publica `data.parquet`
   - el hot path online deja de releer/mergear tablas completas por flush; la dedup profunda queda en lectura/compactacion offline
+- Scope operativo por feed:
+  - `paper` soporta `trade` y `kline`
+  - `trade` en `paper` queda respaldado por `replay`, parity, vendor contracts y storage validation
+  - `live` soporta solo `kline`
+  - `book` permanece fuera de `paper` y `live` hasta contar con runtime y recovery propios

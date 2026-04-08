@@ -8,7 +8,7 @@ from typing import Literal
 
 from app.config import DEFAULT_INGEST_STREAM_TYPES
 from app.ingestion.storage_health import collect_storage_health, storage_health_payload
-from app.marketdata.support_matrix import FeedSupport, feed_support, normalize_feed_types
+from app.marketdata.support_matrix import FeedSupport, feed_support, live_supported_feed_types, normalize_feed_types
 from app.ops.observability_contract import build_observability_contract_report
 
 
@@ -211,7 +211,10 @@ def _support_matrix_block(stream_types: tuple[str, ...], *, target: ReleaseTarge
     for stream_type in stream_types:
         support = feed_support(stream_type)
         details["feeds"][stream_type] = _feed_support_payload(support)
-        if target == "live":
+        if target == "paper":
+            if not support.supports_paper:
+                reasons.append(f"{stream_type} does not support paper ingestion")
+        elif target == "live":
             if not support.supports_live:
                 reasons.append(f"{stream_type} does not support live ingestion")
             if not support.supports_handoff:
@@ -258,23 +261,28 @@ def _exact_recovery_block(stream_types: tuple[str, ...], *, target: ReleaseTarge
 
 
 def _live_scope_block(stream_types: tuple[str, ...], *, target: ReleaseTarget) -> GateBlockReport:
+    allowed_live_stream_types = list(live_supported_feed_types())
     if target != "live":
         return GateBlockReport(
             name="live_scope",
             status="pass",
             required=False,
             reasons=("live scope not enforced for non-live targets",),
-            details={"allowed_live_stream_types": ["kline"], "requested_stream_types": list(stream_types)},
+            details={"allowed_live_stream_types": allowed_live_stream_types, "requested_stream_types": list(stream_types)},
         )
-    disallowed = [stream_type for stream_type in stream_types if stream_type != "kline"]
+    disallowed = [stream_type for stream_type in stream_types if stream_type not in allowed_live_stream_types]
     status: GateStatus = "pass" if not disallowed else "fail"
-    reasons = ["live scope limited to kline feeds"] if not disallowed else [f"live scope forbids stream types: {', '.join(disallowed)}"]
+    reasons = (
+        [f"live scope limited to {', '.join(allowed_live_stream_types)} feeds"]
+        if not disallowed
+        else [f"live scope forbids stream types: {', '.join(disallowed)}"]
+    )
     return GateBlockReport(
         name="live_scope",
         status=status,
         required=True,
         reasons=tuple(reasons),
-        details={"allowed_live_stream_types": ["kline"], "requested_stream_types": list(stream_types)},
+        details={"allowed_live_stream_types": allowed_live_stream_types, "requested_stream_types": list(stream_types)},
     )
 
 
@@ -781,9 +789,13 @@ def _observability_contract_block(*, target: ReleaseTarget, required: bool) -> G
 def _feed_support_payload(support: FeedSupport) -> dict[str, object]:
     return {
         "feed_type": support.feed_type,
+        "supports_paper": support.supports_paper,
+        "paper_validation_basis": support.paper_validation_basis,
         "supports_live": support.supports_live,
         "supports_handoff": support.supports_handoff,
         "recovery_capability": support.recovery_capability,
         "supports_exact_recovery": support.supports_exact_recovery,
         "supports_exact_verified_recovery": support.supports_exact_verified_recovery,
+        "paper_scope_note": support.paper_scope_note,
+        "live_scope_note": support.live_scope_note,
     }

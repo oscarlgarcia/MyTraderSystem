@@ -307,9 +307,74 @@ def test_release_gates_paper_trade_passes_without_runtime_proxy_artifacts(tmp_pa
     assert report.pass_ok is True
     blocks = {block.name: block for block in report.blocks}
     assert blocks["support_matrix"].status == "pass"
+    assert blocks["support_matrix"].details["feeds"]["trade"]["supports_paper"] is True
+    assert blocks["support_matrix"].details["feeds"]["trade"]["paper_validation_basis"] == "replay_validated"
     assert blocks["canary_rest"].required is False
     assert blocks["canary_ws"].required is False
     assert blocks["paper_soak"].required is False
+
+
+def test_release_gates_paper_book_is_rejected_by_support_matrix(tmp_path: Path):
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    benchmark_path = tmp_path / "benchmark.json"
+    parity_path = tmp_path / "parity.json"
+    vendor_contracts_path = tmp_path / "vendor-contracts.json"
+    _write_json(
+        benchmark_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target_profile": "paper",
+            "pass_ok": True,
+            "required_high_cardinality_symbol_counts": [100],
+            "slo": {"min_rows_per_second": 1.0},
+            "synthetic_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "replay_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "concurrent_compaction_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 12},
+            "shadow_scoped_case": {"pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 4},
+            "high_cardinality_cases": [
+                {"name": "high_cardinality_100", "pass_ok": True, "rows_per_second": 10.0, "requested_symbol_count": 100}
+            ],
+        },
+    )
+    _write_json(
+        parity_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "order_match": True,
+            "manifest_ok": True,
+            "normalized_path": str(tmp_path / "normalized" / "book" / "env=papercand"),
+            "symbol": "BTCUSDT",
+            "stream_type": "book",
+            "manifest_missing_files": [],
+            "manifest_mismatches": [],
+        },
+    )
+    _write_json(
+        vendor_contracts_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "pass_ok": True,
+            "pytest_target": "tests/network/test_binance_contracts.py",
+            "command": ["python", "-m", "pytest"],
+            "duration_seconds": 1.0,
+            "returncode": 0,
+        },
+    )
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("book",),
+        benchmark_path=benchmark_path,
+        replay_parity_path=parity_path,
+        network_contracts_path=vendor_contracts_path,
+    )
+
+    block = next(block for block in report.blocks if block.name == "support_matrix")
+    assert block.status == "fail"
+    assert any("book does not support paper ingestion" in reason for reason in block.reasons)
 
 
 def test_release_gates_fail_when_required_artifact_is_stale(tmp_path: Path):

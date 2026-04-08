@@ -45,6 +45,7 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
 
     assert report.pass_ok is True
     assert report.profile == "paper_trade"
+    assert report.evidence_basis == "replay_validated"
     assert [step.name for step in report.steps] == [
         "replay_parity",
         "storage_benchmark",
@@ -96,6 +97,7 @@ def test_readiness_orchestrator_runs_paper_kline_runtime_steps(tmp_path: Path):
 
     assert report.pass_ok is True
     assert report.profile == "paper_kline"
+    assert report.evidence_basis == "runtime_validated"
     assert [step.name for step in report.steps] == [
         "replay_parity",
         "rest_canary",
@@ -132,6 +134,7 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
 
     assert report.pass_ok is True
     assert report.profile == "live_kline"
+    assert report.evidence_basis == "runtime_validated"
     assert [step.name for step in report.steps] == [
         "replay_parity",
         "rest_canary",
@@ -259,6 +262,27 @@ def test_readiness_orchestrator_rejects_mismatched_gate_stream_contract(tmp_path
             interval="1m",
             validation_dir=tmp_path / "docs" / "validation",
             output_path=tmp_path / "docs" / "validation" / "paper.json",
+        )
+
+
+def test_readiness_orchestrator_rejects_book_for_paper_scope(tmp_path: Path):
+    raw_base_dir = tmp_path / "raw"
+    normalized_path = tmp_path / "normalized"
+    raw_base_dir.mkdir()
+    normalized_path.mkdir()
+
+    with pytest.raises(ValueError, match="paper readiness does not support stream_type=book"):
+        run_ingestion_readiness(
+            workspace=tmp_path,
+            target="paper",
+            env="papercand",
+            raw_base_dir=raw_base_dir,
+            normalized_path=normalized_path,
+            symbol="BTCUSDT",
+            stream_type="book",
+            interval="1m",
+            validation_dir=tmp_path / "docs" / "validation",
+            output_path=tmp_path / "docs" / "validation" / "paper-book.json",
         )
 
 

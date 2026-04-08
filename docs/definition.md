@@ -59,6 +59,11 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - Backfill F1: `--dry-run` descarga rango corto y reporta conteo > 0.
 
 ## Evolución esperada
+- Scope operativo por feed:
+  - `paper` soporta `trade` y `kline`
+  - `trade` en `paper` se valida por `replay`, parity, contratos del vendor y storage validation
+  - `live` soporta solo `kline`
+  - `book` queda fuera de `paper` y `live` hasta que exista runtime, schema y recovery dedicados
 - Añadir serialización (p.ej. JSON) manteniendo contratos.
 - Extender `MarketEvent` con profundidad de libro/funding cuando ingestion lo necesite.
 - Añadir campos de riesgo (p.ej. risk_level) y de ejecución (p.ej. slippage estimado) respetando compatibilidad hacia atrás.

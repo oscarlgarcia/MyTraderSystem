@@ -19,7 +19,7 @@ from app.common.dto import TraceContext
 from app.config import AppConfig, DEFAULT_INGEST_STREAM_TYPES, load_config, parse_args
 from app.controlplane.telemetry import configure_control_plane_telemetry
 from app.ingestion.service import run_ingestion_service
-from app.marketdata.support_matrix import validate_live_feed_support
+from app.marketdata.support_matrix import validate_live_feed_support, validate_paper_feed_support
 from app.marketdata.models import IngestionEvent
 from app.observability.logger import get_logger, set_trace_id
 from app.ingestion.storage import validate_output_path
@@ -365,21 +365,21 @@ def _validate_operational_security(
     production_mode = bool(runtime.get("production_mode", False))
     ingest_stream_types = tuple(runtime.get("ingest_stream_types", DEFAULT_INGEST_STREAM_TYPES))
     validate_output_path(cfg.data_dir, require_absolute=production_mode)
-    if mode in {"live", "paper"} and not production_mode:
+    if mode == "paper":
+        try:
+            validate_paper_feed_support(ingest_stream_types)
+        except ValueError as exc:
+            raise ValueError("Unsupported paper feed configuration: " + str(exc)) from exc
+    elif mode == "live" and not production_mode:
         try:
             validate_live_feed_support(
                 ingest_stream_types,
-                require_exact_recovery=production_mode,
-                require_exact_verified=production_mode,
-                require_handoff=production_mode,
+                require_exact_recovery=False,
+                require_exact_verified=False,
+                require_handoff=False,
             )
         except ValueError as exc:
-            prefix = (
-                "Unsafe production configuration: "
-                if production_mode
-                else "Unsupported live feed configuration: "
-            )
-            raise ValueError(prefix + str(exc)) from exc
+            raise ValueError("Unsupported live feed configuration: " + str(exc)) from exc
     if not production_mode:
         return
 

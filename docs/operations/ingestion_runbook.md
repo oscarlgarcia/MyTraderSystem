@@ -204,3 +204,9 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 ## Limitaciones conocidas
 - Los benchmarks son deterministas y locales; no sustituyen soak test largo ni canary real contra vendor.
 - La suite no usa Binance real en CI a proposito.
+
+## Scope operativo por feed
+- `paper` soporta `trade` y `kline`.
+- `trade` en `paper` se valida por `replay`, parity y contratos del vendor; no debe promocionarse como feed `live`.
+- `live` soporta solo `kline`.
+- `book` queda fuera de `paper` y `live`.
