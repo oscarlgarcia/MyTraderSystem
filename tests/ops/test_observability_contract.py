@@ -15,6 +15,9 @@ def test_observability_contract_exposes_required_bundle_for_paper():
     assert report.required_metric_thresholds["exchange_receive_skew_seconds"]["critical"] == 30.0
     assert report.required_metric_thresholds["receive_process_skew_seconds"]["warning"] == 1.0
     assert report.required_metric_thresholds["invalid_timestamp_total"]["critical"] == 1.0
+    assert any(surface.surface_id == "ingestion.paper.runtime" for surface in report.external_surfaces)
+    assert all(surface.owner for surface in report.external_surfaces)
+    assert all(surface.surface_ref for surface in report.external_surfaces)
 
 
 def test_observability_contract_tightens_temporal_thresholds_for_live():
@@ -26,3 +29,5 @@ def test_observability_contract_tightens_temporal_thresholds_for_live():
     assert report.required_metric_thresholds["exchange_receive_skew_seconds"]["critical"] == 10.0
     assert report.required_metric_thresholds["receive_process_skew_seconds"]["warning"] == 0.5
     assert report.required_metric_thresholds["receive_process_skew_seconds"]["critical"] == 2.0
+    assert any(surface.surface_id == "ingestion.live.cutover" for surface in report.external_surfaces)
+    assert all(surface.verification_mode for surface in report.external_surfaces)

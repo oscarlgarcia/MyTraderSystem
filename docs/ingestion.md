@@ -535,3 +535,5 @@ flowchart LR
 - `trade` en `live` exige exact recovery, handoff historico-live y runtime validation continua.
 - `book` sigue fuera de `paper` y `live` hasta tener runtime, schema typed y recovery dedicados.
 - La promotion operativa usa ahora un artefacto agregado `ingestion_operational_evidence*.json` para fijar freshness, origen de la evidence y surfaces externas obligatorias de observabilidad.
+- Ese artefacto ya no puede derivarse inline desde `run_release_gates`: debe existir persistido y declarar `provenance.source`, `provenance.runner_id`, `provenance.trigger`, `provenance.generated_by` y `provenance.derived_in_process = false`.
+- Cada surface de observabilidad declarada debe incluir `owner`, `surface_ref`, `verification_mode`, `verified_at`, `verification_ref` y `pass_ok = true`; si falta alguno, el gate de promotion debe fallar.

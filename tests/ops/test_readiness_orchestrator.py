@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from app.ops.observability_contract import build_observability_contract_report
 from app.ops.readiness_orchestrator import run_ingestion_readiness
 from app.ops.release_gates import run_release_gates
 
@@ -67,6 +68,8 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
     assert "500" not in commands[1]
     assert "--target" in commands[3] and "paper" in commands[3]
     assert "--phase" in commands[3] and "final" in commands[3]
+    assert "--provenance-source" in commands[3] and "readiness_orchestrator" in commands[3]
+    assert "--runner-id" in commands[3]
     assert "--operational-evidence-path" in commands[4]
     assert str(tmp_path / "docs" / "validation" / "ingestion_operational_evidence_paper_trade.json") in commands[4]
     assert "--min-rows-per-second" not in commands[1]
@@ -160,12 +163,14 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
     final_evidence = commands[10]
     final_gate = commands[11]
     assert "--phase" in predrill_evidence and "predrill" in predrill_evidence
+    assert "--provenance-source" in predrill_evidence and "readiness_orchestrator" in predrill_evidence
     assert "--phase" in predrill and "predrill" in predrill
     assert "--target-profile" in commands[3] and "live" in commands[3]
     assert "--target-profile" in commands[5] and "live" in commands[5]
     assert "--release-gates-path" in drill
     assert str(tmp_path / "docs" / "validation" / "ingestion_release_gates_pre_drill_live_kline.json") in drill
     assert "--phase" in final_evidence and "final" in final_evidence
+    assert "--runner-id" in final_evidence
     assert "--phase" in final_gate and "final" in final_gate
 
 
@@ -247,6 +252,7 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
 
     artifact_dir = tmp_path / "artifacts"
     artifact_dir.mkdir()
+    operational_evidence_path = artifact_dir / "operational-evidence.json"
     for name, payload in {
         "rest.json": {"generated_at": now, "pass_ok": True, "diffs": {}, "comparison_reason": "semantic_match"},
         "ws.json": {"report_generated_at": now, "target_profile": "live", "pass_ok": True, "continuity": {"reconnects": 1, "duplicates": 0, "gaps": 0, "gap_irreparable": 0, "streams_degraded": [], "heartbeat_missed_total": 0, "exchange_receive_skew_seconds": 0.1, "receive_process_skew_seconds": 0.1, "processing_latency_seconds": 0.1}, "slo": {"target_profile": "live"}, "reconnects_observed": 1, "reconnects_target": 1, "symbol": "BTCUSDT", "stream_type": "kline"},
@@ -257,6 +263,77 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
         "failure.json": {"generated_at": now, "pass_ok": True, "pytest_target": "tests/ops/test_failure_injection.py", "critical_test_ids": ["tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_stale_ws_artifact", "tests/ops/test_failure_injection.py::test_failure_injection_prod_rejects_fallback_metadata_snapshot", "tests/ops/test_failure_injection.py::test_failure_injection_release_gate_fails_with_manifest_mismatch"], "command": ["python", "-m", "pytest"], "returncode": 0, "duration_seconds": 1.0},
     }.items():
         (artifact_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+    observability_contract = build_observability_contract_report(target="live")
+    operational_evidence_path.write_text(
+        json.dumps(
+            {
+                "generated_at": now,
+                "target": "live",
+                "phase": "predrill",
+                "stream_types": ["kline"],
+                "cadence_policy": {
+                    "runtime_artifact_max_age_seconds": 86400,
+                    "benchmark_and_replay_max_age_seconds": 604800,
+                    "runtime_artifact_expected_interval_seconds": 21600,
+                    "live_drill_expected_interval_seconds": 43200,
+                    "required_artifacts": [
+                        "replay_parity",
+                        "storage_benchmark",
+                        "vendor_contracts",
+                        "rest_canary",
+                        "ws_canary",
+                        "soak",
+                        "failure_injection",
+                    ],
+                },
+                "evidence_origin": "operational_runtime",
+                "provenance": {
+                    "source": "readiness_orchestrator",
+                    "runner_id": "tests:live:kline:predrill",
+                    "trigger": "tests_live_predrill",
+                    "generated_by": "tests/ops/test_readiness_orchestrator.py",
+                    "verification_scope": "external_operational_surfaces",
+                    "derived_in_process": False,
+                },
+                "excluded_feed_policy": {"book": "excluded"},
+                "observability": {
+                    "pass_ok": True,
+                    "repo_runbooks": [
+                        "docs/operations/ingestion_runbook.md",
+                        "docs/operations/ingestion_promotion_runbook.md",
+                        "docs/ops/live_cutover.md",
+                    ],
+                    "external_surfaces": [
+                        {
+                            "surface_id": surface.surface_id,
+                            "kind": surface.kind,
+                            "description": surface.description,
+                            "repo_reference": surface.repo_reference,
+                            "owner": surface.owner,
+                            "surface_ref": surface.surface_ref,
+                            "verification_mode": surface.verification_mode,
+                            "verified_at": now,
+                            "verification_ref": f"artifact://tests/{surface.surface_id}",
+                            "pass_ok": True,
+                        }
+                        for surface in observability_contract.external_surfaces
+                    ],
+                },
+                "artifacts": [
+                    {"name": "replay_parity", "required": True, "pass_ok": True, "fresh": True},
+                    {"name": "storage_benchmark", "required": True, "pass_ok": True, "fresh": True},
+                    {"name": "vendor_contracts", "required": True, "pass_ok": True, "fresh": True},
+                    {"name": "rest_canary", "required": True, "pass_ok": True, "fresh": True},
+                    {"name": "ws_canary", "required": True, "pass_ok": True, "fresh": True},
+                    {"name": "soak", "required": True, "pass_ok": True, "fresh": True},
+                    {"name": "failure_injection", "required": True, "pass_ok": True, "fresh": True},
+                ],
+                "pass_ok": True,
+                "reasons": ["operational evidence fresh and aligned"],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     report = run_release_gates(
         base_dir=base_dir,
@@ -270,6 +347,7 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
         soak_path=artifact_dir / "soak.json",
         network_contracts_path=artifact_dir / "vendor.json",
         failure_injection_path=artifact_dir / "failure.json",
+        operational_evidence_path=operational_evidence_path,
         require_live_drill=False,
     )
 

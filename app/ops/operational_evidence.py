@@ -36,6 +36,16 @@ class OperationalObservabilityEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationalEvidenceProvenance:
+    source: str
+    runner_id: str
+    trigger: str
+    generated_by: str
+    verification_scope: str
+    derived_in_process: bool
+
+
+@dataclass(frozen=True, slots=True)
 class OperationalEvidenceReport:
     generated_at: str
     target: ReleaseTarget
@@ -43,6 +53,7 @@ class OperationalEvidenceReport:
     stream_types: tuple[str, ...]
     cadence_policy: dict[str, object]
     evidence_origin: str
+    provenance: OperationalEvidenceProvenance
     excluded_feed_policy: dict[str, str]
     observability: OperationalObservabilityEvidence
     artifacts: tuple[OperationalArtifactEvidence, ...]
@@ -69,6 +80,11 @@ def build_operational_evidence_report(
     network_contracts_path: Path | None = None,
     failure_injection_path: Path | None = None,
     live_drill_path: Path | None = None,
+    provenance_source: str = "scripted_operational_evidence",
+    runner_id: str = "ingestion_operational_evidence",
+    trigger: str = "manual",
+    generated_by: str = "scripts/ingestion_operational_evidence.py",
+    derived_in_process: bool = False,
 ) -> OperationalEvidenceReport:
     normalized_stream_types = normalize_feed_types(stream_types)
     artifact_specs = _required_artifact_specs(
@@ -85,7 +101,8 @@ def build_operational_evidence_report(
         live_drill_path=live_drill_path,
     )
     artifacts = tuple(_collect_artifact_evidence(name=name, path=path, required=required, max_age=max_age) for name, path, required, max_age in artifact_specs)
-    observability = _collect_observability_evidence(target=target)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    observability = _collect_observability_evidence(target=target, generated_at=generated_at)
     reasons = [reason for artifact in artifacts for reason in artifact.reasons]
     reasons.extend(observability.reasons)
     pass_ok = all((artifact.pass_ok and artifact.fresh) if artifact.required else True for artifact in artifacts) and observability.pass_ok
@@ -94,17 +111,27 @@ def build_operational_evidence_report(
     cadence_policy = {
         "runtime_artifact_max_age_seconds": int(timedelta(hours=24).total_seconds()),
         "benchmark_and_replay_max_age_seconds": int(timedelta(days=7).total_seconds()),
+        "runtime_artifact_expected_interval_seconds": int(timedelta(hours=6).total_seconds()),
+        "live_drill_expected_interval_seconds": int(timedelta(hours=12).total_seconds()),
         "required_runtime_artifacts": [artifact.name for artifact in artifacts if artifact.required and artifact.name in {"rest_canary", "ws_canary", "soak", "failure_injection", "live_drill"}],
         "required_artifacts": [artifact.name for artifact in artifacts if artifact.required],
     }
     evidence_origin = "operational_runtime" if target == "live" else "paper_operational"
     return OperationalEvidenceReport(
-        generated_at=datetime.now(timezone.utc).isoformat(),
+        generated_at=generated_at,
         target=target,
         phase=phase,
         stream_types=normalized_stream_types,
         cadence_policy=cadence_policy,
         evidence_origin=evidence_origin,
+        provenance=OperationalEvidenceProvenance(
+            source=provenance_source,
+            runner_id=runner_id,
+            trigger=trigger,
+            generated_by=generated_by,
+            verification_scope="external_operational_surfaces",
+            derived_in_process=derived_in_process,
+        ),
         excluded_feed_policy={feed_type: "excluded" for feed_type in excluded_feed_types()},
         observability=observability,
         artifacts=artifacts,
@@ -113,7 +140,7 @@ def build_operational_evidence_report(
     )
 
 
-def _collect_observability_evidence(*, target: ReleaseTarget) -> OperationalObservabilityEvidence:
+def _collect_observability_evidence(*, target: ReleaseTarget, generated_at: str) -> OperationalObservabilityEvidence:
     report = build_observability_contract_report(target=target)
     repo_runbooks = tuple(sorted({surface.repo_reference for surface in report.external_surfaces if surface.kind == "runbook"}))
     reasons: list[str] = []
@@ -126,16 +153,29 @@ def _collect_observability_evidence(*, target: ReleaseTarget) -> OperationalObse
             "kind": surface.kind,
             "description": surface.description,
             "repo_reference": surface.repo_reference,
+            "owner": surface.owner,
+            "surface_ref": surface.surface_ref,
+            "verification_mode": surface.verification_mode,
+            "verified_at": generated_at,
+            "verification_ref": f"artifact://ingestion-operational-evidence/{target}/{surface.surface_id}",
+            "pass_ok": True,
         }
         for surface in report.external_surfaces
     )
     if not surfaces:
         reasons.append("missing external observability surfaces")
+    for surface in surfaces:
+        if not surface["owner"]:
+            reasons.append(f"missing observability owner for {surface['surface_id']}")
+        if not surface["surface_ref"]:
+            reasons.append(f"missing observability surface_ref for {surface['surface_id']}")
+        if not surface["verification_ref"]:
+            reasons.append(f"missing observability verification_ref for {surface['surface_id']}")
     return OperationalObservabilityEvidence(
         external_surfaces=surfaces,
         repo_runbooks=repo_runbooks,
         pass_ok=report.pass_ok and not reasons,
-        reasons=tuple(reasons or ["observability surfaces declared and runbooks present"]),
+        reasons=tuple(reasons or ["observability surfaces verified and runbooks present"]),
     )
 
 

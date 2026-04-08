@@ -11,6 +11,7 @@
 - `book` is outside both paper and live supported scope until it has a dedicated runtime and recovery contract.
 - Promotion is blocked unless the current target is `live` and every required artifact is fresh and `PASS`.
 - Promotion is also blocked when `ingestion_operational_evidence*.json` is missing, stale, inconsistent with the target, or does not declare the required external observability surfaces.
+- Promotion is also blocked when operational evidence is derived inline inside the gate instead of coming from a persisted artifact with valid provenance metadata.
 
 ## Required Inputs
 
@@ -43,6 +44,8 @@
 - Runtime evidence (`rest/ws canary`, `vendor contracts`, `soak`, `failure injection`, `live drill`) expires after 24 hours.
 - `replay parity` and `storage benchmark` expire after 7 days.
 - `book` must appear as excluded in the operational evidence payload; any other policy is a promotion blocker.
+- `operational evidence` must declare `provenance.source`, `provenance.runner_id`, `provenance.trigger`, `provenance.generated_by`, and `provenance.derived_in_process = false`.
+- every external observability surface must expose `owner`, `surface_ref`, `verification_mode`, `verified_at`, `verification_ref`, and `pass_ok = true`.
 - After any failed attempt, rerun the affected validation step and replace the stale artifact before retrying.
 
 ## Prerequisites
@@ -67,6 +70,7 @@ Promotion may start only if all of the following are true:
 13. `ingestion_operational_evidence_live.json` is fresh and reports:
     - `pass_ok = true`
     - `evidence_origin = operational_runtime`
+    - `provenance.derived_in_process = false`
     - `observability.pass_ok = true`
     - declared external surfaces for runtime, alerts, logs, promotion and live cutover
 
@@ -80,6 +84,7 @@ Abort promotion immediately if any of the following occurs:
 - any required artifact is stale,
 - any required artifact is not `PASS`,
 - operational evidence is missing, stale, or only derivable in-process,
+- operational evidence provenance is incomplete or not aligned with the operational promotion path,
 - release gates are not `PASS` for `live`,
 - live drill is not `PASS`,
 - provider metadata drift is material and unresolved,
@@ -150,10 +155,10 @@ docker compose exec app poetry run python scripts/ingestion_storage_benchmark.py
 docker compose exec app poetry run python scripts/ingestion_vendor_contracts.py
 docker compose exec app poetry run python scripts/ingestion_soak.py --mode ws-live --symbol BTCUSDT --stream-type kline --interval 1m
 docker compose exec app poetry run python scripts/ingestion_failure_injection.py
-docker compose exec app poetry run python scripts/ingestion_operational_evidence.py --target live --phase predrill --stream-types trade,kline --output docs/validation/ingestion_operational_evidence_pre_drill_live.json
+docker compose exec app poetry run python scripts/ingestion_operational_evidence.py --target live --phase predrill --stream-types trade,kline --provenance-source readiness_orchestrator --runner-id readiness:live_trade_kline:predrill --trigger readiness_live_predrill --output docs/validation/ingestion_operational_evidence_pre_drill_live.json
 docker compose exec app poetry run python scripts/ingestion_release_gates.py --target live --operational-evidence-path docs/validation/ingestion_operational_evidence_pre_drill_live.json
 docker compose exec app poetry run python scripts/ingestion_live_drill.py --env dev
-docker compose exec app poetry run python scripts/ingestion_operational_evidence.py --target live --phase final --stream-types trade,kline --output docs/validation/ingestion_operational_evidence_live.json
+docker compose exec app poetry run python scripts/ingestion_operational_evidence.py --target live --phase final --stream-types trade,kline --provenance-source readiness_orchestrator --runner-id readiness:live_trade_kline:final --trigger readiness_live_final --output docs/validation/ingestion_operational_evidence_live.json
 docker compose exec app poetry run python scripts/ingestion_release_gates.py --target live --operational-evidence-path docs/validation/ingestion_operational_evidence_live.json
 ```
 

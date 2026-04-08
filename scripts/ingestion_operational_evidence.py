@@ -24,6 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--network-contracts-path", default="docs/validation/ingestion_vendor_contracts.json")
     parser.add_argument("--failure-injection-path", default="docs/validation/ingestion_failure_injection.json")
     parser.add_argument("--live-drill-path", default="docs/validation/ingestion_live_drill_report.json")
+    parser.add_argument("--provenance-source", default="scripted_operational_evidence")
+    parser.add_argument("--runner-id", default="ingestion_operational_evidence")
+    parser.add_argument("--trigger", default="manual")
     return parser
 
 
@@ -42,6 +45,9 @@ def main() -> int:
         network_contracts_path=Path(args.network_contracts_path),
         failure_injection_path=Path(args.failure_injection_path),
         live_drill_path=Path(args.live_drill_path),
+        provenance_source=str(args.provenance_source),
+        runner_id=str(args.runner_id),
+        trigger=str(args.trigger),
     )
     output_path = Path(args.output)
     write_operational_evidence_report(output_path, report)

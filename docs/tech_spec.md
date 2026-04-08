@@ -569,6 +569,6 @@
   - `paper` soporta `trade` y `kline`
   - `trade` en `paper` queda respaldado por `replay`, parity, vendor contracts y storage validation
   - `live` soporta `trade` + `kline`
-  - `trade` en `live` queda respaldado por exact recovery, handoff historico-live y runtime validation
-  - `book` permanece fuera de `paper` y `live` hasta contar con runtime y recovery propios
-  - la promotion paper/live consolida artifacts en `docs/validation/ingestion_operational_evidence*.json`, donde se bloquea evidence stale, origen incoherente y ausencia de surfaces externas de observabilidad
+- `trade` en `live` queda respaldado por exact recovery, handoff historico-live y runtime validation
+- `book` permanece fuera de `paper` y `live` hasta contar con runtime y recovery propios
+- la promotion paper/live consolida artifacts en `docs/validation/ingestion_operational_evidence*.json`, donde se bloquea evidence stale, origen incoherente, evidence derivada inline y ausencia de `owner`/`surface_ref`/`verification_ref` en las surfaces externas de observabilidad

@@ -5,6 +5,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - El scope live soportado hoy es `trade` + `kline`. `trade` exige exact recovery, handoff historico-live y evidencia runtime continua; `book` no es un objetivo valido de promotion live.
 - La promotion ya no se apoya solo en tests del repo. Debe existir un artefacto agregado de evidence operativa fresco en `docs/validation/ingestion_operational_evidence_<target>.json` o en el path equivalente del profile ejecutado.
 - La observabilidad externa exigida por contrato se resume en cuatro superficies minimas por target: `ingestion.<target>.runtime`, `ingestion.<target>.alerts`, `ingestion.<target>.logs` e `ingestion.<target>.promotion`. Para `live` se exige ademas `ingestion.live.cutover`.
+- Un gate ya no debe aceptar evidence derivada inline dentro de `run_release_gates`. El artefacto agregado debe venir persistido desde `scripts/ingestion_operational_evidence.py`, con `provenance.source`, `provenance.runner_id`, `provenance.trigger`, `provenance.generated_by` y `provenance.derived_in_process = false`.
 
 ## Comandos base
 - Shell del contenedor:
@@ -87,8 +88,11 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 11. Revisar `docs/validation/ingestion_operational_evidence_paper.json` o `docs/validation/ingestion_operational_evidence_live.json` segun el target:
    - `pass_ok = true`
    - `evidence_origin` coherente con el target
+   - `provenance.source`, `provenance.runner_id`, `provenance.trigger` y `provenance.generated_by` presentes
+   - `provenance.derived_in_process = false`
    - `excluded_feed_policy.book = "excluded"`
    - `observability.pass_ok = true`
+   - cada surface en `observability.external_surfaces` lleva `owner`, `surface_ref`, `verification_mode`, `verified_at`, `verification_ref` y `pass_ok = true`
    - todos los artefactos requeridos llevan `fresh = true`
 12. Revisar `docs/validation/ingestion_soak_evidence.json`:
    - `pass_ok = true`
@@ -224,4 +228,4 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `trade` en `live` exige exact recovery, handoff historico-live y evidencia runtime fresca.
 - `book` queda fuera de `paper` y `live`.
 - Los artifacts operativos se consideran stale tras 24 horas para `rest/ws canary`, `vendor_contracts`, `soak`, `failure_injection` y `live_drill`; `replay` parity y `storage_benchmark` admiten 7 dias como maximo.
-- Un gate live ya no debe aceptarse si solo puede derivar la evidence en proceso o si faltan superficies externas declaradas en el contrato de observabilidad.
+- Un gate paper/live ya no debe aceptarse si solo puede derivar la evidence en proceso o si faltan `owner`, `surface_ref`, `verification_mode`, `verified_at` o `verification_ref` en las superficies declaradas del contrato de observabilidad.

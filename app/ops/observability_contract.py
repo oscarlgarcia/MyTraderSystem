@@ -65,6 +65,9 @@ class ExternalObservabilitySurface:
     kind: Literal["dashboard", "alert-route", "log-stream", "runbook"]
     description: str
     repo_reference: str
+    owner: str
+    surface_ref: str
+    verification_mode: Literal["dashboard-check", "alert-route-check", "log-stream-check", "runbook-review"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,24 +179,36 @@ def required_external_observability_surfaces(*, target: ReleaseTarget) -> tuple[
             kind="dashboard",
             description="Vista operativa externa del runtime de ingestion para el target activo.",
             repo_reference="docs/operations/ingestion_runbook.md",
+            owner="team-ingestion",
+            surface_ref=f"grafana://ingestion/{target}/runtime",
+            verification_mode="dashboard-check",
         ),
         ExternalObservabilitySurface(
             surface_id=f"ingestion.{target}.alerts",
             kind="alert-route",
             description="Ruta externa de alertado critico para reconnects, gaps, skew y compaction.",
             repo_reference="app/observability/alerts.py",
+            owner="team-ingestion-oncall",
+            surface_ref=f"pagerduty://ingestion/{target}/alerts",
+            verification_mode="alert-route-check",
         ),
         ExternalObservabilitySurface(
             surface_id=f"ingestion.{target}.logs",
             kind="log-stream",
             description="Canal externo donde se observan summaries, health y operational alerts de ingestion.",
             repo_reference="docs/operations/ingestion_runbook.md",
+            owner="team-observability",
+            surface_ref=f"loki://ingestion/{target}/logs",
+            verification_mode="log-stream-check",
         ),
         ExternalObservabilitySurface(
             surface_id=f"ingestion.{target}.promotion",
             kind="runbook",
             description="Procedimiento operativo de promotion, rollback y cutover del target.",
             repo_reference="docs/operations/ingestion_promotion_runbook.md",
+            owner="team-ingestion",
+            surface_ref="runbook://docs/operations/ingestion_promotion_runbook.md",
+            verification_mode="runbook-review",
         ),
     ]
     if target == "live":
@@ -203,6 +218,9 @@ def required_external_observability_surfaces(*, target: ReleaseTarget) -> tuple[
                 kind="runbook",
                 description="Surface operativa para live drill y rollback/cutover de ingestion.",
                 repo_reference="docs/ops/live_cutover.md",
+                owner="team-ingestion",
+                surface_ref="runbook://docs/ops/live_cutover.md",
+                verification_mode="runbook-review",
             )
         )
     return tuple(surfaces)

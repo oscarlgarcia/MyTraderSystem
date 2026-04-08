@@ -395,6 +395,21 @@ def _operational_evidence_block(
     excluded_policy = payload.get("excluded_feed_policy") or {}
     if excluded_policy.get("book") != "excluded":
         reasons.append("book exclusion policy is not enforced in operational evidence")
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, dict):
+        reasons.append("operational evidence missing provenance metadata")
+        provenance = {}
+    if derived_in_process:
+        reasons.append("promotion requires a persisted operational evidence artifact; inline derived evidence is not allowed")
+    provenance_source = str(provenance.get("source") or "")
+    if provenance_source in {"", "inline_gate_derivation", "repo_local_only"}:
+        reasons.append("operational evidence provenance must come from the operational promotion path")
+    if not str(provenance.get("runner_id") or "").strip():
+        reasons.append("operational evidence provenance missing runner_id")
+    if not str(provenance.get("generated_by") or "").strip():
+        reasons.append("operational evidence provenance missing generated_by")
+    if not str(provenance.get("trigger") or "").strip():
+        reasons.append("operational evidence provenance missing trigger")
     age = _artifact_age(path, payload)
     if age is not None and age > timedelta(hours=24):
         reasons.append("operational evidence artifact stale: older than 86400s")
@@ -418,6 +433,7 @@ def _operational_evidence_block(
             "artifact_age_seconds": age.total_seconds() if age is not None else None,
             "evidence_origin": evidence_origin,
             "cadence_policy": payload.get("cadence_policy"),
+            "provenance": provenance,
             "derived_in_process": derived_in_process,
         },
     )
@@ -936,6 +952,9 @@ def _observability_contract_block(*, target: ReleaseTarget, required: bool) -> G
                     "kind": surface.kind,
                     "description": surface.description,
                     "repo_reference": surface.repo_reference,
+                    "owner": surface.owner,
+                    "surface_ref": surface.surface_ref,
+                    "verification_mode": surface.verification_mode,
                 }
                 for surface in report.external_surfaces
             ],
@@ -973,6 +992,33 @@ def _operational_observability_block(
     external_surfaces = observability_payload.get("external_surfaces")
     if not isinstance(external_surfaces, (list, tuple)) or not external_surfaces:
         reasons.append("operational observability evidence missing external surfaces")
+        external_surfaces = []
+    expected_contract = build_observability_contract_report(target=target)
+    expected_surface_ids = {surface.surface_id for surface in expected_contract.external_surfaces}
+    observed_surface_ids: set[str] = set()
+    for surface in external_surfaces:
+        if not isinstance(surface, dict):
+            reasons.append("operational observability evidence contains invalid surface payload")
+            continue
+        surface_id = str(surface.get("surface_id") or "")
+        observed_surface_ids.add(surface_id)
+        if not surface_id:
+            reasons.append("operational observability surface missing surface_id")
+        if not str(surface.get("owner") or "").strip():
+            reasons.append(f"operational observability surface {surface_id or '<unknown>'} missing owner")
+        if not str(surface.get("surface_ref") or "").strip():
+            reasons.append(f"operational observability surface {surface_id or '<unknown>'} missing surface_ref")
+        if not str(surface.get("verification_mode") or "").strip():
+            reasons.append(f"operational observability surface {surface_id or '<unknown>'} missing verification_mode")
+        if not str(surface.get("verification_ref") or "").strip():
+            reasons.append(f"operational observability surface {surface_id or '<unknown>'} missing verification_ref")
+        if not str(surface.get("verified_at") or "").strip():
+            reasons.append(f"operational observability surface {surface_id or '<unknown>'} missing verified_at")
+        if surface.get("pass_ok") is not True:
+            reasons.append(f"operational observability surface {surface_id or '<unknown>'} is not passing")
+    missing_surface_ids = sorted(expected_surface_ids - observed_surface_ids)
+    if missing_surface_ids:
+        reasons.append(f"operational observability evidence missing required surfaces: {', '.join(missing_surface_ids)}")
     age = _artifact_age(path, payload)
     if age is not None and age > timedelta(hours=24):
         reasons.append("operational observability artifact stale: older than 86400s")
@@ -1028,6 +1074,11 @@ def _resolve_operational_evidence(
         network_contracts_path=network_contracts_path,
         failure_injection_path=failure_injection_path,
         live_drill_path=live_drill_path,
+        provenance_source="inline_gate_derivation",
+        runner_id="run_release_gates",
+        trigger="inline_gate_derivation",
+        generated_by="app.ops.release_gates.run_release_gates",
+        derived_in_process=True,
     )
     return asdict(report), resolved_path, True
 

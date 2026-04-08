@@ -63,9 +63,9 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
   - `paper` soporta `trade` y `kline`
   - `trade` en `paper` se valida por `replay`, parity, contratos del vendor y storage validation
   - `live` soporta `trade` + `kline`
-  - `trade` en `live` exige exact recovery, canary WS, soak runtime y handoff historico-live
-  - `book` queda fuera de `paper` y `live` hasta que exista runtime, schema y recovery dedicados
-  - la promotion paper/live consolida artifacts en `ingestion_operational_evidence*.json`, donde se bloquea evidence stale, origen incoherente y ausencia de surfaces externas de observabilidad
+- `trade` en `live` exige exact recovery, canary WS, soak runtime y handoff historico-live
+- `book` queda fuera de `paper` y `live` hasta que exista runtime, schema y recovery dedicados
+- la promotion paper/live consolida artifacts en `ingestion_operational_evidence*.json`, donde se bloquea evidence stale, origen incoherente, evidence derivada inline y ausencia de `owner`/`surface_ref`/`verification_ref` en las surfaces externas de observabilidad
 - Añadir serialización (p.ej. JSON) manteniendo contratos.
 - Extender `MarketEvent` con profundidad de libro/funding cuando ingestion lo necesite.
 - Añadir campos de riesgo (p.ej. risk_level) y de ejecución (p.ej. slippage estimado) respetando compatibilidad hacia atrás.
