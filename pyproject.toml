@@ -15,7 +15,7 @@ python = "^3.11"
 websockets = "^12.0"
 httpx = "^0.27.0"
 pyarrow = "^17.0.0"
-tzdata = "^2025.2"
+tzdata = { version = ">=2025.2,<2027.0", markers = "platform_system == 'Windows'" }
 fastapi = "^0.116.0"
 uvicorn = "^0.35.0"
 jinja2 = "^3.1.6"
@@ -27,6 +27,10 @@ pytest = "^8.0"
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+markers = [
+    "slow: long-running end-to-end and readiness scenarios",
+    "network: tests that call live external vendor endpoints",
+]
 
 [tool.ruff]
 line-length = 100

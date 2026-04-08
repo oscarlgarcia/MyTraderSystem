@@ -17,7 +17,9 @@ PYTEST_CMD := $(POETRY) run pytest
 INSTALL_CMD := $(POETRY) install
 endif
 
-.PHONY: install lint test run-dev
+PYTEST_FAST_ARGS := tests/controlplane tests/execution tests/features tests/ingestion tests/marketdata tests/portfolio tests/risk tests/strategy tests/test_*.py --ignore=tests/ops --ignore=tests/performance --ignore=tests/network --ignore=tests/slow
+
+.PHONY: install lint test test-all run-dev
 
 install:
 	$(INSTALL_CMD)
@@ -26,6 +28,9 @@ lint:
 	$(PYTHON_CMD) -m compileall app
 
 test:
+	$(PYTEST_CMD) $(PYTEST_FAST_ARGS)
+
+test-all:
 	$(PYTEST_CMD)
 
 run-dev:
@@ -104,7 +109,7 @@ docker-exec:
 	docker compose exec app bash
 
 docker-test:
-	docker compose run --rm app sh -c "/opt/poetry/bin/poetry install && /opt/poetry/bin/poetry run pytest"
+	docker compose run --rm app sh -c "/opt/poetry/bin/poetry install && /opt/poetry/bin/poetry run pytest $(PYTEST_FAST_ARGS)"
 
 docker-test-all:
 	docker compose exec app /opt/poetry/bin/poetry run pytest
