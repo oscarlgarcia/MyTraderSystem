@@ -8,6 +8,13 @@
   "feature_online_backend": "http",
   "feature_online_store_url": "http://127.0.0.1:8011",
   "feature_offline_store_path": "/var/lib/mytradersystem/data/prod/feature-store/offline.sqlite",
+  "feature_store_server_backend": "local_sqlite",
+  "feature_store_server_path": "/var/lib/mytradersystem/data/prod/feature-store/online.sqlite",
+  "feature_store_server_host": "127.0.0.1",
+  "feature_store_server_port": 8011,
+  "feature_release_online_backend": "http",
+  "feature_observability_sink": "http",
+  "feature_validation_dir": "/var/lib/mytradersystem/data/prod/feature-store/validation",
   "feature_release_registry_path": "/var/lib/mytradersystem/data/prod/feature-store/feature_releases.json",
   "feature_training_bundle_registry_dir": "/var/lib/mytradersystem/data/prod/feature-store/training-bundles"
 }

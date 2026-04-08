@@ -50,6 +50,13 @@ class AppConfig:
     feature_online_store_path: Path = Path("feature-store/online.sqlite")
     feature_online_store_url: str | None = None
     feature_offline_store_path: Path = Path("feature-store/offline.sqlite")
+    feature_store_server_backend: str = "local_sqlite"
+    feature_store_server_path: Path = Path("feature-store/online.sqlite")
+    feature_store_server_host: str = "127.0.0.1"
+    feature_store_server_port: int = 8011
+    feature_release_online_backend: str = "http"
+    feature_observability_sink: str = "http"
+    feature_validation_dir: Path = Path("docs/validation")
     feature_release_registry_path: Path = Path("docs/validation/feature_releases.json")
     feature_training_bundle_registry_dir: Path = Path("feature-store/training-bundles")
 
@@ -94,6 +101,10 @@ def _resolve_data_dir(value: str | os.PathLike[str]) -> Path:
     return raw_path
 
 
+def _resolve_config_path(value: str | os.PathLike[str]) -> Path:
+    return _resolve_data_dir(value)
+
+
 def load_config(env: str | None = None) -> AppConfig:
     env_name = env or os.getenv("APP_ENV", DEFAULT_ENV)
     path = Path(f"config.{env_name}.yaml")
@@ -114,19 +125,32 @@ def load_config(env: str | None = None) -> AppConfig:
     data_dir = Path(data_dir_override) if data_dir_override else _resolve_data_dir(raw["data_dir"])
     control_plane_backend = str(raw.get("control_plane_backend", "sqlite")).strip().lower() or "sqlite"
     control_plane_db_root = data_dir / raw["env"] / "control-plane"
-    control_plane_db_path = Path(raw.get("control_plane_db_path", control_plane_db_root / "control_plane.sqlite"))
+    control_plane_db_path = _resolve_config_path(raw.get("control_plane_db_path", control_plane_db_root / "control_plane.sqlite"))
     control_plane_db_url = raw.get("control_plane_db_url")
-    control_plane_telemetry_dir = Path(raw.get("control_plane_telemetry_dir", data_dir / raw["env"] / "ui-telemetry"))
+    control_plane_telemetry_dir = _resolve_config_path(raw.get("control_plane_telemetry_dir", data_dir / raw["env"] / "ui-telemetry"))
     control_plane_poll_interval_seconds = float(raw.get("control_plane_poll_interval_seconds", 5.0))
     control_plane_command_poll_interval_seconds = float(raw.get("control_plane_command_poll_interval_seconds", 2.0))
     feature_root = data_dir / raw["env"] / "feature-store"
     feature_online_backend = str(raw.get("feature_online_backend", "local_sqlite")).strip().lower() or "local_sqlite"
-    feature_online_store_path = Path(raw.get("feature_online_store_path", feature_root / "online.sqlite"))
+    feature_online_store_path = _resolve_config_path(raw.get("feature_online_store_path", feature_root / "online.sqlite"))
     feature_online_store_url = raw.get("feature_online_store_url")
-    feature_offline_store_path = Path(raw.get("feature_offline_store_path", feature_root / "offline.sqlite"))
-    feature_release_registry_path = Path(raw.get("feature_release_registry_path", Path("docs") / "validation" / "feature_releases.json"))
+    feature_offline_store_path = _resolve_config_path(raw.get("feature_offline_store_path", feature_root / "offline.sqlite"))
+    feature_store_server_backend = (
+        str(raw.get("feature_store_server_backend", "local_sqlite")).strip().lower() or "local_sqlite"
+    )
+    feature_store_server_path = _resolve_config_path(raw.get("feature_store_server_path", feature_root / "online.sqlite"))
+    feature_store_server_host = str(raw.get("feature_store_server_host", "127.0.0.1")).strip() or "127.0.0.1"
+    feature_store_server_port = int(raw.get("feature_store_server_port", 8011))
+    feature_release_online_backend = (
+        str(raw.get("feature_release_online_backend", "http")).strip().lower() or "http"
+    )
+    feature_observability_sink = str(raw.get("feature_observability_sink", "http")).strip().lower() or "http"
+    feature_validation_dir = _resolve_config_path(raw.get("feature_validation_dir", Path("docs") / "validation"))
+    feature_release_registry_path = _resolve_config_path(
+        raw.get("feature_release_registry_path", Path("docs") / "validation" / "feature_releases.json")
+    )
     feature_training_bundle_registry_dir = Path(
-        raw.get("feature_training_bundle_registry_dir", feature_root / "training-bundles")
+        _resolve_config_path(raw.get("feature_training_bundle_registry_dir", feature_root / "training-bundles"))
     )
 
     symbols = [str(symbol).upper() for symbol in raw.get("symbols", [])]
@@ -155,6 +179,13 @@ def load_config(env: str | None = None) -> AppConfig:
         feature_online_store_path=feature_online_store_path,
         feature_online_store_url=str(feature_online_store_url) if feature_online_store_url not in (None, "") else None,
         feature_offline_store_path=feature_offline_store_path,
+        feature_store_server_backend=feature_store_server_backend,
+        feature_store_server_path=feature_store_server_path,
+        feature_store_server_host=feature_store_server_host,
+        feature_store_server_port=feature_store_server_port,
+        feature_release_online_backend=feature_release_online_backend,
+        feature_observability_sink=feature_observability_sink,
+        feature_validation_dir=feature_validation_dir,
         feature_release_registry_path=feature_release_registry_path,
         feature_training_bundle_registry_dir=feature_training_bundle_registry_dir,
     )

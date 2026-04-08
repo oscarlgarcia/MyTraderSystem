@@ -9,18 +9,20 @@ from _script_bootstrap import bootstrap_repo_path
 
 bootstrap_repo_path()
 
+from app.config import load_config
 from app.ops.feature_release_gates import render_feature_release_summary, run_feature_release_gates
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run feature release gates from precomputed artifacts.")
+    parser.add_argument("--env", choices=["dev", "test", "prod"], default=None)
     parser.add_argument("--target", choices=["paper", "live"], required=True)
     parser.add_argument("--parity-path", required=True)
     parser.add_argument("--benchmark-path", required=True)
     parser.add_argument("--observability-path", required=True)
     parser.add_argument("--contract-path", required=True)
-    parser.add_argument("--online-backend", required=True)
-    parser.add_argument("--observability-sink", required=True)
+    parser.add_argument("--online-backend", default=None)
+    parser.add_argument("--observability-sink", default=None)
     parser.add_argument("--shadow-path")
     parser.add_argument("--soak-path")
     parser.add_argument("--concurrency-path")
@@ -30,17 +32,29 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_gate_runtime(args: argparse.Namespace) -> tuple[str, str]:
+    if args.env is None:
+        if not args.online_backend or not args.observability_sink:
+            raise SystemExit("--online-backend and --observability-sink are required when --env is not provided")
+        return str(args.online_backend), str(args.observability_sink)
+    cfg = load_config(args.env)
+    return str(args.online_backend or cfg.feature_release_online_backend), str(
+        args.observability_sink or cfg.feature_observability_sink
+    )
+
+
 def main(argv: list[str]) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv[1:])
+    online_backend, observability_sink = _resolve_gate_runtime(args)
     report = run_feature_release_gates(
         target=args.target,
         parity_path=Path(args.parity_path),
         benchmark_path=Path(args.benchmark_path),
         observability_path=Path(args.observability_path),
         contract_path=Path(args.contract_path),
-        online_backend=args.online_backend,
-        observability_sink=args.observability_sink,
+        online_backend=online_backend,
+        observability_sink=observability_sink,
         shadow_path=Path(args.shadow_path) if args.shadow_path else None,
         soak_path=Path(args.soak_path) if args.soak_path else None,
         concurrency_path=Path(args.concurrency_path) if args.concurrency_path else None,

@@ -9,6 +9,7 @@ from _script_bootstrap import bootstrap_repo_path
 
 bootstrap_repo_path()
 
+from app.config import load_config
 from app.features.online_store_factory import PRODUCTION_CANONICAL_ONLINE_BACKEND
 from app.features.online_store_http import RemoteHttpOnlineFeatureStore
 from app.features.operational_probes import run_serving_concurrency_probe, run_serving_soak_probe, write_probe_report
@@ -20,11 +21,12 @@ from app.features.shadow_summary import summarize_shadow_reports, write_shadow_s
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate feature release evidence artifacts.")
-    parser.add_argument("--primary-url", required=True)
+    parser.add_argument("--env", choices=["dev", "test", "prod"], default=None)
+    parser.add_argument("--primary-url", default=None)
     parser.add_argument("--feature-set-name", required=True)
     parser.add_argument("--feature-set-version", required=True)
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--output-dir", default=None)
     parser.add_argument("--target", choices=["paper", "live"], default="paper")
     parser.add_argument("--shadow-url", default=None)
     parser.add_argument("--shadow-requests", type=int, default=25)
@@ -35,15 +37,28 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_operational_args(args: argparse.Namespace) -> tuple[str, Path]:
+    if args.env is None:
+        if not args.primary_url or not args.output_dir:
+            raise SystemExit("--primary-url and --output-dir are required when --env is not provided")
+        return str(args.primary_url), Path(args.output_dir)
+    cfg = load_config(args.env)
+    primary_url = str(args.primary_url or cfg.feature_online_store_url or "").strip()
+    if not primary_url:
+        raise SystemExit(f"config.{cfg.env}.yaml does not define feature_online_store_url")
+    output_dir = Path(args.output_dir) if args.output_dir else cfg.feature_validation_dir
+    return primary_url, output_dir
+
+
 def main() -> int:
     args = _parser().parse_args()
     if args.target == "live" and not args.shadow_url:
         raise SystemExit("live feature evidence requires --shadow-url to generate fresh shadow validation")
-    output_dir = Path(args.output_dir)
+    primary_url, output_dir = _resolve_operational_args(args)
     output_dir.mkdir(parents=True, exist_ok=True)
     decision_ts = datetime.now(timezone.utc)
 
-    primary_store = RemoteHttpOnlineFeatureStore(args.primary_url)
+    primary_store = RemoteHttpOnlineFeatureStore(primary_url)
     primary_service = FeatureServingService(online_store=primary_store, target="research")
 
     soak_report = run_serving_soak_probe(
@@ -105,7 +120,7 @@ def main() -> int:
         "feature_set_version": args.feature_set_version,
         "symbol": args.symbol,
         "primary_backend": PRODUCTION_CANONICAL_ONLINE_BACKEND,
-        "primary_url": args.primary_url,
+        "primary_url": primary_url,
         "shadow_backend": PRODUCTION_CANONICAL_ONLINE_BACKEND if args.shadow_url else None,
         "shadow_url": args.shadow_url,
         "artifacts": {

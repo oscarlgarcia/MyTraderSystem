@@ -7,7 +7,15 @@
   "symbols": ["BTCUSDT", "ETHUSDT"],
   "feature_online_backend": "local_sqlite",
   "feature_online_store_path": "./data/dev/feature-store/online.sqlite",
+  "feature_online_store_url": "http://127.0.0.1:8011",
   "feature_offline_store_path": "./data/dev/feature-store/offline.sqlite",
+  "feature_store_server_backend": "local_sqlite",
+  "feature_store_server_path": "./data/dev/feature-store/online.sqlite",
+  "feature_store_server_host": "127.0.0.1",
+  "feature_store_server_port": 8011,
+  "feature_release_online_backend": "http",
+  "feature_observability_sink": "http",
+  "feature_validation_dir": "docs/validation",
   "feature_release_registry_path": "docs/validation/feature_releases.json",
   "feature_training_bundle_registry_dir": "./data/dev/feature-store/training-bundles"
 }

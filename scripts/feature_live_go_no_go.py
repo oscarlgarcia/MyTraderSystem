@@ -7,6 +7,7 @@ from _script_bootstrap import bootstrap_repo_path
 
 bootstrap_repo_path()
 
+from app.config import load_config
 from app.features.live_readiness import FeatureLiveReadinessDecision
 from app.features.release_workflow import publish_feature_release
 from app.ops.feature_release_gates import render_feature_release_summary, run_feature_release_gates
@@ -14,44 +15,61 @@ from app.ops.feature_release_gates import render_feature_release_summary, run_fe
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run feature go/no-go gates and optionally publish.")
+    parser.add_argument("--env", choices=["dev", "test", "prod"], default=None)
     parser.add_argument("--target", choices=["paper", "live"], required=True)
-    parser.add_argument("--registry-path", required=True)
+    parser.add_argument("--registry-path", default=None)
     parser.add_argument("--feature-set-name", required=True)
     parser.add_argument("--feature-set-version", required=True)
     parser.add_argument("--parity-path", required=True)
     parser.add_argument("--benchmark-path", required=True)
     parser.add_argument("--observability-path", required=True)
     parser.add_argument("--contract-path", required=True)
-    parser.add_argument("--online-backend", required=True)
-    parser.add_argument("--observability-sink", required=True)
+    parser.add_argument("--online-backend", default=None)
+    parser.add_argument("--observability-sink", default=None)
     parser.add_argument("--shadow-path")
     parser.add_argument("--soak-path")
     parser.add_argument("--concurrency-path")
     parser.add_argument("--rollout-audit-path")
     parser.add_argument("--evidence-manifest-path")
-    parser.add_argument("--gates-output", required=True)
+    parser.add_argument("--gates-output", default=None)
     parser.add_argument("--publish", action="store_true")
     return parser
+
+
+def _resolve_operational_runtime(args: argparse.Namespace) -> tuple[Path, str, str, Path]:
+    if args.env is None:
+        if not args.registry_path or not args.online_backend or not args.observability_sink or not args.gates_output:
+            raise SystemExit(
+                "--registry-path, --online-backend, --observability-sink and --gates-output are required when --env is not provided"
+            )
+        return Path(args.registry_path), str(args.online_backend), str(args.observability_sink), Path(args.gates_output)
+    cfg = load_config(args.env)
+    registry_path = Path(args.registry_path) if args.registry_path else cfg.feature_release_registry_path
+    online_backend = str(args.online_backend or cfg.feature_release_online_backend)
+    observability_sink = str(args.observability_sink or cfg.feature_observability_sink)
+    gates_output = Path(args.gates_output) if args.gates_output else cfg.feature_validation_dir / "feature_release_gates.json"
+    return registry_path, online_backend, observability_sink, gates_output
 
 
 def main() -> int:
     args = _parser().parse_args()
     if args.target == "live" and not args.evidence_manifest_path:
         raise SystemExit("live go/no-go requires --evidence-manifest-path")
+    registry_path, online_backend, observability_sink, gates_output = _resolve_operational_runtime(args)
     report = run_feature_release_gates(
         target=args.target,
         parity_path=Path(args.parity_path),
         benchmark_path=Path(args.benchmark_path),
         observability_path=Path(args.observability_path),
         contract_path=Path(args.contract_path),
-        online_backend=args.online_backend,
-        observability_sink=args.observability_sink,
+        online_backend=online_backend,
+        observability_sink=observability_sink,
         shadow_path=Path(args.shadow_path) if args.shadow_path else None,
         soak_path=Path(args.soak_path) if args.soak_path else None,
         concurrency_path=Path(args.concurrency_path) if args.concurrency_path else None,
         rollout_audit_path=Path(args.rollout_audit_path) if args.rollout_audit_path else None,
         evidence_manifest_path=Path(args.evidence_manifest_path) if args.evidence_manifest_path else None,
-        output_path=Path(args.gates_output),
+        output_path=gates_output,
     )
     print(render_feature_release_summary(report))
     if not report.pass_ok:
@@ -66,7 +84,7 @@ def main() -> int:
             reasons=tuple(str(reason) for reason in report.live_readiness.get("reasons", [])),
         )
     publish_feature_release(
-        registry_path=Path(args.registry_path),
+        registry_path=registry_path,
         feature_set_name=args.feature_set_name,
         version=args.feature_set_version,
         gate_report=report.gate_report,

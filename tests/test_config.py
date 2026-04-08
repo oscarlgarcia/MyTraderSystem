@@ -18,7 +18,15 @@ def test_load_dev_config():
     assert cfg.symbols == ["BTCUSDT", "ETHUSDT"]
     assert cfg.feature_online_backend == "local_sqlite"
     assert cfg.feature_online_store_path.as_posix().endswith("data/dev/feature-store/online.sqlite")
+    assert cfg.feature_online_store_url == "http://127.0.0.1:8011"
     assert cfg.feature_offline_store_path.as_posix().endswith("data/dev/feature-store/offline.sqlite")
+    assert cfg.feature_store_server_backend == "local_sqlite"
+    assert cfg.feature_store_server_path.as_posix().endswith("data/dev/feature-store/online.sqlite")
+    assert cfg.feature_store_server_host == "127.0.0.1"
+    assert cfg.feature_store_server_port == 8011
+    assert cfg.feature_release_online_backend == "http"
+    assert cfg.feature_observability_sink == "http"
+    assert cfg.feature_validation_dir == Path("docs/validation")
 
 
 def test_missing_key_raises(tmp_path, monkeypatch):
@@ -127,3 +135,8 @@ def test_load_prod_config():
     assert cfg.data_dir.is_absolute()
     assert cfg.feature_online_backend == "http"
     assert cfg.feature_online_store_url == "http://127.0.0.1:8011"
+    assert cfg.feature_store_server_backend == "local_sqlite"
+    assert cfg.feature_store_server_port == 8011
+    assert cfg.feature_release_online_backend == "http"
+    assert cfg.feature_observability_sink == "http"
+    assert cfg.feature_validation_dir.is_absolute()

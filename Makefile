@@ -60,6 +60,7 @@ END ?= 2024-01-01T01:00:00+00:00
 INTERVAL ?= 1m
 BATCH ?= 500
 FEED_TYPE ?= kline
+FEATURE_ENV ?= dev
 FEATURE_AUDIT_PATH ?= docs/validation/feature_decision_audit.jsonl
 FEATURE_SET_NAME ?= legacy
 FEATURE_SET_VERSION ?= legacy
@@ -81,19 +82,32 @@ backfill-dev-write:
 	$(PYTHON_CMD) -m app.ingestion.backfill --env dev --symbol $(SYMBOL) --feed-type $(FEED_TYPE) --start $(START) --end $(END) --interval $(INTERVAL) --batch $(BATCH)
 
 feature-store-server:
-	$(PYTHON_CMD) scripts/feature_store_server.py --backend local_sqlite --path $(FEATURE_STORE_PATH) --host $(FEATURE_STORE_HOST) --port $(FEATURE_STORE_PORT)
+	$(PYTHON_CMD) scripts/feature_store_server.py --env $(FEATURE_ENV) --backend local_sqlite --path $(FEATURE_STORE_PATH) --host $(FEATURE_STORE_HOST) --port $(FEATURE_STORE_PORT)
+
+feature-store-smoke:
+	$(PYTHON_CMD) scripts/feature_store_smoke.py --env $(FEATURE_ENV) --base-url $(FEATURE_STORE_URL)
 
 feature-release-evidence:
-	$(PYTHON_CMD) scripts/feature_release_evidence.py --primary-url $(FEATURE_STORE_URL) --feature-set-name $(FEATURE_SET_NAME) --feature-set-version $(FEATURE_SET_VERSION) --symbol $(FEATURE_SYMBOL) --target $(FEATURE_EVIDENCE_TARGET) --output-dir $(FEATURE_EVIDENCE_DIR) $(if $(FEATURE_SHADOW_URL),--shadow-url $(FEATURE_SHADOW_URL),)
+	$(PYTHON_CMD) scripts/feature_release_evidence.py --env $(FEATURE_ENV) --primary-url $(FEATURE_STORE_URL) --feature-set-name $(FEATURE_SET_NAME) --feature-set-version $(FEATURE_SET_VERSION) --symbol $(FEATURE_SYMBOL) --target $(FEATURE_EVIDENCE_TARGET) --output-dir $(FEATURE_EVIDENCE_DIR) $(if $(FEATURE_SHADOW_URL),--shadow-url $(FEATURE_SHADOW_URL),)
 
 feature-release-gates:
-	$(PYTHON_CMD) scripts/feature_release_gates.py --target paper --parity-path docs/validation/feature_parity_report.json --benchmark-path docs/validation/feature_benchmark_report.json --observability-path docs/validation/feature_observability.json --contract-path docs/validation/feature_contract_validation.json --online-backend http --observability-sink http --output docs/validation/feature_release_gates.json
+	$(PYTHON_CMD) scripts/feature_release_gates.py --env $(FEATURE_ENV) --target paper --parity-path docs/validation/feature_parity_report.json --benchmark-path docs/validation/feature_benchmark_report.json --observability-path docs/validation/feature_observability.json --contract-path docs/validation/feature_contract_validation.json --online-backend http --observability-sink http --output docs/validation/feature_release_gates.json
+
+feature-paper-promotion:
+	$(PYTHON_CMD) scripts/feature_release_evidence.py --env $(FEATURE_ENV) --primary-url $(FEATURE_STORE_URL) --feature-set-name $(FEATURE_SET_NAME) --feature-set-version $(FEATURE_SET_VERSION) --symbol $(FEATURE_SYMBOL) --target paper --output-dir $(FEATURE_EVIDENCE_DIR)
+	$(PYTHON_CMD) scripts/feature_live_go_no_go.py --env $(FEATURE_ENV) --target paper --feature-set-name $(FEATURE_SET_NAME) --feature-set-version $(FEATURE_SET_VERSION) --parity-path docs/validation/feature_parity_report.json --benchmark-path docs/validation/feature_benchmark_report.json --observability-path docs/validation/feature_observability.json --contract-path docs/validation/feature_contract_validation.json --gates-output docs/validation/feature_release_gates.json --publish
+
+feature-live-evidence:
+	$(PYTHON_CMD) scripts/feature_release_evidence.py --env $(FEATURE_ENV) --primary-url $(FEATURE_STORE_URL) --feature-set-name $(FEATURE_SET_NAME) --feature-set-version $(FEATURE_SET_VERSION) --symbol $(FEATURE_SYMBOL) --target live --output-dir $(FEATURE_EVIDENCE_DIR) --shadow-url $(FEATURE_SHADOW_URL)
 
 feature-live-go-no-go:
-	$(PYTHON_CMD) scripts/feature_live_go_no_go.py --target live --registry-path $(FEATURE_RELEASE_REGISTRY) --feature-set-name $(FEATURE_SET_NAME) --feature-set-version $(FEATURE_SET_VERSION) --parity-path docs/validation/feature_parity_report.json --benchmark-path docs/validation/feature_benchmark_report.json --observability-path docs/validation/feature_observability.json --contract-path docs/validation/feature_contract_validation.json --online-backend http --observability-sink http --shadow-path docs/validation/feature_shadow_summary.json --soak-path docs/validation/feature_serving_soak.json --concurrency-path docs/validation/feature_serving_concurrency.json --rollout-audit-path docs/validation/feature_rollout_audit.json --evidence-manifest-path $(FEATURE_EVIDENCE_MANIFEST) --gates-output docs/validation/feature_release_gates.json
+	$(PYTHON_CMD) scripts/feature_live_go_no_go.py --env $(FEATURE_ENV) --target live --feature-set-name $(FEATURE_SET_NAME) --feature-set-version $(FEATURE_SET_VERSION) --parity-path docs/validation/feature_parity_report.json --benchmark-path docs/validation/feature_benchmark_report.json --observability-path docs/validation/feature_observability.json --contract-path docs/validation/feature_contract_validation.json --shadow-path docs/validation/feature_shadow_summary.json --soak-path docs/validation/feature_serving_soak.json --concurrency-path docs/validation/feature_serving_concurrency.json --rollout-audit-path docs/validation/feature_rollout_audit.json --evidence-manifest-path $(FEATURE_EVIDENCE_MANIFEST) --gates-output docs/validation/feature_release_gates.json
+
+feature-live-promotion:
+	$(PYTHON_CMD) scripts/feature_live_go_no_go.py --env $(FEATURE_ENV) --target live --feature-set-name $(FEATURE_SET_NAME) --feature-set-version $(FEATURE_SET_VERSION) --parity-path docs/validation/feature_parity_report.json --benchmark-path docs/validation/feature_benchmark_report.json --observability-path docs/validation/feature_observability.json --contract-path docs/validation/feature_contract_validation.json --shadow-path docs/validation/feature_shadow_summary.json --soak-path docs/validation/feature_serving_soak.json --concurrency-path docs/validation/feature_serving_concurrency.json --rollout-audit-path docs/validation/feature_rollout_audit.json --evidence-manifest-path $(FEATURE_EVIDENCE_MANIFEST) --gates-output docs/validation/feature_release_gates.json --publish
 
 feature-release-rollback-drill:
-	$(PYTHON_CMD) scripts/feature_release_rollback_drill.py --registry-path $(FEATURE_RELEASE_REGISTRY) --feature-set-name $(FEATURE_SET_NAME) --target live --restore
+	$(PYTHON_CMD) scripts/feature_release_rollback_drill.py --env $(FEATURE_ENV) --feature-set-name $(FEATURE_SET_NAME) --target live --restore
 
 # Docker helpers
 .PHONY: docker-build docker-up docker-down docker-shell docker-exec docker-test docker-test-all docker-test-slow docker-test-ingestion-readiness docker-ingestion-soak docker-ingestion-canary docker-test-ingestion-strict

@@ -555,7 +555,7 @@ def run() -> int:
             soak_path=args.feature_release_gates_soak_path,
             concurrency_path=args.feature_release_gates_concurrency_path,
             rollout_audit_path=args.feature_release_gates_rollout_audit_path,
-            evidence_manifest_path=args.feature_release_gates_evidence_manifest_path,
+            evidence_manifest_path=getattr(args, "feature_release_gates_evidence_manifest_path", None),
             output_path=args.feature_release_gates_output,
         )
         print(render_feature_release_gate_summary(report))

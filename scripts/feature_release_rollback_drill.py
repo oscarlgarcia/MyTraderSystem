@@ -7,22 +7,32 @@ from _script_bootstrap import bootstrap_repo_path
 
 bootstrap_repo_path()
 
+from app.config import load_config
 from app.features.release_workflow import publish_feature_release, rollback_feature_release
 from app.features.release_checks import FeatureReleaseGateReport
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Exercise a feature release rollback and restore sequence.")
-    parser.add_argument("--registry-path", required=True)
+    parser.add_argument("--env", choices=["dev", "test", "prod"], default=None)
+    parser.add_argument("--registry-path", default=None)
     parser.add_argument("--feature-set-name", required=True)
     parser.add_argument("--target", choices=["paper", "live"], default="paper")
     parser.add_argument("--restore", action="store_true", help="Re-publish the pre-drill active version after rollback.")
     return parser
 
 
+def _resolve_registry_path(args: argparse.Namespace) -> Path:
+    if args.registry_path:
+        return Path(args.registry_path)
+    if args.env is None:
+        raise SystemExit("--registry-path is required when --env is not provided")
+    return load_config(args.env).feature_release_registry_path
+
+
 def main() -> int:
     args = _parser().parse_args()
-    registry_path = Path(args.registry_path)
+    registry_path = _resolve_registry_path(args)
     rolled_back = rollback_feature_release(
         registry_path=registry_path,
         feature_set_name=args.feature_set_name,
