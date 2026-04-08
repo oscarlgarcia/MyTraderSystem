@@ -18,6 +18,7 @@ from app.marketdata.support_matrix import (
     runtime_validated_paper_feed_types,
 )
 from app.ops.observability_contract import build_observability_contract_report
+from app.ops.operational_evidence import build_operational_evidence_report
 
 
 GateStatus = Literal["pass", "fail", "warn"]
@@ -82,13 +83,35 @@ def run_release_gates(
     network_contracts_path: Path | None = None,
     failure_injection_path: Path | None = None,
     live_drill_path: Path | None = None,
+    operational_evidence_path: Path | None = None,
     require_live_drill: bool = True,
 ) -> ReleaseGateReport:
     normalized_stream_types = normalize_feed_types(stream_types)
     require_runtime_artifacts = _requires_runtime_artifacts(normalized_stream_types, target=target)
     require_rest_artifacts = _requires_rest_artifacts(normalized_stream_types, target=target)
+    operational_evidence_payload, operational_evidence_artifact_path, operational_evidence_derived = _resolve_operational_evidence(
+        target=target,
+        stream_types=normalized_stream_types,
+        operational_evidence_path=Path(operational_evidence_path) if operational_evidence_path is not None else None,
+        rest_canary_path=Path(rest_canary_path or "docs/validation/ingestion_canary_report.json"),
+        ws_canary_path=Path(ws_canary_path or "docs/validation/ingestion_ws_canary_report.json"),
+        replay_parity_path=Path(replay_parity_path or "docs/validation/ingestion_replay_parity.json"),
+        benchmark_path=Path(benchmark_path or "docs/validation/ingestion_storage_benchmark.json"),
+        soak_path=Path(soak_path or "docs/validation/ingestion_soak_evidence.json"),
+        network_contracts_path=Path(network_contracts_path or "docs/validation/ingestion_vendor_contracts.json"),
+        failure_injection_path=Path(failure_injection_path or "docs/validation/ingestion_failure_injection.json"),
+        live_drill_path=Path(live_drill_path or "docs/validation/ingestion_live_drill_report.json"),
+        require_live_drill=require_live_drill,
+    )
     blocks = (
         _evidence_contract_block(normalized_stream_types, target=target),
+        _operational_evidence_block(
+            target=target,
+            stream_types=normalized_stream_types,
+            path=operational_evidence_artifact_path,
+            payload=operational_evidence_payload,
+            derived_in_process=operational_evidence_derived,
+        ),
         _support_matrix_block(normalized_stream_types, target=target),
         _exact_recovery_block(normalized_stream_types, target=target),
         _live_scope_block(normalized_stream_types, target=target),
@@ -188,6 +211,14 @@ def run_release_gates(
             max_age=timedelta(hours=24),
         ),
         _observability_contract_block(target=target, required=(target in {"paper", "live"})),
+        _operational_observability_block(
+            target=target,
+            stream_types=normalized_stream_types,
+            path=operational_evidence_artifact_path,
+            payload=operational_evidence_payload,
+            derived_in_process=operational_evidence_derived,
+            required=(target in {"paper", "live"}),
+        ),
         _canary_block(
             name="live_drill",
             path=Path(live_drill_path or "docs/validation/ingestion_live_drill_report.json"),
@@ -332,6 +363,63 @@ def _evidence_contract_block(stream_types: tuple[str, ...], *, target: ReleaseTa
         required=required,
         reasons=tuple(reasons or ["evidence basis aligned with operational contract"]),
         details=details,
+    )
+
+
+def _operational_evidence_block(
+    *,
+    target: ReleaseTarget,
+    stream_types: tuple[str, ...],
+    path: Path,
+    payload: dict[str, object] | None,
+    derived_in_process: bool,
+) -> GateBlockReport:
+    if payload is None:
+        return GateBlockReport(
+            name="operational_evidence",
+            status="fail",
+            required=True,
+            reasons=(f"missing artifact: {path}",),
+            details={"path": str(path)},
+        )
+    reasons: list[str] = []
+    if payload.get("target") != target:
+        reasons.append(f"operational evidence target {payload.get('target')!r} does not match gate target {target!r}")
+    payload_stream_types = tuple(str(item) for item in payload.get("stream_types", []))
+    if payload_stream_types != stream_types:
+        reasons.append(
+            f"operational evidence stream_types {payload_stream_types} do not match release contract {stream_types}"
+        )
+    if payload.get("pass_ok") is not True:
+        reasons.append("operational evidence artifact is not passing")
+    excluded_policy = payload.get("excluded_feed_policy") or {}
+    if excluded_policy.get("book") != "excluded":
+        reasons.append("book exclusion policy is not enforced in operational evidence")
+    age = _artifact_age(path, payload)
+    if age is not None and age > timedelta(hours=24):
+        reasons.append("operational evidence artifact stale: older than 86400s")
+    evidence_origin = str(payload.get("evidence_origin") or "")
+    if target == "live" and evidence_origin != "operational_runtime":
+        reasons.append("live release requires operational_runtime evidence origin")
+    if target == "paper" and evidence_origin not in {"paper_operational", "operational_runtime"}:
+        reasons.append("paper release requires paper_operational evidence origin")
+    status: GateStatus = "pass" if not reasons else "fail"
+    return GateBlockReport(
+        name="operational_evidence",
+        status=status,
+        required=True,
+        reasons=tuple(reasons or ["operational evidence fresh and aligned"]),
+        details={
+            "path": str(path),
+            "target": payload.get("target"),
+            "phase": payload.get("phase"),
+            "stream_types": list(payload_stream_types),
+            "generated_at": payload.get("generated_at"),
+            "artifact_age_seconds": age.total_seconds() if age is not None else None,
+            "evidence_origin": evidence_origin,
+            "cadence_policy": payload.get("cadence_policy"),
+            "derived_in_process": derived_in_process,
+        },
     )
 
 
@@ -820,6 +908,8 @@ def _observability_contract_block(*, target: ReleaseTarget, required: bool) -> G
         reasons.append("missing required metric thresholds")
     if report.invalid_alert_specs:
         reasons.append("invalid alert threshold definitions")
+    if not report.external_surfaces:
+        reasons.append("missing external observability surface references")
     if not reasons:
         reasons.append("observability contract defined")
     return GateBlockReport(
@@ -840,11 +930,106 @@ def _observability_contract_block(*, target: ReleaseTarget, required: bool) -> G
                 }
                 for name, spec in report.alert_specs.items()
             },
+            "external_surfaces": [
+                {
+                    "surface_id": surface.surface_id,
+                    "kind": surface.kind,
+                    "description": surface.description,
+                    "repo_reference": surface.repo_reference,
+                }
+                for surface in report.external_surfaces
+            ],
             "missing_alerts": list(report.missing_alerts),
             "missing_metric_thresholds": list(report.missing_metric_thresholds),
             "invalid_alert_specs": list(report.invalid_alert_specs),
         },
     )
+
+
+def _operational_observability_block(
+    *,
+    target: ReleaseTarget,
+    stream_types: tuple[str, ...],
+    path: Path,
+    payload: dict[str, object] | None,
+    derived_in_process: bool,
+    required: bool,
+) -> GateBlockReport:
+    if payload is None:
+        return GateBlockReport(
+            name="operational_observability",
+            status="fail" if required else "warn",
+            required=required,
+            reasons=(f"missing artifact: {path}",),
+            details={"path": str(path), "target": target, "stream_types": list(stream_types)},
+        )
+    observability_payload = payload.get("observability") or {}
+    reasons: list[str] = []
+    if observability_payload.get("pass_ok") is not True:
+        reasons.append("operational observability evidence is not passing")
+    repo_runbooks = observability_payload.get("repo_runbooks")
+    if not isinstance(repo_runbooks, (list, tuple)) or not repo_runbooks:
+        reasons.append("operational observability evidence missing repo runbooks")
+    external_surfaces = observability_payload.get("external_surfaces")
+    if not isinstance(external_surfaces, (list, tuple)) or not external_surfaces:
+        reasons.append("operational observability evidence missing external surfaces")
+    age = _artifact_age(path, payload)
+    if age is not None and age > timedelta(hours=24):
+        reasons.append("operational observability artifact stale: older than 86400s")
+    status: GateStatus = "pass" if not reasons else ("fail" if required else "warn")
+    return GateBlockReport(
+        name="operational_observability",
+        status=status,
+        required=required,
+        reasons=tuple(reasons or ["operational observability references declared"]),
+        details={
+            "path": str(path),
+            "target": target,
+            "stream_types": list(stream_types),
+            "generated_at": payload.get("generated_at"),
+            "artifact_age_seconds": age.total_seconds() if age is not None else None,
+            "repo_runbooks": repo_runbooks,
+            "external_surfaces": external_surfaces,
+            "derived_in_process": derived_in_process,
+        },
+    )
+
+
+def _resolve_operational_evidence(
+    *,
+    target: ReleaseTarget,
+    stream_types: tuple[str, ...],
+    operational_evidence_path: Path | None,
+    rest_canary_path: Path,
+    ws_canary_path: Path,
+    replay_parity_path: Path,
+    benchmark_path: Path,
+    soak_path: Path,
+    network_contracts_path: Path,
+    failure_injection_path: Path,
+    live_drill_path: Path,
+    require_live_drill: bool,
+) -> tuple[dict[str, object] | None, Path, bool]:
+    resolved_path = operational_evidence_path or Path("docs/validation/ingestion_operational_evidence.json")
+    if operational_evidence_path is not None:
+        if not resolved_path.exists():
+            return None, resolved_path, False
+        return json.loads(resolved_path.read_text(encoding="utf-8")), resolved_path, False
+    phase = "final" if (target != "live" or require_live_drill) else "predrill"
+    report = build_operational_evidence_report(
+        target=target,
+        phase=phase,
+        stream_types=stream_types,
+        rest_canary_path=rest_canary_path,
+        ws_canary_path=ws_canary_path,
+        replay_parity_path=replay_parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=network_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+    )
+    return asdict(report), resolved_path, True
 
 
 def _feed_support_payload(support: FeedSupport) -> dict[str, object]:

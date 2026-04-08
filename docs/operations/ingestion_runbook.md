@@ -3,6 +3,8 @@
 ## Objetivo
 Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo a live. Todo el flujo usa fuentes mock/deterministas salvo el canary real cuando se ejecute expresamente.
 - El scope live soportado hoy es `trade` + `kline`. `trade` exige exact recovery, handoff historico-live y evidencia runtime continua; `book` no es un objetivo valido de promotion live.
+- La promotion ya no se apoya solo en tests del repo. Debe existir un artefacto agregado de evidence operativa fresco en `docs/validation/ingestion_operational_evidence_<target>.json` o en el path equivalente del profile ejecutado.
+- La observabilidad externa exigida por contrato se resume en cuatro superficies minimas por target: `ingestion.<target>.runtime`, `ingestion.<target>.alerts`, `ingestion.<target>.logs` e `ingestion.<target>.promotion`. Para `live` se exige ademas `ingestion.live.cutover`.
 
 ## Comandos base
 - Shell del contenedor:
@@ -34,6 +36,10 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `docs/validation/ingestion_canary_report.json`
 - `docs/validation/ingestion_ws_canary_report.json`
 - `docs/validation/ingestion_storage_benchmark.json`
+- `docs/validation/ingestion_vendor_contracts.json`
+- `docs/validation/ingestion_operational_evidence_paper.json`
+- `docs/validation/ingestion_operational_evidence_pre_drill_live.json`
+- `docs/validation/ingestion_operational_evidence_live.json`
 - `docs/validation/ingestion_release_gates.json`
 - `docs/validation/ingestion_live_drill_report.json`
 - `docs/validation/quarantine_replay_report.json`
@@ -78,42 +84,48 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 8. Ejecutar `python -m app.main --release-gates --release-gates-target paper`.
 9. Ejecutar `python scripts/ingestion_live_drill.py`.
 10. Verificar que no hay `FAILED` y que todos los scripts devuelven exit code `0`.
-11. Revisar `docs/validation/ingestion_soak_evidence.json`:
+11. Revisar `docs/validation/ingestion_operational_evidence_paper.json` o `docs/validation/ingestion_operational_evidence_live.json` segun el target:
+   - `pass_ok = true`
+   - `evidence_origin` coherente con el target
+   - `excluded_feed_policy.book = "excluded"`
+   - `observability.pass_ok = true`
+   - todos los artefactos requeridos llevan `fresh = true`
+12. Revisar `docs/validation/ingestion_soak_evidence.json`:
    - `pass_ok = true`
    - `max_gaps = 0`
    - `max_gap_irreparable = 0`
-12. Revisar `docs/validation/ingestion_canary_report.json`:
+13. Revisar `docs/validation/ingestion_canary_report.json`:
    - `pass_ok = true`
    - `diffs.events_persisted = 0`
    - `diffs.duplicates = 0`
    - `diffs.gaps = 0`
-13. Revisar `docs/validation/ingestion_ws_canary_report.json`:
+14. Revisar `docs/validation/ingestion_ws_canary_report.json`:
    - `pass_ok = true`
    - `reconnects_observed >= reconnects_target`
    - existe `continuity`
    - existen `gaps`, `duplicates` y `reconnects` en el reporte
-14. Revisar `docs/validation/ingestion_storage_benchmark.json`:
+15. Revisar `docs/validation/ingestion_storage_benchmark.json`:
    - `pass_ok = true`
    - existe `slo`
    - los cuatro casos (`synthetic_case`, `replay_case`, `concurrent_compaction_case`, `shadow_scoped_case`) quedan medidos
-15. Revisar `docs/validation/ingestion_release_gates.json`:
+16. Revisar `docs/validation/ingestion_release_gates.json`:
    - `overall_status = PASS`
    - existe `blocks`
    - cada bloque deja `status`, `required`, `reasons`
-16. Revisar `docs/validation/ingestion_live_drill_report.json`:
+17. Revisar `docs/validation/ingestion_live_drill_report.json`:
    - `drill_executed = true`
    - `checklist_completed = true`
    - `rollback_ready = true`
    - `promote_ready = true` solo si el cutover es aprobable
-17. Revisar el reporte de compactacion:
+18. Revisar el reporte de compactacion:
    - `failed_partitions = 0`
    - `planned_partitions` consistente con el estado de `segments/`
-18. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
+19. Si hay backlog real, ejecutar el job sin `--dry-run` con `--batch-limit` acotado y confirmar:
    - se publica `data.parquet`
    - el path activo `segments/` queda vacio o eliminado
    - `retained-segments/` solo existe si se pidio retencion
    - no queda `compaction-failures.jsonl` nuevo
-19. Si existe `schema-drift-quarantine.jsonl` o `ingestion-dlq.jsonl`, inspeccionar antes de promover:
+20. Si existe `schema-drift-quarantine.jsonl` o `ingestion-dlq.jsonl`, inspeccionar antes de promover:
    - `python -m app.ops.quarantine_cli --base-dir . list --limit 20`
    - si se corrige un payload, reinyectarlo con `replay`
    - verificar en el reporte si `normalized_modified = true`
@@ -211,3 +223,5 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `live` soporta `trade` + `kline`.
 - `trade` en `live` exige exact recovery, handoff historico-live y evidencia runtime fresca.
 - `book` queda fuera de `paper` y `live`.
+- Los artifacts operativos se consideran stale tras 24 horas para `rest/ws canary`, `vendor_contracts`, `soak`, `failure_injection` y `live_drill`; `replay` parity y `storage_benchmark` admiten 7 dias como maximo.
+- Un gate live ya no debe aceptarse si solo puede derivar la evidence en proceso o si faltan superficies externas declaradas en el contrato de observabilidad.

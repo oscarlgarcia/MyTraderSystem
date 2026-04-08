@@ -60,12 +60,21 @@ class AlertContractSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class ExternalObservabilitySurface:
+    surface_id: str
+    kind: Literal["dashboard", "alert-route", "log-stream", "runbook"]
+    description: str
+    repo_reference: str
+
+
+@dataclass(frozen=True, slots=True)
 class ObservabilityContractReport:
     target: ReleaseTarget
     required_metrics: tuple[str, ...]
     required_alerts: tuple[str, ...]
     required_metric_thresholds: dict[str, dict[str, float | str]]
     alert_specs: dict[str, AlertContractSpec]
+    external_surfaces: tuple[ExternalObservabilitySurface, ...]
     missing_alerts: tuple[str, ...]
     missing_metric_thresholds: tuple[str, ...]
     invalid_alert_specs: tuple[str, ...]
@@ -160,6 +169,45 @@ REQUIRED_METRIC_THRESHOLDS: dict[str, MetricThresholdSpec] = {
 }
 
 
+def required_external_observability_surfaces(*, target: ReleaseTarget) -> tuple[ExternalObservabilitySurface, ...]:
+    surfaces: list[ExternalObservabilitySurface] = [
+        ExternalObservabilitySurface(
+            surface_id=f"ingestion.{target}.runtime",
+            kind="dashboard",
+            description="Vista operativa externa del runtime de ingestion para el target activo.",
+            repo_reference="docs/operations/ingestion_runbook.md",
+        ),
+        ExternalObservabilitySurface(
+            surface_id=f"ingestion.{target}.alerts",
+            kind="alert-route",
+            description="Ruta externa de alertado critico para reconnects, gaps, skew y compaction.",
+            repo_reference="app/observability/alerts.py",
+        ),
+        ExternalObservabilitySurface(
+            surface_id=f"ingestion.{target}.logs",
+            kind="log-stream",
+            description="Canal externo donde se observan summaries, health y operational alerts de ingestion.",
+            repo_reference="docs/operations/ingestion_runbook.md",
+        ),
+        ExternalObservabilitySurface(
+            surface_id=f"ingestion.{target}.promotion",
+            kind="runbook",
+            description="Procedimiento operativo de promotion, rollback y cutover del target.",
+            repo_reference="docs/operations/ingestion_promotion_runbook.md",
+        ),
+    ]
+    if target == "live":
+        surfaces.append(
+            ExternalObservabilitySurface(
+                surface_id="ingestion.live.cutover",
+                kind="runbook",
+                description="Surface operativa para live drill y rollback/cutover de ingestion.",
+                repo_reference="docs/ops/live_cutover.md",
+            )
+        )
+    return tuple(surfaces)
+
+
 def _threshold_payload(target: ReleaseTarget, spec: MetricThresholdSpec) -> dict[str, float | str]:
     if target == "live":
         return {
@@ -200,6 +248,7 @@ def build_observability_contract_report(*, target: ReleaseTarget = "paper") -> O
         required_alerts=REQUIRED_INGESTION_ALERTS,
         required_metric_thresholds=threshold_payload,
         alert_specs=alert_specs,
+        external_surfaces=required_external_observability_surfaces(target=target),
         missing_alerts=missing_alerts,
         missing_metric_thresholds=missing_metric_thresholds,
         invalid_alert_specs=tuple(sorted(invalid_alert_specs)),

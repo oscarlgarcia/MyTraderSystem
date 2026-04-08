@@ -50,6 +50,7 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
         "replay_parity",
         "storage_benchmark",
         "vendor_contracts",
+        "operational_evidence_final",
         "release_gates_final",
     ]
     assert "--target" in commands[-1]
@@ -64,7 +65,10 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
     assert "--high-cardinality-symbol-counts" in commands[1]
     assert "100" in commands[1]
     assert "500" not in commands[1]
-    assert "paper" in commands[3]
+    assert "--target" in commands[3] and "paper" in commands[3]
+    assert "--phase" in commands[3] and "final" in commands[3]
+    assert "--operational-evidence-path" in commands[4]
+    assert str(tmp_path / "docs" / "validation" / "ingestion_operational_evidence_paper_trade.json") in commands[4]
     assert "--min-rows-per-second" not in commands[1]
     written = json.loads((tmp_path / "docs" / "validation" / "paper.json").read_text(encoding="utf-8"))
     assert written["overall_status"] == "PASS"
@@ -105,6 +109,7 @@ def test_readiness_orchestrator_runs_paper_kline_runtime_steps(tmp_path: Path):
         "storage_benchmark",
         "vendor_contracts",
         "soak",
+        "operational_evidence_final",
         "release_gates_final",
     ]
     assert "--target-profile" in commands[2] and "paper" in commands[2]
@@ -143,18 +148,24 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
         "vendor_contracts",
         "soak",
         "failure_injection",
+        "operational_evidence_predrill",
         "release_gates_predrill",
         "live_drill",
+        "operational_evidence_final",
         "release_gates_final",
     ]
-    predrill = commands[7]
-    drill = commands[8]
-    final_gate = commands[9]
+    predrill_evidence = commands[7]
+    predrill = commands[8]
+    drill = commands[9]
+    final_evidence = commands[10]
+    final_gate = commands[11]
+    assert "--phase" in predrill_evidence and "predrill" in predrill_evidence
     assert "--phase" in predrill and "predrill" in predrill
     assert "--target-profile" in commands[3] and "live" in commands[3]
     assert "--target-profile" in commands[5] and "live" in commands[5]
     assert "--release-gates-path" in drill
     assert str(tmp_path / "docs" / "validation" / "ingestion_release_gates_pre_drill_live_kline.json") in drill
+    assert "--phase" in final_evidence and "final" in final_evidence
     assert "--phase" in final_gate and "final" in final_gate
 
 
@@ -191,8 +202,10 @@ def test_readiness_orchestrator_runs_live_trade_without_rest_canary(tmp_path: Pa
         "vendor_contracts",
         "soak",
         "failure_injection",
+        "operational_evidence_predrill",
         "release_gates_predrill",
         "live_drill",
+        "operational_evidence_final",
         "release_gates_final",
     ]
 

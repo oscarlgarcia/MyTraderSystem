@@ -140,6 +140,8 @@ def run_ingestion_readiness(
     release_gates_path = _profile_artifact_path(validation_dir, "ingestion_release_gates", profile)
     release_gates_predrill_path = _profile_artifact_path(validation_dir, "ingestion_release_gates_pre_drill", profile)
     live_drill_path = _profile_artifact_path(validation_dir, "ingestion_live_drill_report", profile)
+    operational_evidence_path = _profile_artifact_path(validation_dir, "ingestion_operational_evidence", profile)
+    operational_evidence_predrill_path = _profile_artifact_path(validation_dir, "ingestion_operational_evidence_pre_drill", profile)
 
     high_cardinality_arg = ",".join(str(value) for value in benchmark_high_cardinality_symbol_counts)
 
@@ -312,6 +314,38 @@ def run_ingestion_readiness(
                     str(failure_injection_path),
                 ),
                 (
+                    "operational_evidence_predrill",
+                    (
+                        sys.executable,
+                        "scripts/ingestion_operational_evidence.py",
+                        "--target",
+                        "live",
+                        "--phase",
+                        "predrill",
+                        "--stream-types",
+                        gate_stream_types_arg,
+                        "--rest-canary-path",
+                        str(rest_canary_path),
+                        "--ws-canary-path",
+                        str(ws_canary_path),
+                        "--replay-parity-path",
+                        str(replay_parity_path),
+                        "--benchmark-path",
+                        str(benchmark_path),
+                        "--soak-path",
+                        str(soak_path),
+                        "--network-contracts-path",
+                        str(vendor_contracts_path),
+                        "--failure-injection-path",
+                        str(failure_injection_path),
+                        "--live-drill-path",
+                        str(live_drill_path),
+                        "--output",
+                        str(operational_evidence_predrill_path),
+                    ),
+                    str(operational_evidence_predrill_path),
+                ),
+                (
                     "release_gates_predrill",
                     (
                         sys.executable,
@@ -338,6 +372,8 @@ def run_ingestion_readiness(
                         str(vendor_contracts_path),
                         "--failure-injection-path",
                         str(failure_injection_path),
+                        "--operational-evidence-path",
+                        str(operational_evidence_predrill_path),
                         *gate_base_dir_args,
                         "--output",
                         str(release_gates_predrill_path),
@@ -367,7 +403,74 @@ def run_ingestion_readiness(
                     ),
                     str(live_drill_path),
                 ),
+                (
+                    "operational_evidence_final",
+                    (
+                        sys.executable,
+                        "scripts/ingestion_operational_evidence.py",
+                        "--target",
+                        "live",
+                        "--phase",
+                        "final",
+                        "--stream-types",
+                        gate_stream_types_arg,
+                        "--rest-canary-path",
+                        str(rest_canary_path),
+                        "--ws-canary-path",
+                        str(ws_canary_path),
+                        "--replay-parity-path",
+                        str(replay_parity_path),
+                        "--benchmark-path",
+                        str(benchmark_path),
+                        "--soak-path",
+                        str(soak_path),
+                        "--network-contracts-path",
+                        str(vendor_contracts_path),
+                        "--failure-injection-path",
+                        str(failure_injection_path),
+                        "--live-drill-path",
+                        str(live_drill_path),
+                        "--output",
+                        str(operational_evidence_path),
+                    ),
+                    str(operational_evidence_path),
+                ),
             ]
+        )
+    else:
+        steps.append(
+            (
+                "operational_evidence_final",
+                (
+                    sys.executable,
+                    "scripts/ingestion_operational_evidence.py",
+                    "--target",
+                    "paper",
+                    "--phase",
+                    "final",
+                    "--stream-types",
+                    gate_stream_types_arg,
+                    "--rest-canary-path",
+                    str(rest_canary_path),
+                    "--ws-canary-path",
+                    str(ws_canary_path),
+                    "--replay-parity-path",
+                    str(replay_parity_path),
+                    "--benchmark-path",
+                    str(benchmark_path),
+                    "--soak-path",
+                    str(soak_path),
+                    "--network-contracts-path",
+                    str(vendor_contracts_path),
+                    "--failure-injection-path",
+                    str(failure_injection_path),
+                    "--live-drill-path",
+                    str(live_drill_path),
+                    "--output",
+                    str(operational_evidence_path),
+                ),
+                str(operational_evidence_path),
+            )
         )
 
     steps.append(
@@ -400,6 +503,8 @@ def run_ingestion_readiness(
                 str(failure_injection_path),
                 "--live-drill-path",
                 str(live_drill_path),
+                "--operational-evidence-path",
+                str(operational_evidence_path),
                 *gate_base_dir_args,
                 "--output",
                 str(release_gates_path),

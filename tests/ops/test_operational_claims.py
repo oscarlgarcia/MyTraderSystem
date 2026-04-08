@@ -223,6 +223,7 @@ def test_scope_docs_explain_trade_paper_and_book_exclusion() -> None:
         "live",
         "exact recovery",
         "`book`",
+        "ingestion_operational_evidence",
     )
     for path in LIVE_SCOPE_DOC_PATHS:
         content = path.read_text(encoding="utf-8").lower()

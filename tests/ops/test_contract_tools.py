@@ -177,6 +177,7 @@ def test_contract_and_parity_scripts_help_run():
         "scripts/check_replay_parity.py",
         "scripts/build_raw_manifests.py",
         "scripts/ingestion_release_gates.py",
+        "scripts/ingestion_operational_evidence.py",
         "scripts/ingestion_failure_injection.py",
         "scripts/ingestion_vendor_contracts.py",
         "scripts/ingestion_ws_canary.py",

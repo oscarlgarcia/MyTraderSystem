@@ -242,8 +242,8 @@
   - produccion rechaza configuraciones con degradacion silenciosa o perdida implicita;
 - cualquier `mode=live` rechaza feeds sin `supports_live` segun `app.marketdata.support_matrix`;
 - produccion rechaza ademas feeds live sin `supports_exact_recovery` y `supports_handoff`;
-- `kline` ya es el primer feed live con recovery `exact_verified`; el resto siguen fuera de `--production-mode`;
-- fuera de produccion, el alcance live actual queda limitado a `kline`;
+- `trade` y `kline` cumplen hoy el contrato live con recovery `exact_verified` y handoff soportado; `book` sigue fuera de `--production-mode`;
+- fuera de produccion, el alcance live soportado hoy es `trade` + `kline`;
   - la ruta de persistencia debe ser valida y escribible.
 
 ## Relaciones
@@ -318,8 +318,8 @@
     - usa `snapshot_fn` filtrado por `(venue, symbol, stream_type)`
     - el runner reaplica dedup para evitar duplicados de borde durante el resync
 - `supports_live_recovery(...)`
-  - devuelve `True` solo para `kline`
-  - formaliza la decision arquitectonica actual: bars-only para live
+  - devuelve `True` para `trade` y `kline`
+  - formaliza la decision arquitectonica actual: ambos feeds soportados deben mantener exact recovery y handoff verificables
 - no implica por si mismo recovery `exact_verified`; ese claim queda gobernado por `support_matrix` y por la suite release-blocking de `tests/marketdata/recovery/`
 - Handoff historico -> live:
   - `app.marketdata.handoff.HandoffSource`
@@ -532,7 +532,7 @@
   - deteccion fuerte de secuencia rota
   - deduplicacion por identidad nativa aunque `timestamp/price/size` coincidan
   - handoff historico -> live limpio o inconsistente segun corresponda
-- recovery por snapshot exacto para barras cerradas (`kline`) y marcacion explicita de `gap_irreparable` para trades live sin recovery exacto
+- recovery por snapshot exacto para `trade` y para barras cerradas (`kline`), con marcacion explicita de `gap_irreparable` cuando la ventana no puede reconstruirse
   - soak determinista con evidencia persistida
   - canary baseline vs candidate sobre una ventana corta persistida del vendor real
 - **Seguridad operativa**:
@@ -571,3 +571,4 @@
   - `live` soporta `trade` + `kline`
   - `trade` en `live` queda respaldado por exact recovery, handoff historico-live y runtime validation
   - `book` permanece fuera de `paper` y `live` hasta contar con runtime y recovery propios
+  - la promotion paper/live consolida artifacts en `docs/validation/ingestion_operational_evidence*.json`, donde se bloquea evidence stale, origen incoherente y ausencia de surfaces externas de observabilidad

@@ -132,10 +132,10 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - `marketdata.recovery`
   - Define `RecoveryPolicy`, `TradeRecoveryPolicy`, `BarRecoveryPolicy` y `recovery_policy_for_event(...)`.
   - El recovery ya no es generico:
-    - `trade`: no acepta snapshots de barras como catch-up. Un gap fuerte sin recovery exacto se marca `gap_irreparable`.
-    - `kline`: usa snapshots filtrados por `(venue, symbol, stream_type)` y elimina el borde duplicado via dedup del runner, pero mientras el resync siga apoyandose en una ventana REST acotada no se declara recovery exacto.
+    - `trade`: usa snapshot exacto por `aggregate_trade_id`, no acepta snapshots de barras como catch-up y marca `gap_irreparable` si no puede reconstruir el tramo esperado.
+    - `kline`: usa snapshots filtrados por `(venue, symbol, stream_type)` y elimina el borde duplicado via dedup del runner; el feed ya declara recovery `exact_verified` sobre barras cerradas.
   - `RecoveryRequest` formaliza el resync REST y calcula `start_ts`, `end_ts`, `interval` y `limit` desde el gap observado; ya no hay `limit=5` fijo en el path live.
-  - `supports_live_recovery(...)` hace explicito que el alcance live actual es bars-only (`kline`).
+  - `supports_live_recovery(...)` queda alineado con el contrato soportado hoy para `trade` y `kline`.
 - `marketdata.support_matrix`
   - Define `FeedSupport` y `FEED_SUPPORT_MATRIX`.
   - La matriz actual declara por `feed_type`:
@@ -330,8 +330,8 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 `REST klines -> RawRecord(JSONL append-only) + normalize_kline_row -> BarEvent -> sort(event_ts) -> deduplicate_events(opcional) -> sink/Parquet -> logs`
 
 - Scope explicito:
-  - soportado: `kline`
-  - no soportado: `trade`
+  - soportado: `trade`, `kline`
+  - no soportado: `book`
 
 ## Decisiones arquitectonicas
 - **Clave compartida `_key`**: evita divergencia entre la deduplicacion de live, backfill y persistencia.
@@ -358,13 +358,12 @@ El modulo de ingestion convierte eventos de mercado WS/REST en `IngestionEvent` 
 - **Metricas por politica de saturacion**: `buffer_overflows`, `buffer_pauses`, `buffer_drop_oldest`, `buffer_drop_newest`, `buffer_failures` y `backpressure_policy` quedan en logs de cierre y warnings de presion.
 - **Fail-fast por defecto en live**: si la ingesta real falla, `collect_events` propaga el error. El fallback a `dry` solo existe cuando se activa explicitamente `--allow-live-fallback`.
 - **Matriz de soporte live por feed**:
-  - `trade`: live no soportado hasta tener exact recovery
-  - `kline`: live permitido fuera de `production_mode`, con handoff soportado pero sin exact recovery declarado
+  - `trade`: live soportado con exact recovery verificada, handoff historico-live y runtime validation continua
+  - `kline`: live soportado con recovery `exact_verified`, handoff y runtime validation continua
   - `book`: live no soportado
   - cualquier `mode=live` rechaza feeds sin `supports_live`
   - `--production-mode` solo admite feeds que cumplan las tres garantias
-  - por tanto, hoy solo `kline` puede arrancar en `mode=live` no productivo
-  - hoy ningun feed puede arrancar en `--production-mode` porque no existe recovery exacto real demostrado
+  - hoy `trade` y `kline` pueden arrancar en `mode=live` y en `--production-mode` cuando el target mantiene evidence operacional fresca
 - **Politica explicita de error en live**:
   - `fail_fast`: propaga el error
   - `allow_fallback`: solo errores de `source` degradan a `dry`
@@ -535,3 +534,4 @@ flowchart LR
 - `live` soporta `trade` + `kline`.
 - `trade` en `live` exige exact recovery, handoff historico-live y runtime validation continua.
 - `book` sigue fuera de `paper` y `live` hasta tener runtime, schema typed y recovery dedicados.
+- La promotion operativa usa ahora un artefacto agregado `ingestion_operational_evidence*.json` para fijar freshness, origen de la evidence y surfaces externas obligatorias de observabilidad.
