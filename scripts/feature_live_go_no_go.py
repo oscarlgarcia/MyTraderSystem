@@ -28,6 +28,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--soak-path")
     parser.add_argument("--concurrency-path")
     parser.add_argument("--rollout-audit-path")
+    parser.add_argument("--evidence-manifest-path")
     parser.add_argument("--gates-output", required=True)
     parser.add_argument("--publish", action="store_true")
     return parser
@@ -35,6 +36,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    if args.target == "live" and not args.evidence_manifest_path:
+        raise SystemExit("live go/no-go requires --evidence-manifest-path")
     report = run_feature_release_gates(
         target=args.target,
         parity_path=Path(args.parity_path),
@@ -47,6 +50,7 @@ def main() -> int:
         soak_path=Path(args.soak_path) if args.soak_path else None,
         concurrency_path=Path(args.concurrency_path) if args.concurrency_path else None,
         rollout_audit_path=Path(args.rollout_audit_path) if args.rollout_audit_path else None,
+        evidence_manifest_path=Path(args.evidence_manifest_path) if args.evidence_manifest_path else None,
         output_path=Path(args.gates_output),
     )
     print(render_feature_release_summary(report))

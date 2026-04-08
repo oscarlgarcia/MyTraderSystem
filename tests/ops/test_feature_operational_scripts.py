@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
+import pytest
+
 from tests.features.http_test_support import feature_http_server
 
 
@@ -71,8 +73,34 @@ def test_feature_release_evidence_main_generates_manifest(monkeypatch, tmp_path:
         assert feature_evidence.main() == 0
         manifest = json.loads((tmp_path / "feature_release_evidence_manifest.json").read_text(encoding="utf-8"))
         assert manifest["pass_ok"] is True
+        assert manifest["primary_backend"] == "http"
         assert (tmp_path / "feature_serving_soak.json").exists()
         assert (tmp_path / "feature_serving_concurrency.json").exists()
+
+
+def test_feature_release_evidence_live_requires_shadow_url(monkeypatch, tmp_path: Path):
+    feature_evidence = _load_script("feature_release_evidence")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "feature_release_evidence.py",
+            "--primary-url",
+            "http://127.0.0.1:9999",
+            "--feature-set-name",
+            "legacy",
+            "--feature-set-version",
+            "legacy",
+            "--symbol",
+            "BTCUSDT",
+            "--target",
+            "live",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="live feature evidence requires --shadow-url"):
+        feature_evidence.main()
 
 
 def test_feature_live_go_no_go_main_publishes_when_gates_pass(monkeypatch, tmp_path: Path):
@@ -123,7 +151,7 @@ def test_feature_live_go_no_go_main_publishes_when_gates_pass(monkeypatch, tmp_p
             "--contract-path",
             str(contract),
             "--online-backend",
-            "local_sqlite",
+            "http",
             "--observability-sink",
             "http",
             "--gates-output",
@@ -134,6 +162,41 @@ def test_feature_live_go_no_go_main_publishes_when_gates_pass(monkeypatch, tmp_p
     assert feature_go_no_go.main() == 0
     registry = json.loads((tmp_path / "feature_releases.json").read_text(encoding="utf-8"))
     assert registry["legacy"]["active_version"] == "legacy"
+
+
+def test_feature_live_go_no_go_live_requires_evidence_manifest(monkeypatch, tmp_path: Path):
+    feature_go_no_go = _load_script("feature_live_go_no_go")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "feature_live_go_no_go.py",
+            "--target",
+            "live",
+            "--registry-path",
+            str(tmp_path / "feature_releases.json"),
+            "--feature-set-name",
+            "legacy",
+            "--feature-set-version",
+            "legacy",
+            "--parity-path",
+            str(tmp_path / "parity.json"),
+            "--benchmark-path",
+            str(tmp_path / "benchmark.json"),
+            "--observability-path",
+            str(tmp_path / "observability.json"),
+            "--contract-path",
+            str(tmp_path / "contract.json"),
+            "--online-backend",
+            "http",
+            "--observability-sink",
+            "http",
+            "--gates-output",
+            str(tmp_path / "feature_release_gates.json"),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="live go/no-go requires --evidence-manifest-path"):
+        feature_go_no_go.main()
 
 
 def test_feature_release_rollback_drill_restores_previous_version(monkeypatch, tmp_path: Path):

@@ -67,7 +67,10 @@ def test_feature_release_gates_live_requires_operational_artifacts(tmp_path: Pat
     _write_json(observability_path, {"generated_at": NOW.isoformat(), "metrics": {"serving_requests": 10}})
     _write_json(contract_path, {"generated_at": NOW.isoformat(), "pass_ok": True})
 
-    with pytest.raises(ValueError, match="live feature release gates require shadow, soak, concurrency and rollout audit artifacts"):
+    with pytest.raises(
+        ValueError,
+        match="live feature release gates require shadow, soak, concurrency, rollout audit and evidence manifest artifacts",
+    ):
         run_feature_release_gates(
             target="live",
             parity_path=parity_path,
@@ -88,6 +91,7 @@ def test_feature_release_gates_live_passes_with_shadow_soak_concurrency_and_roll
     soak_path = tmp_path / "soak.json"
     concurrency_path = tmp_path / "concurrency.json"
     rollout_audit_path = tmp_path / "rollout.json"
+    evidence_manifest_path = tmp_path / "feature_release_evidence_manifest.json"
     _write_json(parity_path, {"generated_at": NOW.isoformat(), "pass_ok": True, "parity_mismatches": 0})
     _write_json(benchmark_path, {"generated_at": NOW.isoformat(), "threshold_pass_ok": True})
     _write_json(
@@ -111,6 +115,21 @@ def test_feature_release_gates_live_passes_with_shadow_soak_concurrency_and_roll
     _write_json(soak_path, {"generated_at": NOW.isoformat(), "pass_ok": True, "max_latency_seconds": 0.1})
     _write_json(concurrency_path, {"generated_at": NOW.isoformat(), "pass_ok": True, "max_latency_seconds": 0.1})
     _write_json(rollout_audit_path, {"generated_at": NOW.isoformat(), "pass_ok": True})
+    _write_json(
+        evidence_manifest_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target": "live",
+            "primary_backend": "http",
+            "pass_ok": True,
+            "artifacts": {
+                "soak_path": str(soak_path),
+                "concurrency_path": str(concurrency_path),
+                "shadow_report_path": str(shadow_path),
+                "shadow_summary_path": None,
+            },
+        },
+    )
 
     report = run_feature_release_gates(
         target="live",
@@ -124,8 +143,68 @@ def test_feature_release_gates_live_passes_with_shadow_soak_concurrency_and_roll
         soak_path=soak_path,
         concurrency_path=concurrency_path,
         rollout_audit_path=rollout_audit_path,
+        evidence_manifest_path=evidence_manifest_path,
     )
     assert report.pass_ok is True
     assert report.live_readiness is not None
     assert report.live_readiness["pass_ok"] is True
 
+
+def test_feature_release_gates_live_fails_when_evidence_manifest_is_stale(tmp_path: Path):
+    now = datetime.now(timezone.utc)
+    parity_path = tmp_path / "parity.json"
+    benchmark_path = tmp_path / "benchmark.json"
+    observability_path = tmp_path / "observability.json"
+    contract_path = tmp_path / "contract.json"
+    shadow_path = tmp_path / "shadow.jsonl"
+    soak_path = tmp_path / "soak.json"
+    concurrency_path = tmp_path / "concurrency.json"
+    rollout_audit_path = tmp_path / "rollout.json"
+    evidence_manifest_path = tmp_path / "feature_release_evidence_manifest.json"
+    _write_json(parity_path, {"generated_at": now.isoformat(), "pass_ok": True, "parity_mismatches": 0})
+    _write_json(benchmark_path, {"generated_at": now.isoformat(), "threshold_pass_ok": True})
+    _write_json(
+        observability_path,
+        {
+            "generated_at": now.isoformat(),
+            "metrics": {"serving_requests": 10, "invalid_serves": 0},
+        },
+    )
+    _write_json(contract_path, {"generated_at": now.isoformat(), "pass_ok": True})
+    shadow_path.write_text(json.dumps({"timestamp": now.isoformat(), "pass_ok": True, "severity": "info"}) + "\n", encoding="utf-8")
+    _write_json(soak_path, {"generated_at": now.isoformat(), "pass_ok": True, "max_latency_seconds": 0.1})
+    _write_json(concurrency_path, {"generated_at": now.isoformat(), "pass_ok": True, "max_latency_seconds": 0.1})
+    _write_json(rollout_audit_path, {"generated_at": now.isoformat(), "pass_ok": True})
+    _write_json(
+        evidence_manifest_path,
+        {
+            "generated_at": (now - timedelta(hours=25)).isoformat(),
+            "target": "live",
+            "primary_backend": "http",
+            "pass_ok": True,
+            "artifacts": {
+                "soak_path": str(soak_path),
+                "concurrency_path": str(concurrency_path),
+                "shadow_report_path": str(shadow_path),
+            },
+        },
+    )
+
+    report = run_feature_release_gates(
+        target="live",
+        parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        observability_path=observability_path,
+        contract_path=contract_path,
+        online_backend="http",
+        observability_sink="http",
+        shadow_path=shadow_path,
+        soak_path=soak_path,
+        concurrency_path=concurrency_path,
+        rollout_audit_path=rollout_audit_path,
+        evidence_manifest_path=evidence_manifest_path,
+    )
+
+    evidence_block = next(block for block in report.blocks if block.name == "evidence_manifest")
+    assert report.pass_ok is False
+    assert "artifact_stale" in evidence_block.reasons

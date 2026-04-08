@@ -334,6 +334,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ruta al artifact JSON del rollout audit de features.",
     )
     parser.add_argument(
+        "--feature-release-gates-evidence-manifest-path",
+        default=None,
+        help="Ruta al manifiesto JSON que agrupa la evidencia fresca de shadow/soak/concurrency.",
+    )
+    parser.add_argument(
         "--feature-release-gates-online-backend",
         default="http",
         help="Backend online declarado para el release gate de features.",

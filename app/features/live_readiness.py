@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.features.online_store_factory import LIVE_READY_ONLINE_BACKENDS
+
 
 @dataclass(frozen=True)
 class FeatureLiveReadinessPolicy:
-    allowed_online_backends: tuple[str, ...] = ("http",)
+    allowed_online_backends: tuple[str, ...] = LIVE_READY_ONLINE_BACKENDS
     allowed_observability_sinks: tuple[str, ...] = ("http",)
     max_shadow_failures: int = 0
     max_invalid_ratio: float = 0.01

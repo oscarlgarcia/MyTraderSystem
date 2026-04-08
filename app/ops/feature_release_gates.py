@@ -8,6 +8,7 @@ from typing import Literal
 
 from app.features.live_readiness import FeatureLiveReadinessDecision, FeatureLiveReadinessInputs, evaluate_feature_live_readiness
 from app.features.metrics import FeatureMetrics
+from app.features.online_store_factory import PRODUCTION_CANONICAL_ONLINE_BACKEND
 from app.features.parity import ParityReport
 from app.features.release_checks import FeatureReleaseGateReport, run_feature_release_gate
 from app.features.shadow_summary import summarize_shadow_reports
@@ -69,6 +70,7 @@ def run_feature_release_gates(
     soak_path: Path | None = None,
     concurrency_path: Path | None = None,
     rollout_audit_path: Path | None = None,
+    evidence_manifest_path: Path | None = None,
 ) -> FeatureReleaseOpsReport:
     parity_payload = _read_json(parity_path)
     metrics_payload = _read_json(observability_path)
@@ -120,12 +122,19 @@ def run_feature_release_gates(
 
     live_readiness: FeatureLiveReadinessDecision | None = None
     if target == "live":
-        if shadow_path is None or soak_path is None or concurrency_path is None or rollout_audit_path is None:
-            raise ValueError("live feature release gates require shadow, soak, concurrency and rollout audit artifacts")
+        if (
+            shadow_path is None
+            or soak_path is None
+            or concurrency_path is None
+            or rollout_audit_path is None
+            or evidence_manifest_path is None
+        ):
+            raise ValueError("live feature release gates require shadow, soak, concurrency, rollout audit and evidence manifest artifacts")
         shadow_block, shadow_failures = _shadow_block(shadow_path)
         soak_payload = _read_json(soak_path)
         concurrency_payload = _read_json(concurrency_path)
         rollout_payload = _read_json(rollout_audit_path)
+        evidence_manifest_payload = _read_json(evidence_manifest_path)
         soak_block = _artifact_block(
             name="serving_soak",
             payload=soak_payload,
@@ -153,7 +162,14 @@ def run_feature_release_gates(
             pass_value=bool(rollout_payload.get("pass_ok", False)),
             max_age=timedelta(days=7),
         )
-        blocks.extend((shadow_block, soak_block, concurrency_block, rollout_block))
+        evidence_manifest_block = _evidence_manifest_block(
+            payload=evidence_manifest_payload,
+            path=evidence_manifest_path,
+            shadow_path=shadow_path,
+            soak_path=soak_path,
+            concurrency_path=concurrency_path,
+        )
+        blocks.extend((shadow_block, soak_block, concurrency_block, rollout_block, evidence_manifest_block))
         live_readiness = evaluate_feature_live_readiness(
             inputs=FeatureLiveReadinessInputs(
                 online_backend=online_backend,
@@ -275,3 +291,58 @@ def _shadow_block(path: Path) -> tuple[FeatureGateBlockReport, int]:
     )
     return block, failed_reports
 
+
+def _evidence_manifest_block(
+    *,
+    payload: dict[str, object],
+    path: Path,
+    shadow_path: Path,
+    soak_path: Path,
+    concurrency_path: Path,
+) -> FeatureGateBlockReport:
+    reasons: list[str] = []
+    timestamp = _read_timestamp(payload)
+    if timestamp is None:
+        reasons.append("missing_key:generated_at")
+    elif datetime.now(timezone.utc) - timestamp > timedelta(hours=24):
+        reasons.append("artifact_stale")
+    if not bool(payload.get("pass_ok", False)):
+        reasons.append("artifact_not_pass_ok")
+    if str(payload.get("target", "")) != "live":
+        reasons.append("target_mismatch")
+    if str(payload.get("primary_backend", "")) != PRODUCTION_CANONICAL_ONLINE_BACKEND:
+        reasons.append("primary_backend_not_live_ready")
+
+    artifacts = payload.get("artifacts", {})
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+        reasons.append("missing_key:artifacts")
+    expected_paths = {
+        "soak_path": soak_path,
+        "concurrency_path": concurrency_path,
+    }
+    for key, expected in expected_paths.items():
+        manifest_value = artifacts.get(key)
+        if manifest_value is None:
+            reasons.append(f"missing_key:{key}")
+            continue
+        if Path(str(manifest_value)) != Path(expected):
+            reasons.append(f"path_mismatch:{key}")
+    shadow_paths = {
+        Path(str(value))
+        for value in (artifacts.get("shadow_report_path"), artifacts.get("shadow_summary_path"))
+        if value is not None
+    }
+    if not shadow_paths:
+        reasons.append("missing_key:shadow_report_path")
+    elif Path(shadow_path) not in shadow_paths:
+        reasons.append("path_mismatch:shadow_path")
+
+    status: GateStatus = "pass" if not reasons else "fail"
+    return FeatureGateBlockReport(
+        name="evidence_manifest",
+        status=status,
+        required=True,
+        reasons=tuple(reasons or ["ok"]),
+        details={"path": str(path)},
+    )

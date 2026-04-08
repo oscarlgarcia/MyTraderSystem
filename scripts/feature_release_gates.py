@@ -25,6 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--soak-path")
     parser.add_argument("--concurrency-path")
     parser.add_argument("--rollout-audit-path")
+    parser.add_argument("--evidence-manifest-path")
     parser.add_argument("--output", required=True)
     return parser
 
@@ -44,6 +45,7 @@ def main(argv: list[str]) -> int:
         soak_path=Path(args.soak_path) if args.soak_path else None,
         concurrency_path=Path(args.concurrency_path) if args.concurrency_path else None,
         rollout_audit_path=Path(args.rollout_audit_path) if args.rollout_audit_path else None,
+        evidence_manifest_path=Path(args.evidence_manifest_path) if args.evidence_manifest_path else None,
         output_path=Path(args.output),
     )
     print(render_feature_release_summary(report))

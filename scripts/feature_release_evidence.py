@@ -9,6 +9,7 @@ from _script_bootstrap import bootstrap_repo_path
 
 bootstrap_repo_path()
 
+from app.features.online_store_factory import PRODUCTION_CANONICAL_ONLINE_BACKEND
 from app.features.online_store_http import RemoteHttpOnlineFeatureStore
 from app.features.operational_probes import run_serving_concurrency_probe, run_serving_soak_probe, write_probe_report
 from app.features.serving import FeatureServingService
@@ -36,6 +37,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    if args.target == "live" and not args.shadow_url:
+        raise SystemExit("live feature evidence requires --shadow-url to generate fresh shadow validation")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     decision_ts = datetime.now(timezone.utc)
@@ -101,13 +104,24 @@ def main() -> int:
         "feature_set_name": args.feature_set_name,
         "feature_set_version": args.feature_set_version,
         "symbol": args.symbol,
+        "primary_backend": PRODUCTION_CANONICAL_ONLINE_BACKEND,
         "primary_url": args.primary_url,
+        "shadow_backend": PRODUCTION_CANONICAL_ONLINE_BACKEND if args.shadow_url else None,
         "shadow_url": args.shadow_url,
         "artifacts": {
             "soak_path": str(soak_path),
             "concurrency_path": str(concurrency_path),
             "shadow_report_path": str(shadow_report_path) if shadow_report_path else None,
             "shadow_summary_path": str(shadow_summary_path) if shadow_summary_path else None,
+        },
+        "artifact_pass": {
+            "soak": bool(soak_report.pass_ok),
+            "concurrency": bool(concurrency_report.pass_ok),
+            "shadow": (
+                None
+                if shadow_report_path is None
+                else bool(summarize_shadow_reports(shadow_report_path).pass_ok)
+            ),
         },
         "pass_ok": bool(
             soak_report.pass_ok

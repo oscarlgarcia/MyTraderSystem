@@ -9,6 +9,9 @@ from app.features.online_store_http import RemoteHttpOnlineFeatureStore
 from app.features.online_store_json import JsonOnlineFeatureStore
 from app.features.online_store_memory import MemoryOnlineFeatureStore
 
+PRODUCTION_CANONICAL_ONLINE_BACKEND = "http"
+LIVE_READY_ONLINE_BACKENDS = (PRODUCTION_CANONICAL_ONLINE_BACKEND,)
+
 
 @dataclass(frozen=True)
 class OnlineStoreConfig:
@@ -18,6 +21,10 @@ class OnlineStoreConfig:
     timeout_seconds: float = 5.0
     history_max_rows_per_scope: int | None = None
     history_retention_seconds: float | None = None
+
+
+def is_live_ready_online_backend(backend: str) -> bool:
+    return str(backend).strip().lower() in LIVE_READY_ONLINE_BACKENDS
 
 
 def create_online_store(config: OnlineStoreConfig) -> FeatureOnlineStore:
