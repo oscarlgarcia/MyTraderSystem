@@ -7,10 +7,15 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - La observabilidad externa exigida por contrato se resume en cuatro superficies minimas por target: `ingestion.<target>.runtime`, `ingestion.<target>.alerts`, `ingestion.<target>.logs` e `ingestion.<target>.promotion`. Para `live` se exige ademas `ingestion.live.cutover`.
 - Un gate ya no debe aceptar evidence derivada inline dentro de `run_release_gates`. El artefacto agregado debe venir persistido desde `scripts/ingestion_operational_evidence.py`, con `provenance.source`, `provenance.runner_id`, `provenance.trigger`, `provenance.generated_by` y `provenance.derived_in_process = false`.
 - El cierre operativo final exige ademas governance persistida del runner en `docs/validation/ingestion_operational_governance_<target>.json`, con `schedule_name`, `job_id`, `job_url`, `owner` y `cadence_state`.
+- El runner operativo puede resolverse desde CLI, JSON o variables de entorno. El origen real debe quedar en `context_source`.
+- La verificacion de observabilidad externa puede venir de overrides por CLI o de un `surface manifest` JSON; el cierre final debe usar una fuente persistida y auditable.
 
 ## Cierre operativo estandar
 - El flujo operativo recomendado ya no es lanzar piezas sueltas una a una, sino ejecutar el orquestador:
   - `poetry run python scripts/ingestion_operational_cycle.py`
+- El path operativo recomendado es:
+  - `--runner-context-path <json>` o `--runner-context-from-env`
+  - `--surface-manifest <json>`
 - Ese script ejecuta por perfil:
   - `replay_parity`
   - canaries
@@ -29,6 +34,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `book` no es un feed valido para este flujo y cualquier intento debe tratarse como `NO-GO`.
 - El cycle deja tambien un historial JSONL por target en `docs/validation/ingestion_operational_history_<target>.jsonl`.
 - Si `channel=manual` o `cadence_state` sale distinto de `bootstrap`/`healthy`, el cierre operativo final es `NO-GO`.
+- Si `context_source` no es trazable o la verificacion final usa `manual_surface_check`, el resultado correcto tambien es `NO-GO`.
 
 ## Comandos base
 - Shell del contenedor:

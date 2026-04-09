@@ -8,6 +8,7 @@ from _script_bootstrap import bootstrap_repo_path
 bootstrap_repo_path()
 
 from app.ops.operational_cycle import run_ingestion_operational_cycle
+from app.ops.runner_context import resolve_runner_context
 
 
 def _parse_stream_types(value: str) -> tuple[str, ...]:
@@ -47,12 +48,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runner-id", required=True)
     parser.add_argument("--trigger", required=True)
     parser.add_argument("--provenance-source", required=True)
-    parser.add_argument("--execution-ref", required=True)
-    parser.add_argument("--channel", choices=["manual", "scheduled", "pipeline"], required=True)
-    parser.add_argument("--schedule-name", required=True)
-    parser.add_argument("--job-id", required=True)
-    parser.add_argument("--job-url", required=True)
+    parser.add_argument("--execution-ref", default=None)
+    parser.add_argument("--channel", choices=["manual", "scheduled", "pipeline"], default=None)
+    parser.add_argument("--schedule-name", default=None)
+    parser.add_argument("--job-id", default=None)
+    parser.add_argument("--job-url", default=None)
     parser.add_argument("--owner", default=None)
+    parser.add_argument("--runner-context-path", default=None)
+    parser.add_argument("--runner-context-from-env", action="store_true")
+    parser.add_argument("--surface-manifest", default=None)
+    parser.add_argument("--ws-max-events", type=int, default=2)
+    parser.add_argument("--ws-duration-seconds", type=float, default=130.0)
+    parser.add_argument("--ws-reconnect-after-events", type=int, default=1)
+    parser.add_argument("--ws-induced-reconnects", type=int, default=1)
+    parser.add_argument("--benchmark-symbol-count", type=int, default=12)
+    parser.add_argument("--benchmark-high-cardinality-symbol-counts", default=None)
+    parser.add_argument("--benchmark-bursts", type=int, default=4)
+    parser.add_argument("--benchmark-events-per-symbol-per-burst", type=int, default=12)
+    parser.add_argument("--benchmark-min-rows-per-second", type=float, default=None)
+    parser.add_argument("--soak-mode", choices=["deterministic", "ws-live"], default="ws-live")
+    parser.add_argument("--soak-iterations", type=int, default=5)
+    parser.add_argument("--soak-events-per-iteration", type=int, default=500)
+    parser.add_argument("--soak-duration-seconds", type=float, default=150.0)
+    parser.add_argument("--soak-reconnect-after-events", type=int, default=1)
+    parser.add_argument("--soak-induced-reconnects", type=int, default=1)
     parser.add_argument("--runtime-owner", default=None)
     parser.add_argument("--runtime-surface-ref", default=None)
     parser.add_argument("--runtime-verification-ref", default=None)
@@ -73,6 +92,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    context = resolve_runner_context(
+        execution_ref=args.execution_ref,
+        channel=args.channel,
+        schedule_name=args.schedule_name,
+        job_id=args.job_id,
+        job_url=args.job_url,
+        owner=args.owner,
+        runner_context_path=Path(args.runner_context_path) if args.runner_context_path else None,
+        runner_context_from_env=bool(args.runner_context_from_env),
+    )
+    benchmark_high_cardinality = (
+        tuple(int(part.strip()) for part in str(args.benchmark_high_cardinality_symbol_counts).split(",") if part.strip())
+        if args.benchmark_high_cardinality_symbol_counts
+        else None
+    )
     report = run_ingestion_operational_cycle(
         workspace=Path.cwd(),
         target=args.target,
@@ -88,13 +122,30 @@ def main() -> int:
         runner_id=args.runner_id,
         trigger=args.trigger,
         provenance_source=args.provenance_source,
-        execution_ref=args.execution_ref,
-        channel=args.channel,
-        schedule_name=args.schedule_name,
-        job_id=args.job_id,
-        job_url=args.job_url,
-        owner=args.owner,
+        execution_ref=context.execution_ref,
+        channel=context.channel,
+        schedule_name=context.schedule_name,
+        job_id=context.job_id,
+        job_url=context.job_url,
+        owner=context.owner,
+        context_source=context.source,
         stream_types=args.stream_types,
+        surface_manifest_path=Path(args.surface_manifest) if args.surface_manifest else None,
+        ws_max_events=args.ws_max_events,
+        ws_duration_seconds=args.ws_duration_seconds,
+        ws_reconnect_after_events=args.ws_reconnect_after_events,
+        ws_induced_reconnects=args.ws_induced_reconnects,
+        benchmark_symbol_count=args.benchmark_symbol_count,
+        benchmark_high_cardinality_symbol_counts=benchmark_high_cardinality,
+        benchmark_bursts=args.benchmark_bursts,
+        benchmark_events_per_symbol_per_burst=args.benchmark_events_per_symbol_per_burst,
+        benchmark_min_rows_per_second=args.benchmark_min_rows_per_second,
+        soak_mode=args.soak_mode,
+        soak_iterations=args.soak_iterations,
+        soak_events_per_iteration=args.soak_events_per_iteration,
+        soak_duration_seconds=args.soak_duration_seconds,
+        soak_reconnect_after_events=args.soak_reconnect_after_events,
+        soak_induced_reconnects=args.soak_induced_reconnects,
         runtime_owner=args.runtime_owner,
         runtime_surface_ref=args.runtime_surface_ref,
         runtime_verification_ref=args.runtime_verification_ref,

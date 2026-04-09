@@ -36,6 +36,7 @@ class OperationalGovernanceReport:
     job_id: str
     job_url: str
     owner: str
+    context_source: str
     cadence_policy: OperationalCadencePolicy
     cadence_state: CadenceState
     previous_success_at: str | None
@@ -106,6 +107,7 @@ def build_operational_governance_report(
     job_id: str,
     job_url: str,
     owner: str | None = None,
+    context_source: str = "cli",
     generated_at: str | None = None,
     history_path: Path | None = None,
     governance_artifact_path: Path | None = None,
@@ -208,6 +210,7 @@ def build_operational_governance_report(
         job_id=str(job_id),
         job_url=str(job_url),
         owner=resolved_owner,
+        context_source=str(context_source),
         cadence_policy=policy,
         cadence_state=cadence_state,
         previous_success_at=previous_success_at,

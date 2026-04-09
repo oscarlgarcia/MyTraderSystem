@@ -110,6 +110,23 @@ def run_ingestion_operational_cycle(
     cutover_owner: str | None = None,
     cutover_surface_ref: str | None = None,
     cutover_verification_ref: str | None = None,
+    surface_manifest_path: Path | None = None,
+    ws_max_events: int = 2,
+    ws_duration_seconds: float = 130.0,
+    ws_reconnect_after_events: int = 1,
+    ws_induced_reconnects: int = 1,
+    benchmark_symbol_count: int = 12,
+    benchmark_high_cardinality_symbol_counts: tuple[int, ...] | None = None,
+    benchmark_bursts: int = 4,
+    benchmark_events_per_symbol_per_burst: int = 12,
+    benchmark_min_rows_per_second: float | None = None,
+    soak_mode: Literal["deterministic", "ws-live"] = "ws-live",
+    soak_iterations: int = 5,
+    soak_events_per_iteration: int = 500,
+    soak_duration_seconds: float = 150.0,
+    soak_reconnect_after_events: int = 1,
+    soak_induced_reconnects: int = 1,
+    context_source: str = "cli",
     output_path: Path | None = None,
     executor: Executor | None = None,
 ) -> OperationalCycleReport:
@@ -154,6 +171,7 @@ def run_ingestion_operational_cycle(
         job_id=job_id,
         job_url=job_url,
         owner=owner,
+        context_source=context_source,
         history_path=history_path,
         governance_artifact_path=governance_path,
     )
@@ -195,7 +213,44 @@ def run_ingestion_operational_cycle(
             channel,
             "--runner-governance-path",
             str(governance_path),
+            "--ws-max-events",
+            str(ws_max_events),
+            "--ws-duration-seconds",
+            str(ws_duration_seconds),
+            "--ws-reconnect-after-events",
+            str(ws_reconnect_after_events),
+            "--ws-induced-reconnects",
+            str(ws_induced_reconnects),
+            "--benchmark-symbol-count",
+            str(benchmark_symbol_count),
+            "--benchmark-bursts",
+            str(benchmark_bursts),
+            "--benchmark-events-per-symbol-per-burst",
+            str(benchmark_events_per_symbol_per_burst),
+            "--soak-mode",
+            soak_mode,
+            "--soak-iterations",
+            str(soak_iterations),
+            "--soak-events-per-iteration",
+            str(soak_events_per_iteration),
+            "--soak-duration-seconds",
+            str(soak_duration_seconds),
+            "--soak-reconnect-after-events",
+            str(soak_reconnect_after_events),
+            "--soak-induced-reconnects",
+            str(soak_induced_reconnects),
         ]
+        if benchmark_high_cardinality_symbol_counts is not None:
+            command.extend(
+                [
+                    "--benchmark-high-cardinality-symbol-counts",
+                    ",".join(str(value) for value in benchmark_high_cardinality_symbol_counts),
+                ]
+            )
+        if benchmark_min_rows_per_second is not None:
+            command.extend(["--benchmark-min-rows-per-second", str(benchmark_min_rows_per_second)])
+        if surface_manifest_path is not None:
+            command.extend(["--surface-manifest", str(surface_manifest_path)])
         if runtime_base_dir is not None:
             command.extend(["--runtime-base-dir", str(runtime_base_dir)])
         for flag, value in (

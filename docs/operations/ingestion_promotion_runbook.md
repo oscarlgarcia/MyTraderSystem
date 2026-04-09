@@ -12,6 +12,7 @@
 - Promotion is blocked unless the current target is `live` and every required artifact is fresh and `PASS`.
 - Promotion is also blocked when `ingestion_operational_evidence*.json` is missing, stale, inconsistent with the target, or does not declare the required external observability surfaces.
 - Promotion is also blocked when operational evidence is derived inline inside the gate instead of coming from a persisted artifact with valid provenance metadata.
+- Promotion is also blocked when the runner metadata is not traceable to a persisted runner context or environment-backed runner contract.
 
 ## Required Inputs
 
@@ -47,6 +48,7 @@
 - `replay parity` and `storage benchmark` expire after 7 days.
 - `book` must appear as excluded in the operational evidence payload; any other policy is a promotion blocker.
 - `operational evidence` must declare `provenance.source`, `provenance.runner_id`, `provenance.trigger`, `provenance.generated_by`, and `provenance.derived_in_process = false`.
+- `operational evidence` governance must declare `context_source`, `schedule_name`, `job_id`, `job_url`, `owner`, and a promotable `cadence_state`.
 - every external observability surface must expose `owner`, `surface_ref`, `verification_mode`, `verified_at`, `verification_ref`, and `pass_ok = true`.
 - After any failed attempt, rerun the affected validation step and replace the stale artifact before retrying.
 
@@ -149,14 +151,14 @@ Waivers are forbidden for:
 Run these commands from the project root in the production-ready environment:
 
 ```powershell
-poetry run python scripts/ingestion_operational_cycle.py --target live --env dev --runtime-env dev --runtime-base-dir data/dev --raw-base-dir data/dev/raw --normalized-path trade=data/dev/normalized/trades/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09 --normalized-path kline=data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09 --symbol BTCUSDT --stream-types trade,kline --interval 1m --output-dir docs/validation/operational/live --runner-id ingestion-live-closure --trigger scheduled_live_cycle --provenance-source ingestion_operational_cycle --execution-ref live-dev-btcusdt-20260409T100000Z --channel scheduled --runtime-owner team-ingestion --runtime-surface-ref grafana://ingestion/live/runtime --runtime-verification-ref ops://live/runtime/20260409T100000Z --alerts-owner team-ingestion-oncall --alerts-surface-ref pagerduty://ingestion/live/alerts --alerts-verification-ref ops://live/alerts/20260409T100000Z --logs-owner team-observability --logs-surface-ref loki://ingestion/live/logs --logs-verification-ref ops://live/logs/20260409T100000Z --promotion-owner team-ingestion --promotion-surface-ref runbook://docs/operations/ingestion_promotion_runbook.md --promotion-verification-ref ops://live/promotion/20260409T100000Z --cutover-owner team-ingestion --cutover-surface-ref runbook://docs/ops/live_cutover.md --cutover-verification-ref ops://live/cutover/20260409T100000Z
+poetry run python scripts/ingestion_operational_cycle.py --target live --env dev --runtime-env dev --runtime-base-dir data/dev --raw-base-dir data/dev/raw --normalized-path trade=data/dev/normalized/trades/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09 --normalized-path kline=data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09 --symbol BTCUSDT --stream-types trade,kline --interval 1m --output-dir docs/validation/operational/live --runner-id ingestion-live-closure --trigger scheduled_live_cycle --provenance-source ingestion_operational_cycle --runner-context-path ops/runner-context/live-dev.json --surface-manifest ops/observability/live-dev-surfaces.json
 ```
 
 Notas obligatorias:
 - el comando anterior ya encapsula el caso estandar por perfil (`live_trade`, `live_kline`)
 - `channel=manual` no es valido para promotion final
 - `execution_ref` debe ser unico por corrida operativa
-- `schedule_name`, `job_id`, `job_url` y `owner` del runner deben quedar persistidos
+- `schedule_name`, `job_id`, `job_url`, `owner` y `context_source` del runner deben quedar persistidos
 - `cadence_state` debe ser `bootstrap` o `healthy`
 - cualquier intento con `book` debe considerarse `NO-GO`
 

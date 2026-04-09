@@ -11,27 +11,30 @@ Ejecutar el caso estandar de cierre operativo de ingestion para `paper` sobre el
 
 ## Prerrequisitos
 - entorno activo: `dev`
-- ejecutar desde la raiz del repo con `poetry`
+- ejecutar desde la raiz del repo con `poetry run python` o, si `poetry` no esta disponible en el host, con el `python` del entorno operativo equivalente
 - disponer de raw y normalized ya generados para el dataset candidato
-- tener rutas exactas de normalized por feed:
-  - `trade`: `data/dev/normalized/trades/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09`
-  - `kline`: `data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09`
-- disponer de surfaces externas verificables para:
+- disponer de un `runner context` persistido, por JSON o por variables de entorno, con:
+  - `execution_ref`
+  - `channel`
+  - `schedule_name`
+  - `job_id`
+  - `job_url`
+- disponer de un `surface manifest` persistido con refs verificables para:
   - runtime
   - alerts
   - logs
   - promotion
+- tener rutas exactas de normalized por feed:
+  - `trade`: `data/dev/normalized/trades/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09`
+  - `kline`: `data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09`
 
 ## Variables del caso estandar
-- `execution_ref`: `paper-dev-btcusdt-20260409T090000Z`
-- `channel`: `scheduled`
 - `output_dir`: `docs/validation/operational/paper`
 - `runner_id`: `ingestion-paper-closure`
 - `trigger`: `scheduled_paper_cycle`
 - `provenance_source`: `ingestion_operational_cycle`
-- `schedule_name`: `ingestion-paper-cadence`
-- `job_id`: `paper-job-20260409-0900`
-- `job_url`: `https://ops.example/pipelines/ingestion-paper/20260409-0900`
+- `runner_context_path`: `ops/runner-context/paper-dev.json`
+- `surface_manifest_path`: `ops/observability/paper-dev-surfaces.json`
 
 ## Comando de ejecucion
 
@@ -51,33 +54,59 @@ poetry run python scripts/ingestion_operational_cycle.py `
   --runner-id ingestion-paper-closure `
   --trigger scheduled_paper_cycle `
   --provenance-source ingestion_operational_cycle `
-  --execution-ref paper-dev-btcusdt-20260409T090000Z `
-  --channel scheduled `
-  --schedule-name ingestion-paper-cadence `
-  --job-id paper-job-20260409-0900 `
-  --job-url https://ops.example/pipelines/ingestion-paper/20260409-0900 `
-  --owner team-ingestion `
-  --runtime-owner team-ingestion `
-  --runtime-surface-ref grafana://ingestion/paper/runtime `
-  --runtime-verification-ref ops://paper/runtime/20260409T090000Z `
-  --alerts-owner team-ingestion-oncall `
-  --alerts-surface-ref pagerduty://ingestion/paper/alerts `
-  --alerts-verification-ref ops://paper/alerts/20260409T090000Z `
-  --logs-owner team-observability `
-  --logs-surface-ref loki://ingestion/paper/logs `
-  --logs-verification-ref ops://paper/logs/20260409T090000Z `
-  --promotion-owner team-ingestion `
-  --promotion-surface-ref runbook://docs/operations/ingestion_promotion_runbook.md `
-  --promotion-verification-ref ops://paper/promotion/20260409T090000Z
+  --runner-context-path ops/runner-context/paper-dev.json `
+  --surface-manifest ops/observability/paper-dev-surfaces.json `
+  --benchmark-min-rows-per-second 1
+```
+
+## Ejemplo minimo de runner context
+
+```json
+{
+  "execution_ref": "paper-dev-btcusdt-20260409T090000Z",
+  "channel": "scheduled",
+  "schedule_name": "ingestion-paper-cadence",
+  "job_id": "paper-job-20260409-0900",
+  "job_url": "https://ops.example/pipelines/ingestion-paper/20260409-0900",
+  "owner": "team-ingestion"
+}
+```
+
+## Ejemplo minimo de surface manifest
+
+```json
+{
+  "runtime": {
+    "owner": "team-ingestion",
+    "surface_ref": "grafana://ingestion/paper/runtime",
+    "verification_ref": "ops://paper/runtime/20260409T090000Z"
+  },
+  "alerts": {
+    "owner": "team-ingestion-oncall",
+    "surface_ref": "pagerduty://ingestion/paper/alerts",
+    "verification_ref": "ops://paper/alerts/20260409T090000Z"
+  },
+  "logs": {
+    "owner": "team-observability",
+    "surface_ref": "loki://ingestion/paper/logs",
+    "verification_ref": "ops://paper/logs/20260409T090000Z"
+  },
+  "promotion": {
+    "owner": "team-ingestion",
+    "surface_ref": "runbook://docs/operations/ingestion_promotion_runbook.md",
+    "verification_ref": "ops://paper/promotion/20260409T090000Z"
+  }
+}
 ```
 
 ## Salida esperada en consola
 - linea inicial:
   - `ingestion operational cycle: PASS (paper)`
 - campos visibles:
-  - `execution_ref: paper-dev-btcusdt-20260409T090000Z`
-  - `channel: scheduled`
-  - `stream_types: trade, kline`
+- `execution_ref: paper-dev-btcusdt-20260409T090000Z`
+- `channel: scheduled`
+- `cadence_state: bootstrap` o `healthy`
+- `stream_types: trade, kline`
 - pasos por perfil:
   - `paper_trade: PASS`
   - `paper_kline: PASS`
@@ -142,6 +171,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `governance.schedule_name = ingestion-paper-cadence`
 - `governance.job_id` no vacio
 - `governance.job_url` no vacio
+- `governance.context_source` presente y coherente con el origen real del contexto
 - `governance.cadence_state = bootstrap` o `healthy`
 - `governance.pass_ok = true`
 - `excluded_feed_policy.book = "excluded"`
@@ -197,6 +227,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `book` no aparece en ningun artifact
 - `channel` no es `manual`
 - `execution_ref` unico y visible
+- `context_source` visible en governance
 - governance/cadence verde
 - observabilidad externa verificada
 - gates finales en verde

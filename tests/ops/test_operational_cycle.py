@@ -90,6 +90,7 @@ def test_operational_cycle_runs_paper_for_trade_and_kline(tmp_path: Path):
     governance = json.loads((tmp_path / "docs" / "validation" / "ingestion_operational_governance_paper.json").read_text(encoding="utf-8"))
     assert governance["pass_ok"] is True
     assert governance["schedule_name"] == "ingestion-paper-cadence"
+    assert governance["context_source"] == "cli"
     assert manifest["steps"][0]["artifacts_generated"]
 
 
@@ -136,6 +137,67 @@ def test_operational_cycle_runs_live_with_runtime_overrides(tmp_path: Path):
     assert "--runtime-owner" in commands[0]
     assert "team-ingestion" in commands[0]
     assert "--runner-governance-path" in commands[0]
+
+
+def test_operational_cycle_passes_surface_manifest_and_runtime_tunables(tmp_path: Path):
+    commands: list[tuple[str, ...]] = []
+    raw_base_dir = tmp_path / "raw"
+    raw_base_dir.mkdir()
+    trade_normalized = tmp_path / "normalized" / "trade"
+    trade_normalized.mkdir(parents=True)
+    surface_manifest = tmp_path / "surface-manifest.json"
+    surface_manifest.write_text(
+        json.dumps({"runtime": {"surface_ref": "grafana://paper/runtime"}}),
+        encoding="utf-8",
+    )
+
+    report = run_ingestion_operational_cycle(
+        workspace=tmp_path,
+        target="paper",
+        env="dev",
+        raw_base_dir=raw_base_dir,
+        normalized_paths={"trade": trade_normalized},
+        symbol="BTCUSDT",
+        interval="1m",
+        output_dir=tmp_path / "docs" / "validation",
+        runner_id="ops-cycle-paper",
+        trigger="scheduled_paper_cycle",
+        provenance_source="ingestion_operational_cycle",
+        execution_ref="exec-paper-rt-001",
+        channel="pipeline",
+        schedule_name="ingestion-paper-cadence",
+        job_id="paper-job-rt-001",
+        job_url="https://ops.example/paper-job-rt-001",
+        stream_types=("trade",),
+        surface_manifest_path=surface_manifest,
+        ws_max_events=1,
+        ws_duration_seconds=9.0,
+        benchmark_symbol_count=6,
+        benchmark_high_cardinality_symbol_counts=(50,),
+        benchmark_bursts=2,
+        benchmark_events_per_symbol_per_burst=3,
+        benchmark_min_rows_per_second=5.0,
+        soak_mode="deterministic",
+        soak_iterations=1,
+        soak_events_per_iteration=20,
+        soak_duration_seconds=8.0,
+        executor=_executor_with_reports(commands, tmp_path),
+    )
+
+    assert report.pass_ok is True
+    command = commands[0]
+    assert "--surface-manifest" in command and str(surface_manifest) in command
+    assert "--ws-max-events" in command and "1" in command
+    assert "--ws-duration-seconds" in command and "9.0" in command
+    assert "--benchmark-symbol-count" in command and "6" in command
+    assert "--benchmark-high-cardinality-symbol-counts" in command and "50" in command
+    assert "--benchmark-bursts" in command and "2" in command
+    assert "--benchmark-events-per-symbol-per-burst" in command and "3" in command
+    assert "--benchmark-min-rows-per-second" in command and "5.0" in command
+    assert "--soak-mode" in command and "deterministic" in command
+    assert "--soak-iterations" in command and "1" in command
+    assert "--soak-events-per-iteration" in command and "20" in command
+    assert "--soak-duration-seconds" in command and "8.0" in command
 
 
 def test_operational_cycle_rejects_book_stream_type(tmp_path: Path):

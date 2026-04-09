@@ -11,27 +11,30 @@ Ejecutar el caso estandar de cierre operativo de ingestion para `live` sobre el 
 
 ## Prerrequisitos
 - entorno activo: `dev` para el ejemplo
-- ejecutar desde la raiz del repo con `poetry`
+- ejecutar desde la raiz del repo con `poetry run python` o, si `poetry` no esta disponible en el host, con el `python` del entorno operativo equivalente
 - disponer de raw y normalized exactos del dataset candidato
-- disponer de runtime base dir real para gates y shadow:
-  - `data/dev`
-- disponer de surfaces externas verificables para:
+- disponer de `runner context` persistido, por JSON o por variables de entorno, con:
+  - `execution_ref`
+  - `channel`
+  - `schedule_name`
+  - `job_id`
+  - `job_url`
+- disponer de `surface manifest` persistido para:
   - runtime
   - alerts
   - logs
   - promotion
   - cutover
+- disponer de runtime base dir real para gates y shadow:
+  - `data/dev`
 
 ## Variables del caso estandar
-- `execution_ref`: `live-dev-btcusdt-20260409T100000Z`
-- `channel`: `scheduled`
 - `output_dir`: `docs/validation/operational/live`
 - `runner_id`: `ingestion-live-closure`
 - `trigger`: `scheduled_live_cycle`
 - `provenance_source`: `ingestion_operational_cycle`
-- `schedule_name`: `ingestion-live-cadence`
-- `job_id`: `live-job-20260409-1000`
-- `job_url`: `https://ops.example/pipelines/ingestion-live/20260409-1000`
+- `runner_context_path`: `ops/runner-context/live-dev.json`
+- `surface_manifest_path`: `ops/observability/live-dev-surfaces.json`
 
 ## Comando de ejecucion
 
@@ -51,28 +54,70 @@ poetry run python scripts/ingestion_operational_cycle.py `
   --runner-id ingestion-live-closure `
   --trigger scheduled_live_cycle `
   --provenance-source ingestion_operational_cycle `
-  --execution-ref live-dev-btcusdt-20260409T100000Z `
-  --channel scheduled `
-  --schedule-name ingestion-live-cadence `
-  --job-id live-job-20260409-1000 `
-  --job-url https://ops.example/pipelines/ingestion-live/20260409-1000 `
-  --owner team-ingestion-oncall `
-  --runtime-owner team-ingestion `
-  --runtime-surface-ref grafana://ingestion/live/runtime `
-  --runtime-verification-ref ops://live/runtime/20260409T100000Z `
-  --alerts-owner team-ingestion-oncall `
-  --alerts-surface-ref pagerduty://ingestion/live/alerts `
-  --alerts-verification-ref ops://live/alerts/20260409T100000Z `
-  --logs-owner team-observability `
-  --logs-surface-ref loki://ingestion/live/logs `
-  --logs-verification-ref ops://live/logs/20260409T100000Z `
-  --promotion-owner team-ingestion `
-  --promotion-surface-ref runbook://docs/operations/ingestion_promotion_runbook.md `
-  --promotion-verification-ref ops://live/promotion/20260409T100000Z `
-  --cutover-owner team-ingestion `
-  --cutover-surface-ref runbook://docs/ops/live_cutover.md `
-  --cutover-verification-ref ops://live/cutover/20260409T100000Z
+  --runner-context-path ops/runner-context/live-dev.json `
+  --surface-manifest ops/observability/live-dev-surfaces.json `
+  --ws-max-events 2 `
+  --ws-duration-seconds 60 `
+  --ws-reconnect-after-events 1 `
+  --ws-induced-reconnects 1 `
+  --benchmark-min-rows-per-second 1 `
+  --soak-mode ws-live `
+  --soak-iterations 1 `
+  --soak-events-per-iteration 40 `
+  --soak-duration-seconds 60 `
+  --soak-reconnect-after-events 1 `
+  --soak-induced-reconnects 1
 ```
+
+## Ejemplo minimo de runner context
+
+```json
+{
+  "execution_ref": "live-dev-btcusdt-20260409T100000Z",
+  "channel": "scheduled",
+  "schedule_name": "ingestion-live-cadence",
+  "job_id": "live-job-20260409-1000",
+  "job_url": "https://ops.example/pipelines/ingestion-live/20260409-1000",
+  "owner": "team-ingestion-oncall"
+}
+```
+
+## Ejemplo minimo de surface manifest
+
+```json
+{
+  "runtime": {
+    "owner": "team-ingestion",
+    "surface_ref": "grafana://ingestion/live/runtime",
+    "verification_ref": "ops://live/runtime/20260409T100000Z"
+  },
+  "alerts": {
+    "owner": "team-ingestion-oncall",
+    "surface_ref": "pagerduty://ingestion/live/alerts",
+    "verification_ref": "ops://live/alerts/20260409T100000Z"
+  },
+  "logs": {
+    "owner": "team-observability",
+    "surface_ref": "loki://ingestion/live/logs",
+    "verification_ref": "ops://live/logs/20260409T100000Z"
+  },
+  "promotion": {
+    "owner": "team-ingestion",
+    "surface_ref": "runbook://docs/operations/ingestion_promotion_runbook.md",
+    "verification_ref": "ops://live/promotion/20260409T100000Z"
+  },
+  "cutover": {
+    "owner": "team-ingestion",
+    "surface_ref": "runbook://docs/ops/live_cutover.md",
+    "verification_ref": "ops://live/cutover/20260409T100000Z"
+  }
+}
+```
+
+## Nota operativa real
+- Un run real puede terminar en `NO-GO` aunque el codigo este cerrado:
+  - por ejemplo, una `ws canary` live puede fallar por `gaps_detected`, `gap_irreparable_detected` o `streams_degraded_detected`
+  - ese resultado debe interpretarse como evidencia operacional valida, no como motivo para relajar gates
 
 ## Salida esperada en consola
 - linea inicial:
@@ -146,6 +191,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `governance.schedule_name = ingestion-live-cadence`
 - `governance.job_id` no vacio
 - `governance.job_url` no vacio
+- `governance.context_source` presente y coherente con el origen real del contexto
 - `governance.cadence_state = bootstrap` o `healthy`
 - `governance.pass_ok = true`
 - `observability.verification_artifact_path` presente
@@ -224,6 +270,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `book` no aparece en ningun artifact
 - `channel` no es `manual`
 - `execution_ref` unico y visible
+- `context_source` visible en governance
 - governance/cadence verde
 - observabilidad externa verificada
 - predrill gates en verde

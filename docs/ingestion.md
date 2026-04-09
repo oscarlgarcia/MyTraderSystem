@@ -552,12 +552,20 @@ flowchart LR
   - `schedule_name`
   - `job_id`
   - `job_url`
+- El runner context ya puede llegar desde:
+  - argumentos CLI
+  - `--runner-context-path <json>`
+  - `--runner-context-from-env`
+- La observabilidad externa ya puede inyectarse mediante:
+  - overrides directos por CLI
+  - `--surface-manifest <json>`
 - El cycle persiste governance y cadence por target en:
   - `ingestion_operational_governance_paper.json`
   - `ingestion_operational_governance_live.json`
   - `ingestion_operational_history_<target>.jsonl`
 - `channel=manual` no es valido para cierre final de promotion.
 - La verificacion de observabilidad externa se persiste con `scripts/ingestion_observability_verify.py` y deja artifacts `ingestion_observability_verification_<profile>.json`.
+- Ese artifact ya no deberia construirse ad hoc en promotion final; debe venir de un path persistido y auditable.
 - Los playbooks ejecutables de referencia quedan en:
   - `docs/operations/ingestion_operational_closure_paper.md`
   - `docs/operations/ingestion_operational_closure_live.md`

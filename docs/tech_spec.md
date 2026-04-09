@@ -576,3 +576,5 @@
 - `scripts/ingestion_observability_verify.py` persiste las surfaces externas verificadas y `release_gates` debe fallar si ese artifact falta o viene de derivacion inline
 - el contrato operativo final exige `execution_ref` y `channel`; solo `scheduled` o `pipeline` son validos para promotion final
 - `app/ops/operational_governance.py` y `scripts/ingestion_operational_governance.py` fijan cadence, ownership y provenance del runner operativo
+- `app/ops/runner_context.py` resuelve runner context desde CLI, JSON o entorno y deja trazabilidad en `context_source`
+- `run_ingestion_readiness(...)` y `run_ingestion_operational_cycle(...)` aceptan `surface_manifest_path` para verificar runtime, alerts, logs, promotion y cutover desde un manifest persistido

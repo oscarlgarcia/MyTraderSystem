@@ -368,6 +368,7 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
                     "job_id": "live-kline-job-001",
                     "job_url": "https://ops.example/live/kline/job-001",
                     "owner": "team-ingestion-oncall",
+                    "context_source": "cli",
                     "cadence_state": "healthy",
                     "cadence_policy": {"interval_seconds": 21600, "max_interval_seconds": 28800},
                     "previous_success_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
@@ -527,3 +528,51 @@ def test_readiness_orchestrator_includes_benchmark_override_when_requested(tmp_p
     assert report.pass_ok is True
     assert "--min-rows-per-second" in commands[1]
     assert "55.0" in commands[1]
+
+
+def test_readiness_orchestrator_passes_surface_manifest_and_runtime_tunables(tmp_path: Path):
+    commands: list[tuple[str, ...]] = []
+    raw_base_dir = tmp_path / "raw"
+    normalized_path = tmp_path / "normalized"
+    raw_base_dir.mkdir()
+    normalized_path.mkdir()
+    surface_manifest = tmp_path / "surface-manifest.json"
+    surface_manifest.write_text(
+        json.dumps({"runtime": {"surface_ref": "grafana://paper/runtime"}}),
+        encoding="utf-8",
+    )
+
+    report = run_ingestion_readiness(
+        workspace=tmp_path,
+        target="paper",
+        env="papercand",
+        raw_base_dir=raw_base_dir,
+        normalized_path=normalized_path,
+        symbol="BTCUSDT",
+        stream_type="trade",
+        interval="1m",
+        runtime_env="dev",
+        runtime_base_dir=tmp_path / "data" / "dev",
+        validation_dir=tmp_path / "docs" / "validation",
+        output_path=tmp_path / "docs" / "validation" / "paper.json",
+        surface_manifest_path=surface_manifest,
+        ws_max_events=1,
+        ws_duration_seconds=12.0,
+        ws_reconnect_after_events=2,
+        ws_induced_reconnects=0,
+        benchmark_symbol_count=8,
+        benchmark_high_cardinality_symbol_counts=(50,),
+        benchmark_bursts=3,
+        benchmark_events_per_symbol_per_burst=4,
+        benchmark_min_rows_per_second=21.0,
+        soak_mode="deterministic",
+        soak_iterations=1,
+        soak_events_per_iteration=25,
+        soak_duration_seconds=9.0,
+        executor=_success_executor(commands),
+    )
+
+    assert report.pass_ok is True
+    observability_command = commands[3]
+    assert "--surface-manifest" in observability_command
+    assert str(surface_manifest) in observability_command

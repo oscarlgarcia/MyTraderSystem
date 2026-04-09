@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from _script_bootstrap import bootstrap_repo_path
@@ -18,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target", choices=["paper", "live"], required=True)
     parser.add_argument("--output", default="docs/validation/ingestion_observability_verification.json")
     parser.add_argument("--verification-source", default="manual_surface_check")
+    parser.add_argument("--surface-manifest", default=None)
     for alias in SURFACE_ALIASES:
         parser.add_argument(f"--{alias}-owner", default=None)
         parser.add_argument(f"--{alias}-surface-ref", default=None)
@@ -35,6 +37,15 @@ def _build_surface_overrides(args: argparse.Namespace) -> dict[str, dict[str, ob
         "cutover": "ingestion.live.cutover",
     }
     overrides: dict[str, dict[str, object]] = {}
+    if args.surface_manifest:
+        manifest_payload = json.loads(Path(args.surface_manifest).read_text(encoding="utf-8"))
+        for raw_key, raw_value in dict(manifest_payload).items():
+            surface_id = mapping.get(str(raw_key), str(raw_key))
+            if target != "live" and surface_id == "ingestion.live.cutover":
+                continue
+            if not isinstance(raw_value, dict):
+                continue
+            overrides[surface_id] = {str(key): value for key, value in raw_value.items()}
     for alias, surface_id in mapping.items():
         owner = getattr(args, f"{alias}_owner")
         surface_ref = getattr(args, f"{alias}_surface_ref")

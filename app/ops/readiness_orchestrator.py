@@ -121,12 +121,14 @@ def run_ingestion_readiness(
     cutover_owner: str | None = None,
     cutover_surface_ref: str | None = None,
     cutover_verification_ref: str | None = None,
+    surface_manifest_path: Path | None = None,
     runner_governance_path: Path | None = None,
     executor: Executor | None = None,
 ) -> ReadinessReport:
     raw_base_dir = Path(raw_base_dir)
     normalized_path = Path(normalized_path)
     runtime_base_dir = Path(runtime_base_dir) if runtime_base_dir is not None else None
+    surface_manifest_path = Path(surface_manifest_path) if surface_manifest_path is not None else None
     runner_governance_path = Path(runner_governance_path) if runner_governance_path is not None else None
     validation_dir = Path(validation_dir)
     output_path = Path(output_path)
@@ -177,6 +179,8 @@ def run_ingestion_readiness(
         "--output",
         str(observability_verification_path),
     ]
+    if surface_manifest_path is not None:
+        observability_command.extend(["--surface-manifest", str(surface_manifest_path)])
     observability_args = (
         ("--runtime-owner", runtime_owner),
         ("--runtime-surface-ref", runtime_surface_ref),

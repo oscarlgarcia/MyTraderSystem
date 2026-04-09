@@ -414,6 +414,8 @@ def _operational_evidence_block(
         reasons.append("operational evidence governance missing job_url")
     if not str(governance.get("owner") or "").strip():
         reasons.append("operational evidence governance missing owner")
+    if not str(governance.get("context_source") or "").strip():
+        reasons.append("operational evidence governance missing context_source")
     provenance = payload.get("provenance")
     if not isinstance(provenance, dict):
         reasons.append("operational evidence missing provenance metadata")
@@ -467,6 +469,7 @@ def _operational_evidence_block(
             "cadence_state": governance.get("cadence_state"),
             "schedule_name": governance.get("schedule_name"),
             "job_id": governance.get("job_id"),
+            "context_source": governance.get("context_source"),
             "derived_in_process": derived_in_process,
         },
     )

@@ -69,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cutover-owner", default=None)
     parser.add_argument("--cutover-surface-ref", default=None)
     parser.add_argument("--cutover-verification-ref", default=None)
+    parser.add_argument("--surface-manifest", default=None)
     parser.add_argument("--runner-governance-path", default=None)
     return parser
 
@@ -129,6 +130,7 @@ def main() -> int:
         cutover_owner=args.cutover_owner,
         cutover_surface_ref=args.cutover_surface_ref,
         cutover_verification_ref=args.cutover_verification_ref,
+        surface_manifest_path=Path(args.surface_manifest) if args.surface_manifest else None,
         runner_governance_path=Path(args.runner_governance_path) if args.runner_governance_path else None,
     )
     print(f"ingestion readiness: {report.overall_status} ({report.target})")

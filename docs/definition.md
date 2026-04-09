@@ -68,7 +68,9 @@ Centralizar la descripción de componentes y sus responsabilidades en la fase te
 - la promotion paper/live consolida artifacts en `ingestion_operational_evidence*.json`, donde se bloquea evidence stale, origen incoherente, evidence derivada inline y ausencia de `owner`/`surface_ref`/`verification_ref` en las surfaces externas de observabilidad
 - el cierre operativo estandar se ejecuta ahora con `scripts/ingestion_operational_cycle.py`, que genera manifests de ciclo, verificacion de observabilidad externa y readiness por perfil
 - `execution_ref` y `channel` pasan a ser obligatorios en la evidence operativa; para cierre final el `channel` valido es `scheduled` o `pipeline`
-- `schedule_name`, `job_id`, `job_url` y `cadence_state` pasan a formar parte del contrato de governance del runner operativo
+- `schedule_name`, `job_id`, `job_url`, `context_source` y `cadence_state` forman parte del contrato de governance del runner operativo
+- el contexto del runner puede resolverse desde CLI, archivo JSON o variables de entorno
+- la verificacion externa de observabilidad puede venir de un `surface manifest` JSON persistido
 - Añadir serialización (p.ej. JSON) manteniendo contratos.
 - Extender `MarketEvent` con profundidad de libro/funding cuando ingestion lo necesite.
 - Añadir campos de riesgo (p.ej. risk_level) y de ejecución (p.ej. slippage estimado) respetando compatibilidad hacia atrás.

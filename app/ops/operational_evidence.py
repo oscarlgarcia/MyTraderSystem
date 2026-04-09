@@ -45,6 +45,7 @@ class OperationalGovernanceEvidence:
     job_id: str | None
     job_url: str | None
     owner: str | None
+    context_source: str | None
     cadence_state: str | None
     cadence_policy: dict[str, object]
     previous_success_at: str | None
@@ -199,6 +200,7 @@ def _collect_governance_evidence(
             job_id=None,
             job_url=None,
             owner=None,
+            context_source=None,
             cadence_state=None,
             cadence_policy={},
             previous_success_at=None,
@@ -228,12 +230,15 @@ def _collect_governance_evidence(
         reasons.append("runner governance missing job_url")
     if not str(payload.get("owner") or "").strip():
         reasons.append("runner governance missing owner")
+    if not str(payload.get("context_source") or "").strip():
+        reasons.append("runner governance missing context_source")
     return OperationalGovernanceEvidence(
         artifact_path=str(runner_governance_path),
         schedule_name=payload.get("schedule_name"),
         job_id=payload.get("job_id"),
         job_url=payload.get("job_url"),
         owner=payload.get("owner"),
+        context_source=payload.get("context_source"),
         cadence_state=payload.get("cadence_state"),
         cadence_policy=dict(payload.get("cadence_policy") or {}),
         previous_success_at=payload.get("previous_success_at"),

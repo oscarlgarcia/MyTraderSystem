@@ -29,6 +29,7 @@ def test_operational_governance_bootstrap_passes_for_pipeline_runner(tmp_path: P
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["schedule_name"] == "ingestion-paper-cadence"
     assert payload["job_id"] == "paper-job-001"
+    assert payload["context_source"] == "cli"
 
 
 def test_operational_governance_marks_manual_runs_as_non_promotable(tmp_path: Path):
@@ -48,6 +49,7 @@ def test_operational_governance_marks_manual_runs_as_non_promotable(tmp_path: Pa
     assert report.pass_ok is False
     assert report.cadence_state == "manual"
     assert any("manual channel" in reason for reason in report.reasons)
+    assert report.context_source == "cli"
 
 
 def test_operational_governance_marks_stale_history_as_failing(tmp_path: Path):
@@ -87,3 +89,22 @@ def test_operational_governance_marks_stale_history_as_failing(tmp_path: Path):
     assert report.pass_ok is False
     assert report.cadence_state == "stale"
     assert report.previous_execution_ref == "prev-live-exec"
+
+
+def test_operational_governance_persists_context_source(tmp_path: Path):
+    report = build_operational_governance_report(
+        target="paper",
+        output_dir=tmp_path,
+        runner_id="ingestion-paper-runner",
+        trigger="scheduled_paper_cycle",
+        provenance_source="ingestion_operational_cycle",
+        execution_ref="paper-exec-ctx",
+        channel="scheduled",
+        schedule_name="ingestion-paper-cadence",
+        job_id="paper-job-ctx",
+        job_url="https://ops.example/paper-job-ctx",
+        context_source="file:C:/runner-context.json",
+    )
+
+    assert report.pass_ok is True
+    assert report.context_source == "file:C:/runner-context.json"
