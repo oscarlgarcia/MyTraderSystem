@@ -39,6 +39,22 @@ class OperationalObservabilityEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationalGovernanceEvidence:
+    artifact_path: str | None
+    schedule_name: str | None
+    job_id: str | None
+    job_url: str | None
+    owner: str | None
+    cadence_state: str | None
+    cadence_policy: dict[str, object]
+    previous_success_at: str | None
+    previous_execution_ref: str | None
+    successful_runs_seen: int
+    pass_ok: bool
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class OperationalEvidenceProvenance:
     source: str
     runner_id: str
@@ -59,6 +75,7 @@ class OperationalEvidenceReport:
     cadence_policy: dict[str, object]
     evidence_origin: str
     provenance: OperationalEvidenceProvenance
+    governance: OperationalGovernanceEvidence
     excluded_feed_policy: dict[str, str]
     observability: OperationalObservabilityEvidence
     artifacts: tuple[OperationalArtifactEvidence, ...]
@@ -92,6 +109,7 @@ def build_operational_evidence_report(
     execution_ref: str = "manual-local",
     channel: str = "manual",
     observability_verification_path: Path | None = None,
+    runner_governance_path: Path | None = None,
     derived_in_process: bool = False,
 ) -> OperationalEvidenceReport:
     normalized_stream_types = normalize_feed_types(stream_types)
@@ -110,14 +128,25 @@ def build_operational_evidence_report(
     )
     artifacts = tuple(_collect_artifact_evidence(name=name, path=path, required=required, max_age=max_age) for name, path, required, max_age in artifact_specs)
     generated_at = datetime.now(timezone.utc).isoformat()
+    governance = _collect_governance_evidence(
+        target=target,
+        execution_ref=execution_ref,
+        channel=channel,
+        runner_governance_path=runner_governance_path,
+    )
     observability = _collect_observability_evidence(
         target=target,
         generated_at=generated_at,
         observability_verification_path=observability_verification_path,
     )
     reasons = [reason for artifact in artifacts for reason in artifact.reasons]
+    reasons.extend(governance.reasons)
     reasons.extend(observability.reasons)
-    pass_ok = all((artifact.pass_ok and artifact.fresh) if artifact.required else True for artifact in artifacts) and observability.pass_ok
+    pass_ok = (
+        all((artifact.pass_ok and artifact.fresh) if artifact.required else True for artifact in artifacts)
+        and governance.pass_ok
+        and observability.pass_ok
+    )
     if not pass_ok and not reasons:
         reasons.append("operational evidence incomplete")
     cadence_policy = {
@@ -146,11 +175,72 @@ def build_operational_evidence_report(
             verification_scope="external_operational_surfaces",
             derived_in_process=derived_in_process,
         ),
+        governance=governance,
         excluded_feed_policy={feed_type: "excluded" for feed_type in excluded_feed_types()},
         observability=observability,
         artifacts=artifacts,
         pass_ok=pass_ok,
         reasons=tuple(reasons or ["operational evidence fresh and aligned"]),
+    )
+
+
+def _collect_governance_evidence(
+    *,
+    target: ReleaseTarget,
+    execution_ref: str,
+    channel: str,
+    runner_governance_path: Path | None,
+) -> OperationalGovernanceEvidence:
+    reasons: list[str] = []
+    if runner_governance_path is None or not runner_governance_path.exists():
+        return OperationalGovernanceEvidence(
+            artifact_path=str(runner_governance_path) if runner_governance_path is not None else None,
+            schedule_name=None,
+            job_id=None,
+            job_url=None,
+            owner=None,
+            cadence_state=None,
+            cadence_policy={},
+            previous_success_at=None,
+            previous_execution_ref=None,
+            successful_runs_seen=0,
+            pass_ok=False,
+            reasons=("runner governance artifact missing",),
+        )
+    payload = json.loads(runner_governance_path.read_text(encoding="utf-8"))
+    if payload.get("target") != target:
+        reasons.append(f"runner governance target {payload.get('target')!r} does not match {target!r}")
+    if str(payload.get("execution_ref") or "") != execution_ref:
+        reasons.append("runner governance execution_ref does not match operational evidence")
+    payload_channel = str(payload.get("channel") or "").strip().lower()
+    if payload_channel != str(channel).strip().lower():
+        reasons.append("runner governance channel does not match operational evidence")
+    if payload.get("pass_ok") is not True:
+        reasons.append("runner governance artifact is not passing")
+    cadence_state = str(payload.get("cadence_state") or "")
+    if cadence_state not in {"bootstrap", "healthy"}:
+        reasons.append(f"runner governance cadence_state {cadence_state!r} is not promotable")
+    if not str(payload.get("schedule_name") or "").strip():
+        reasons.append("runner governance missing schedule_name")
+    if not str(payload.get("job_id") or "").strip():
+        reasons.append("runner governance missing job_id")
+    if not str(payload.get("job_url") or "").strip():
+        reasons.append("runner governance missing job_url")
+    if not str(payload.get("owner") or "").strip():
+        reasons.append("runner governance missing owner")
+    return OperationalGovernanceEvidence(
+        artifact_path=str(runner_governance_path),
+        schedule_name=payload.get("schedule_name"),
+        job_id=payload.get("job_id"),
+        job_url=payload.get("job_url"),
+        owner=payload.get("owner"),
+        cadence_state=payload.get("cadence_state"),
+        cadence_policy=dict(payload.get("cadence_policy") or {}),
+        previous_success_at=payload.get("previous_success_at"),
+        previous_execution_ref=payload.get("previous_execution_ref"),
+        successful_runs_seen=int(payload.get("successful_runs_seen") or 0),
+        pass_ok=not reasons,
+        reasons=tuple(reasons or ["runner governance aligned with cadence policy"]),
     )
 
 

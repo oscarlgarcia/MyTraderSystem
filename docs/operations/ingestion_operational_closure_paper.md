@@ -29,6 +29,9 @@ Ejecutar el caso estandar de cierre operativo de ingestion para `paper` sobre el
 - `runner_id`: `ingestion-paper-closure`
 - `trigger`: `scheduled_paper_cycle`
 - `provenance_source`: `ingestion_operational_cycle`
+- `schedule_name`: `ingestion-paper-cadence`
+- `job_id`: `paper-job-20260409-0900`
+- `job_url`: `https://ops.example/pipelines/ingestion-paper/20260409-0900`
 
 ## Comando de ejecucion
 
@@ -50,6 +53,10 @@ poetry run python scripts/ingestion_operational_cycle.py `
   --provenance-source ingestion_operational_cycle `
   --execution-ref paper-dev-btcusdt-20260409T090000Z `
   --channel scheduled `
+  --schedule-name ingestion-paper-cadence `
+  --job-id paper-job-20260409-0900 `
+  --job-url https://ops.example/pipelines/ingestion-paper/20260409-0900 `
+  --owner team-ingestion `
   --runtime-owner team-ingestion `
   --runtime-surface-ref grafana://ingestion/paper/runtime `
   --runtime-verification-ref ops://paper/runtime/20260409T090000Z `
@@ -81,6 +88,9 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - reports de readiness:
   - `docs/validation/operational/paper/ingestion_readiness_paper_trade.json`
   - `docs/validation/operational/paper/ingestion_readiness_paper_kline.json`
+- governance/cadence:
+  - `docs/validation/operational/paper/ingestion_operational_governance_paper.json`
+  - `docs/validation/operational/paper/ingestion_operational_history_paper.jsonl`
 - verificacion de observabilidad:
   - `docs/validation/operational/paper/ingestion_observability_verification_paper_trade.json`
   - `docs/validation/operational/paper/ingestion_observability_verification_paper_kline.json`
@@ -99,6 +109,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `pass_ok = true`
 - `execution_ref = paper-dev-btcusdt-20260409T090000Z`
 - `channel = scheduled`
+- `cadence_state = bootstrap` o `healthy`
 - `stream_types = ["trade", "kline"]`
 - cada paso tiene `returncode = 0`
 
@@ -127,9 +138,15 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `provenance.execution_ref = paper-dev-btcusdt-20260409T090000Z`
 - `provenance.channel = scheduled`
 - `provenance.derived_in_process = false`
+- `governance.artifact_path` presente
+- `governance.schedule_name = ingestion-paper-cadence`
+- `governance.job_id` no vacio
+- `governance.job_url` no vacio
+- `governance.cadence_state = bootstrap` o `healthy`
+- `governance.pass_ok = true`
 - `excluded_feed_policy.book = "excluded"`
 - `observability.verification_artifact_path` presente
-- `observability.verification_source` distinto de `inline_contract_derivation`
+- `observability.verification_source` distinto de `inline_contract_derivation` y `manual_surface_check`
 
 4. Release gates por perfil
 - `overall_status = PASS`
@@ -180,5 +197,6 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `book` no aparece en ningun artifact
 - `channel` no es `manual`
 - `execution_ref` unico y visible
+- governance/cadence verde
 - observabilidad externa verificada
 - gates finales en verde

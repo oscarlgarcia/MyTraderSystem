@@ -29,6 +29,9 @@ Ejecutar el caso estandar de cierre operativo de ingestion para `live` sobre el 
 - `runner_id`: `ingestion-live-closure`
 - `trigger`: `scheduled_live_cycle`
 - `provenance_source`: `ingestion_operational_cycle`
+- `schedule_name`: `ingestion-live-cadence`
+- `job_id`: `live-job-20260409-1000`
+- `job_url`: `https://ops.example/pipelines/ingestion-live/20260409-1000`
 
 ## Comando de ejecucion
 
@@ -50,6 +53,10 @@ poetry run python scripts/ingestion_operational_cycle.py `
   --provenance-source ingestion_operational_cycle `
   --execution-ref live-dev-btcusdt-20260409T100000Z `
   --channel scheduled `
+  --schedule-name ingestion-live-cadence `
+  --job-id live-job-20260409-1000 `
+  --job-url https://ops.example/pipelines/ingestion-live/20260409-1000 `
+  --owner team-ingestion-oncall `
   --runtime-owner team-ingestion `
   --runtime-surface-ref grafana://ingestion/live/runtime `
   --runtime-verification-ref ops://live/runtime/20260409T100000Z `
@@ -84,6 +91,9 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - reports de readiness:
   - `docs/validation/operational/live/ingestion_readiness_live_trade.json`
   - `docs/validation/operational/live/ingestion_readiness_live_kline.json`
+- governance/cadence:
+  - `docs/validation/operational/live/ingestion_operational_governance_live.json`
+  - `docs/validation/operational/live/ingestion_operational_history_live.jsonl`
 - verificacion de observabilidad:
   - `docs/validation/operational/live/ingestion_observability_verification_live_trade.json`
   - `docs/validation/operational/live/ingestion_observability_verification_live_kline.json`
@@ -107,6 +117,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `pass_ok = true`
 - `execution_ref = live-dev-btcusdt-20260409T100000Z`
 - `channel = scheduled`
+- `cadence_state = bootstrap` o `healthy`
 - `stream_types = ["trade", "kline"]`
 - cada paso tiene `returncode = 0`
 
@@ -132,6 +143,11 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `evidence_origin = operational_runtime`
 - `provenance.execution_ref = live-dev-btcusdt-20260409T100000Z`
 - `provenance.channel = scheduled`
+- `governance.schedule_name = ingestion-live-cadence`
+- `governance.job_id` no vacio
+- `governance.job_url` no vacio
+- `governance.cadence_state = bootstrap` o `healthy`
+- `governance.pass_ok = true`
 - `observability.verification_artifact_path` presente
 - `failure_injection` y `soak` presentes y frescos
 
@@ -140,7 +156,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `phase = final`
 - `pass_ok = true`
 - `provenance.derived_in_process = false`
-- `observability.verification_source` no es `inline_contract_derivation`
+- `observability.verification_source` no es `inline_contract_derivation` ni `manual_surface_check`
 - `excluded_feed_policy.book = "excluded"`
 
 5. Release gates finales por perfil
@@ -208,6 +224,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `book` no aparece en ningun artifact
 - `channel` no es `manual`
 - `execution_ref` unico y visible
+- governance/cadence verde
 - observabilidad externa verificada
 - predrill gates en verde
 - live drill en verde

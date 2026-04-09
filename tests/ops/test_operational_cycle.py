@@ -66,6 +66,9 @@ def test_operational_cycle_runs_paper_for_trade_and_kline(tmp_path: Path):
         provenance_source="ingestion_operational_cycle",
         execution_ref="exec-paper-001",
         channel="scheduled",
+        schedule_name="ingestion-paper-cadence",
+        job_id="paper-job-001",
+        job_url="https://ops.example/paper-job-001",
         stream_types=("trade", "kline"),
         executor=_executor_with_reports(commands, tmp_path),
     )
@@ -83,6 +86,10 @@ def test_operational_cycle_runs_paper_for_trade_and_kline(tmp_path: Path):
     assert manifest["overall_status"] == "PASS"
     assert manifest["stream_types"] == ["trade", "kline"]
     assert manifest["execution_ref"] == "exec-paper-001"
+    assert manifest["cadence_state"] == "bootstrap"
+    governance = json.loads((tmp_path / "docs" / "validation" / "ingestion_operational_governance_paper.json").read_text(encoding="utf-8"))
+    assert governance["pass_ok"] is True
+    assert governance["schedule_name"] == "ingestion-paper-cadence"
     assert manifest["steps"][0]["artifacts_generated"]
 
 
@@ -111,6 +118,9 @@ def test_operational_cycle_runs_live_with_runtime_overrides(tmp_path: Path):
         provenance_source="ingestion_operational_cycle",
         execution_ref="exec-live-001",
         channel="pipeline",
+        schedule_name="ingestion-live-cadence",
+        job_id="live-job-001",
+        job_url="https://ops.example/live-job-001",
         stream_types=("trade",),
         runtime_owner="team-ingestion",
         runtime_surface_ref="grafana://ingestion/live/runtime",
@@ -125,6 +135,7 @@ def test_operational_cycle_runs_live_with_runtime_overrides(tmp_path: Path):
     assert str(runtime_base_dir) in commands[0]
     assert "--runtime-owner" in commands[0]
     assert "team-ingestion" in commands[0]
+    assert "--runner-governance-path" in commands[0]
 
 
 def test_operational_cycle_rejects_book_stream_type(tmp_path: Path):
@@ -145,6 +156,9 @@ def test_operational_cycle_rejects_book_stream_type(tmp_path: Path):
             provenance_source="ingestion_operational_cycle",
             execution_ref="exec-paper-001",
             channel="scheduled",
+            schedule_name="ingestion-paper-cadence",
+            job_id="paper-job-001",
+            job_url="https://ops.example/paper-job-001",
             stream_types=("book",),
         )
 
@@ -167,5 +181,43 @@ def test_operational_cycle_requires_normalized_path_mapping(tmp_path: Path):
             provenance_source="ingestion_operational_cycle",
             execution_ref="exec-paper-001",
             channel="scheduled",
+            schedule_name="ingestion-paper-cadence",
+            job_id="paper-job-001",
+            job_url="https://ops.example/paper-job-001",
             stream_types=("trade",),
         )
+
+
+def test_operational_cycle_marks_manual_governance_as_failing(tmp_path: Path):
+    commands: list[tuple[str, ...]] = []
+    raw_base_dir = tmp_path / "raw"
+    raw_base_dir.mkdir()
+    trade_normalized = tmp_path / "normalized" / "trade"
+    trade_normalized.mkdir(parents=True)
+
+    report = run_ingestion_operational_cycle(
+        workspace=tmp_path,
+        target="paper",
+        env="dev",
+        raw_base_dir=raw_base_dir,
+        normalized_paths={"trade": trade_normalized},
+        symbol="BTCUSDT",
+        interval="1m",
+        output_dir=tmp_path / "docs" / "validation",
+        runner_id="ops-cycle-paper",
+        trigger="manual_run",
+        provenance_source="ingestion_operational_cycle",
+        execution_ref="exec-paper-manual-001",
+        channel="manual",
+        schedule_name="manual-paper",
+        job_id="manual-job",
+        job_url="https://ops.example/manual-job",
+        stream_types=("trade",),
+        executor=_executor_with_reports(commands, tmp_path),
+    )
+
+    governance = json.loads((tmp_path / "docs" / "validation" / "ingestion_operational_governance_paper.json").read_text(encoding="utf-8"))
+    assert report.pass_ok is False
+    assert report.overall_status == "FAIL"
+    assert governance["pass_ok"] is False
+    assert governance["cadence_state"] == "manual"

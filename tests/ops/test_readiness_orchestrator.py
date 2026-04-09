@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -39,6 +39,7 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
         interval="1m",
         runtime_env="dev",
         runtime_base_dir=tmp_path / "data" / "dev",
+        runner_governance_path=tmp_path / "docs" / "validation" / "ingestion_operational_governance_paper.json",
         validation_dir=tmp_path / "docs" / "validation",
         output_path=tmp_path / "docs" / "validation" / "paper.json",
         executor=_success_executor(commands),
@@ -77,8 +78,11 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
     assert "--channel" in commands[4] and "pipeline" in commands[4]
     assert "--output" in commands[3]
     assert str(tmp_path / "docs" / "validation" / "ingestion_observability_verification_paper_trade.json") in commands[3]
+    assert "--verification-source" in commands[3] and "pipeline_surface_check" in commands[3]
     assert "--observability-verification-path" in commands[4]
     assert str(tmp_path / "docs" / "validation" / "ingestion_observability_verification_paper_trade.json") in commands[4]
+    assert "--runner-governance-path" in commands[4]
+    assert str(tmp_path / "docs" / "validation" / "ingestion_operational_governance_paper.json") in commands[4]
     assert "--operational-evidence-path" in commands[5]
     assert str(tmp_path / "docs" / "validation" / "ingestion_operational_evidence_paper_trade.json") in commands[5]
     assert "--min-rows-per-second" not in commands[1]
@@ -106,6 +110,7 @@ def test_readiness_orchestrator_runs_paper_kline_runtime_steps(tmp_path: Path):
         interval="1m",
         runtime_env="dev",
         runtime_base_dir=tmp_path / "data" / "dev",
+        runner_governance_path=tmp_path / "docs" / "validation" / "ingestion_operational_governance_paper.json",
         validation_dir=tmp_path / "docs" / "validation",
         output_path=tmp_path / "docs" / "validation" / "paper-kline.json",
         executor=_success_executor(commands),
@@ -145,6 +150,7 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
         symbol="BTCUSDT",
         stream_type="kline",
         interval="1m",
+        runner_governance_path=tmp_path / "docs" / "validation" / "ingestion_operational_governance_live.json",
         validation_dir=tmp_path / "docs" / "validation",
         output_path=tmp_path / "docs" / "validation" / "live.json",
         executor=_success_executor(commands),
@@ -177,12 +183,14 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
     final_gate = commands[12]
     assert "--output" in observability
     assert str(tmp_path / "docs" / "validation" / "ingestion_observability_verification_live_kline.json") in observability
+    assert "--verification-source" in observability and "pipeline_surface_check" in observability
     assert "scripts/ingestion_failure_injection.py" in failure_injection
     assert "--phase" in predrill_evidence and "predrill" in predrill_evidence
     assert "--provenance-source" in predrill_evidence and "readiness_orchestrator" in predrill_evidence
     assert "--execution-ref" in predrill_evidence
     assert "--channel" in predrill_evidence and "pipeline" in predrill_evidence
     assert "--observability-verification-path" in predrill_evidence
+    assert "--runner-governance-path" in predrill_evidence
     assert "--phase" in predrill and "predrill" in predrill
     assert "--target-profile" in commands[3] and "live" in commands[3]
     assert "--target-profile" in commands[6] and "live" in commands[6]
@@ -192,6 +200,7 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
     assert "--runner-id" in final_evidence
     assert "--execution-ref" in final_evidence
     assert "--channel" in final_evidence and "pipeline" in final_evidence
+    assert "--runner-governance-path" in final_evidence
     assert "--phase" in final_gate and "final" in final_gate
 
 
@@ -211,6 +220,7 @@ def test_readiness_orchestrator_runs_live_trade_without_rest_canary(tmp_path: Pa
         symbol="BTCUSDT",
         stream_type="trade",
         interval="1m",
+        runner_governance_path=tmp_path / "docs" / "validation" / "ingestion_operational_governance_live.json",
         validation_dir=tmp_path / "docs" / "validation",
         output_path=tmp_path / "docs" / "validation" / "live-trade.json",
         executor=_success_executor(commands),
@@ -351,6 +361,20 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
                     "channel": "pipeline",
                     "verification_scope": "external_operational_surfaces",
                     "derived_in_process": False,
+                },
+                "governance": {
+                    "artifact_path": str(artifact_dir / "governance-live.json"),
+                    "schedule_name": "ingestion-live-cadence",
+                    "job_id": "live-kline-job-001",
+                    "job_url": "https://ops.example/live/kline/job-001",
+                    "owner": "team-ingestion-oncall",
+                    "cadence_state": "healthy",
+                    "cadence_policy": {"interval_seconds": 21600, "max_interval_seconds": 28800},
+                    "previous_success_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+                    "previous_execution_ref": "prev-live-kline",
+                    "successful_runs_seen": 2,
+                    "pass_ok": True,
+                    "reasons": ["runner governance aligned with cadence policy"],
                 },
                 "excluded_feed_policy": {"book": "excluded"},
                 "observability": {

@@ -395,6 +395,25 @@ def _operational_evidence_block(
     excluded_policy = payload.get("excluded_feed_policy") or {}
     if excluded_policy.get("book") != "excluded":
         reasons.append("book exclusion policy is not enforced in operational evidence")
+    governance = payload.get("governance")
+    if not isinstance(governance, dict):
+        reasons.append("operational evidence missing governance metadata")
+        governance = {}
+    if not str(governance.get("artifact_path") or "").strip():
+        reasons.append("operational evidence governance missing artifact_path")
+    if governance.get("pass_ok") is not True:
+        reasons.append("operational evidence governance is not passing")
+    cadence_state = str(governance.get("cadence_state") or "").strip().lower()
+    if cadence_state not in {"bootstrap", "healthy"}:
+        reasons.append("operational evidence governance cadence_state must be bootstrap or healthy")
+    if not str(governance.get("schedule_name") or "").strip():
+        reasons.append("operational evidence governance missing schedule_name")
+    if not str(governance.get("job_id") or "").strip():
+        reasons.append("operational evidence governance missing job_id")
+    if not str(governance.get("job_url") or "").strip():
+        reasons.append("operational evidence governance missing job_url")
+    if not str(governance.get("owner") or "").strip():
+        reasons.append("operational evidence governance missing owner")
     provenance = payload.get("provenance")
     if not isinstance(provenance, dict):
         reasons.append("operational evidence missing provenance metadata")
@@ -444,6 +463,10 @@ def _operational_evidence_block(
             "provenance": provenance,
             "execution_ref": provenance.get("execution_ref"),
             "channel": provenance.get("channel"),
+            "governance_artifact_path": governance.get("artifact_path"),
+            "cadence_state": governance.get("cadence_state"),
+            "schedule_name": governance.get("schedule_name"),
+            "job_id": governance.get("job_id"),
             "derived_in_process": derived_in_process,
         },
     )
@@ -1009,6 +1032,9 @@ def _operational_observability_block(
         reasons.append("operational observability evidence missing verification_artifact_path")
     if verification_source in {"", "inline_contract_derivation"}:
         reasons.append("operational observability evidence must come from a persisted verification artifact")
+    phase = str(payload.get("phase") or "").strip().lower()
+    if phase == "final" and verification_source in {"manual_surface_check", "", "inline_contract_derivation"}:
+        reasons.append("final operational closure requires non-manual observability verification_source")
     expected_contract = build_observability_contract_report(target=target)
     expected_surface_ids = {surface.surface_id for surface in expected_contract.external_surfaces}
     observed_surface_ids: set[str] = set()

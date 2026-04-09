@@ -156,6 +156,8 @@ Notas obligatorias:
 - el comando anterior ya encapsula el caso estandar por perfil (`live_trade`, `live_kline`)
 - `channel=manual` no es valido para promotion final
 - `execution_ref` debe ser unico por corrida operativa
+- `schedule_name`, `job_id`, `job_url` y `owner` del runner deben quedar persistidos
+- `cadence_state` debe ser `bootstrap` o `healthy`
 - cualquier intento con `book` debe considerarse `NO-GO`
 
 ## Abort Conditions

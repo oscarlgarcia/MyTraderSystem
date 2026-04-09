@@ -575,3 +575,4 @@
 - el cierre operativo estandar se orquesta con `scripts/ingestion_operational_cycle.py`, que encapsula readiness por perfil, verificacion de observabilidad, evidence agregada y gates finales
 - `scripts/ingestion_observability_verify.py` persiste las surfaces externas verificadas y `release_gates` debe fallar si ese artifact falta o viene de derivacion inline
 - el contrato operativo final exige `execution_ref` y `channel`; solo `scheduled` o `pipeline` son validos para promotion final
+- `app/ops/operational_governance.py` y `scripts/ingestion_operational_governance.py` fijan cadence, ownership y provenance del runner operativo

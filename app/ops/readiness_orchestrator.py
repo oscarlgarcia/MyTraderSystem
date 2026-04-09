@@ -121,11 +121,13 @@ def run_ingestion_readiness(
     cutover_owner: str | None = None,
     cutover_surface_ref: str | None = None,
     cutover_verification_ref: str | None = None,
+    runner_governance_path: Path | None = None,
     executor: Executor | None = None,
 ) -> ReadinessReport:
     raw_base_dir = Path(raw_base_dir)
     normalized_path = Path(normalized_path)
     runtime_base_dir = Path(runtime_base_dir) if runtime_base_dir is not None else None
+    runner_governance_path = Path(runner_governance_path) if runner_governance_path is not None else None
     validation_dir = Path(validation_dir)
     output_path = Path(output_path)
     runtime_env = str(runtime_env or env)
@@ -170,6 +172,8 @@ def run_ingestion_readiness(
         "scripts/ingestion_observability_verify.py",
         "--target",
         target,
+        "--verification-source",
+        "pipeline_surface_check" if channel == "pipeline" else "scheduled_surface_check" if channel == "scheduled" else "manual_surface_check",
         "--output",
         str(observability_verification_path),
     ]
@@ -406,6 +410,7 @@ def run_ingestion_readiness(
                         channel,
                         "--observability-verification-path",
                         str(observability_verification_path),
+                        *(("--runner-governance-path", str(runner_governance_path)) if runner_governance_path is not None else ()),
                         "--output",
                         str(operational_evidence_predrill_path),
                     ),
@@ -508,6 +513,7 @@ def run_ingestion_readiness(
                         channel,
                         "--observability-verification-path",
                         str(observability_verification_path),
+                        *(("--runner-governance-path", str(runner_governance_path)) if runner_governance_path is not None else ()),
                         "--output",
                         str(operational_evidence_path),
                     ),
@@ -556,6 +562,7 @@ def run_ingestion_readiness(
                     channel,
                     "--observability-verification-path",
                     str(observability_verification_path),
+                    *(("--runner-governance-path", str(runner_governance_path)) if runner_governance_path is not None else ()),
                     "--output",
                     str(operational_evidence_path),
                 ),

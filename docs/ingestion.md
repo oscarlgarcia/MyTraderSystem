@@ -549,6 +549,13 @@ flowchart LR
   - `runner_id`
   - `trigger`
   - `provenance_source`
+  - `schedule_name`
+  - `job_id`
+  - `job_url`
+- El cycle persiste governance y cadence por target en:
+  - `ingestion_operational_governance_paper.json`
+  - `ingestion_operational_governance_live.json`
+  - `ingestion_operational_history_<target>.jsonl`
 - `channel=manual` no es valido para cierre final de promotion.
 - La verificacion de observabilidad externa se persiste con `scripts/ingestion_observability_verify.py` y deja artifacts `ingestion_observability_verification_<profile>.json`.
 - Los playbooks ejecutables de referencia quedan en:

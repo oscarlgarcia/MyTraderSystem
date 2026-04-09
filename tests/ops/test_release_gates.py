@@ -295,6 +295,25 @@ def _write_release_artifacts(
                 "verification_scope": "external_operational_surfaces",
                 "derived_in_process": False,
             },
+            "governance": {
+                "artifact_path": str(tmp_path / f"governance-{target}-{stream_type}.json"),
+                "schedule_name": f"ingestion-{target}-cadence",
+                "job_id": f"{target}-{stream_type}-job-001",
+                "job_url": f"https://ops.example/{target}/{stream_type}/job-001",
+                "owner": "team-ingestion",
+                "cadence_state": "healthy",
+                "cadence_policy": {
+                    "interval_seconds": 21600,
+                    "max_interval_seconds": 43200 if target == "paper" else 28800,
+                    "owner": "team-ingestion",
+                    "required_channels": ["scheduled", "pipeline"],
+                },
+                "previous_success_at": (NOW - timedelta(hours=2)).isoformat(),
+                "previous_execution_ref": f"prev-{target}-{stream_type}",
+                "successful_runs_seen": 2,
+                "pass_ok": True,
+                "reasons": ["runner governance aligned with cadence policy"],
+            },
             "excluded_feed_policy": {"book": "excluded"},
             "observability": {
                 "pass_ok": True,
@@ -503,6 +522,20 @@ def test_release_gates_paper_trade_passes_without_runtime_proxy_artifacts(tmp_pa
                 "verification_scope": "external_operational_surfaces",
                 "derived_in_process": False,
             },
+            "governance": {
+                "artifact_path": str(tmp_path / "governance-paper-trade.json"),
+                "schedule_name": "ingestion-paper-cadence",
+                "job_id": "paper-trade-job-001",
+                "job_url": "https://ops.example/paper/trade/job-001",
+                "owner": "team-ingestion",
+                "cadence_state": "healthy",
+                "cadence_policy": {"interval_seconds": 21600, "max_interval_seconds": 43200},
+                "previous_success_at": (NOW - timedelta(hours=2)).isoformat(),
+                "previous_execution_ref": "prev-paper-trade",
+                "successful_runs_seen": 2,
+                "pass_ok": True,
+                "reasons": ["runner governance aligned with cadence policy"],
+            },
             "excluded_feed_policy": {"book": "excluded"},
             "observability": {
                 "pass_ok": True,
@@ -665,6 +698,20 @@ def test_release_gates_paper_book_is_rejected_by_support_matrix(tmp_path: Path):
                 "channel": "pipeline",
                 "verification_scope": "external_operational_surfaces",
                 "derived_in_process": False,
+            },
+            "governance": {
+                "artifact_path": str(tmp_path / "governance-paper-book.json"),
+                "schedule_name": "ingestion-paper-cadence",
+                "job_id": "paper-book-job-001",
+                "job_url": "https://ops.example/paper/book/job-001",
+                "owner": "team-ingestion",
+                "cadence_state": "healthy",
+                "cadence_policy": {"interval_seconds": 21600, "max_interval_seconds": 43200},
+                "previous_success_at": (NOW - timedelta(hours=2)).isoformat(),
+                "previous_execution_ref": "prev-paper-book",
+                "successful_runs_seen": 2,
+                "pass_ok": True,
+                "reasons": ["runner governance aligned with cadence policy"],
             },
             "excluded_feed_policy": {"book": "excluded"},
             "observability": {
@@ -885,6 +932,34 @@ def test_release_gates_fail_when_observability_verification_artifact_metadata_is
     block = next(block for block in report.blocks if block.name == "operational_observability")
     assert block.status == "fail"
     assert any("verification_artifact_path" in reason or "verification_source" in reason for reason in block.reasons)
+
+
+def test_release_gates_fail_when_final_observability_verification_is_manual(tmp_path: Path):
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path, operational_evidence_path = _write_release_artifacts(tmp_path)
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    payload = json.loads(operational_evidence_path.read_text(encoding="utf-8"))
+    payload["observability"]["verification_source"] = "manual_surface_check"
+    _write_json(operational_evidence_path, payload)
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("kline",),
+        rest_canary_path=rest_path,
+        ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+        operational_evidence_path=operational_evidence_path,
+    )
+
+    block = next(block for block in report.blocks if block.name == "operational_observability")
+    assert block.status == "fail"
+    assert any("non-manual" in reason for reason in block.reasons)
 
 
 def test_release_gates_fail_when_observability_surface_verification_is_incomplete(tmp_path: Path):
@@ -1147,6 +1222,20 @@ def test_release_gates_live_trade_passes_without_rest_canary(tmp_path: Path):
                 "channel": "pipeline",
                 "verification_scope": "external_operational_surfaces",
                 "derived_in_process": False,
+            },
+            "governance": {
+                "artifact_path": str(tmp_path / "governance-live-trade.json"),
+                "schedule_name": "ingestion-live-cadence",
+                "job_id": "live-trade-job-001",
+                "job_url": "https://ops.example/live/trade/job-001",
+                "owner": "team-ingestion-oncall",
+                "cadence_state": "healthy",
+                "cadence_policy": {"interval_seconds": 21600, "max_interval_seconds": 28800},
+                "previous_success_at": (NOW - timedelta(hours=2)).isoformat(),
+                "previous_execution_ref": "prev-live-trade",
+                "successful_runs_seen": 2,
+                "pass_ok": True,
+                "reasons": ["runner governance aligned with cadence policy"],
             },
             "excluded_feed_policy": {"book": "excluded"},
             "observability": {

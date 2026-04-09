@@ -49,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provenance-source", required=True)
     parser.add_argument("--execution-ref", required=True)
     parser.add_argument("--channel", choices=["manual", "scheduled", "pipeline"], required=True)
+    parser.add_argument("--schedule-name", required=True)
+    parser.add_argument("--job-id", required=True)
+    parser.add_argument("--job-url", required=True)
+    parser.add_argument("--owner", default=None)
     parser.add_argument("--runtime-owner", default=None)
     parser.add_argument("--runtime-surface-ref", default=None)
     parser.add_argument("--runtime-verification-ref", default=None)
@@ -86,6 +90,10 @@ def main() -> int:
         provenance_source=args.provenance_source,
         execution_ref=args.execution_ref,
         channel=args.channel,
+        schedule_name=args.schedule_name,
+        job_id=args.job_id,
+        job_url=args.job_url,
+        owner=args.owner,
         stream_types=args.stream_types,
         runtime_owner=args.runtime_owner,
         runtime_surface_ref=args.runtime_surface_ref,
@@ -106,6 +114,8 @@ def main() -> int:
     print(f"ingestion operational cycle: {report.overall_status} ({report.target})")
     print(f"- execution_ref: {report.execution_ref}")
     print(f"- channel: {report.channel}")
+    print(f"- cadence_state: {report.cadence_state}")
+    print(f"- governance_artifact_path: {report.governance_artifact_path}")
     print(f"- stream_types: {', '.join(report.stream_types)}")
     print(f"- output_dir: {report.output_dir}")
     for step in report.steps:

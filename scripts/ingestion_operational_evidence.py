@@ -30,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--execution-ref", default="manual-local")
     parser.add_argument("--channel", default="manual", choices=["manual", "scheduled", "pipeline"])
     parser.add_argument("--observability-verification-path", default=None)
+    parser.add_argument("--runner-governance-path", default=None)
     return parser
 
 
@@ -56,6 +57,7 @@ def main() -> int:
         execution_ref=str(args.execution_ref),
         channel=str(args.channel),
         observability_verification_path=Path(args.observability_verification_path) if args.observability_verification_path else None,
+        runner_governance_path=Path(args.runner_governance_path) if args.runner_governance_path else None,
     )
     output_path = Path(args.output)
     write_operational_evidence_report(output_path, report)

@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Callable, Literal, Sequence
 
 from app.marketdata.support_matrix import feed_support, normalize_feed_types
+from app.ops.operational_governance import (
+    append_operational_governance_history,
+    build_operational_governance_report,
+    write_operational_governance_report,
+)
 
 
 OperationalTarget = Literal["paper", "live"]
@@ -45,11 +50,18 @@ class OperationalCycleReport:
     interval: str
     stream_types: tuple[str, ...]
     output_dir: str
+    governance_artifact_path: str
+    history_path: str
     runner_id: str
     trigger: str
     provenance_source: str
     execution_ref: str
     channel: str
+    schedule_name: str
+    job_id: str
+    job_url: str
+    owner: str
+    cadence_state: str
     overall_status: Literal["PASS", "FAIL"]
     pass_ok: bool
     steps: tuple[OperationalCycleStepResult, ...]
@@ -76,6 +88,10 @@ def run_ingestion_operational_cycle(
     provenance_source: str,
     execution_ref: str,
     channel: OperationalChannel,
+    schedule_name: str,
+    job_id: str,
+    job_url: str,
+    owner: str | None = None,
     stream_types: tuple[str, ...] | list[str],
     runtime_env: str | None = None,
     runtime_base_dir: Path | None = None,
@@ -123,10 +139,28 @@ def run_ingestion_operational_cycle(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = Path(output_path) if output_path is not None else output_dir / f"ingestion_operational_cycle_{target}.json"
+    governance_path = output_dir / f"ingestion_operational_governance_{target}.json"
+    history_path = output_dir / f"ingestion_operational_history_{target}.jsonl"
     executor = executor or _default_executor
+    governance_report = build_operational_governance_report(
+        target=target,
+        output_dir=output_dir,
+        runner_id=runner_id,
+        trigger=trigger,
+        provenance_source=provenance_source,
+        execution_ref=execution_ref,
+        channel=channel,
+        schedule_name=schedule_name,
+        job_id=job_id,
+        job_url=job_url,
+        owner=owner,
+        history_path=history_path,
+        governance_artifact_path=governance_path,
+    )
+    write_operational_governance_report(governance_path, governance_report)
 
     steps: list[OperationalCycleStepResult] = []
-    overall_status: Literal["PASS", "FAIL"] = "PASS"
+    overall_status: Literal["PASS", "FAIL"] = "PASS" if governance_report.pass_ok else "FAIL"
     for stream_type in normalized_stream_types:
         profile = f"{target}_{stream_type}"
         report_path = output_dir / f"ingestion_readiness_{profile}.json"
@@ -159,6 +193,8 @@ def run_ingestion_operational_cycle(
             execution_ref,
             "--channel",
             channel,
+            "--runner-governance-path",
+            str(governance_path),
         ]
         if runtime_base_dir is not None:
             command.extend(["--runtime-base-dir", str(runtime_base_dir)])
@@ -210,16 +246,28 @@ def run_ingestion_operational_cycle(
         interval=interval,
         stream_types=normalized_stream_types,
         output_dir=str(output_dir),
+        governance_artifact_path=str(governance_path),
+        history_path=str(history_path),
         runner_id=runner_id,
         trigger=trigger,
         provenance_source=provenance_source,
         execution_ref=execution_ref,
         channel=channel,
+        schedule_name=schedule_name,
+        job_id=job_id,
+        job_url=job_url,
+        owner=governance_report.owner,
+        cadence_state=governance_report.cadence_state,
         overall_status=overall_status,
-        pass_ok=overall_status == "PASS" and all(step.pass_ok for step in steps),
+        pass_ok=overall_status == "PASS" and governance_report.pass_ok and all(step.pass_ok for step in steps),
         steps=tuple(steps),
     )
     write_operational_cycle_report(output_path, report)
+    append_operational_governance_history(
+        history_path,
+        report=governance_report,
+        overall_status=report.overall_status,
+    )
     return report
 
 

@@ -6,6 +6,7 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - La promotion ya no se apoya solo en tests del repo. Debe existir un artefacto agregado de evidence operativa fresco en `docs/validation/ingestion_operational_evidence_<target>.json` o en el path equivalente del profile ejecutado.
 - La observabilidad externa exigida por contrato se resume en cuatro superficies minimas por target: `ingestion.<target>.runtime`, `ingestion.<target>.alerts`, `ingestion.<target>.logs` e `ingestion.<target>.promotion`. Para `live` se exige ademas `ingestion.live.cutover`.
 - Un gate ya no debe aceptar evidence derivada inline dentro de `run_release_gates`. El artefacto agregado debe venir persistido desde `scripts/ingestion_operational_evidence.py`, con `provenance.source`, `provenance.runner_id`, `provenance.trigger`, `provenance.generated_by` y `provenance.derived_in_process = false`.
+- El cierre operativo final exige ademas governance persistida del runner en `docs/validation/ingestion_operational_governance_<target>.json`, con `schedule_name`, `job_id`, `job_url`, `owner` y `cadence_state`.
 
 ## Cierre operativo estandar
 - El flujo operativo recomendado ya no es lanzar piezas sueltas una a una, sino ejecutar el orquestador:
@@ -26,6 +27,8 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
   - `docs/operations/ingestion_operational_closure_paper.md`
   - `docs/operations/ingestion_operational_closure_live.md`
 - `book` no es un feed valido para este flujo y cualquier intento debe tratarse como `NO-GO`.
+- El cycle deja tambien un historial JSONL por target en `docs/validation/ingestion_operational_history_<target>.jsonl`.
+- Si `channel=manual` o `cadence_state` sale distinto de `bootstrap`/`healthy`, el cierre operativo final es `NO-GO`.
 
 ## Comandos base
 - Shell del contenedor:
@@ -63,6 +66,8 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `docs/validation/ingestion_operational_evidence_live.json`
 - `docs/validation/ingestion_release_gates.json`
 - `docs/validation/ingestion_live_drill_report.json`
+- `docs/validation/ingestion_operational_governance_paper.json`
+- `docs/validation/ingestion_operational_governance_live.json`
 - `docs/validation/quarantine_replay_report.json`
 - `<data_dir>/shadow/env=<env>/comparisons.jsonl`
 - `<data_dir>/normalized/.../data.parquet`
@@ -110,6 +115,9 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
    - `evidence_origin` coherente con el target
    - `provenance.source`, `provenance.runner_id`, `provenance.trigger` y `provenance.generated_by` presentes
    - `provenance.derived_in_process = false`
+   - `governance.pass_ok = true`
+   - `governance.schedule_name`, `governance.job_id`, `governance.job_url` y `governance.owner` presentes
+   - `governance.cadence_state = bootstrap` o `healthy`
    - `excluded_feed_policy.book = "excluded"`
    - `observability.pass_ok = true`
    - cada surface en `observability.external_surfaces` lleva `owner`, `surface_ref`, `verification_mode`, `verified_at`, `verification_ref` y `pass_ok = true`
@@ -249,3 +257,4 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - `book` queda fuera de `paper` y `live`.
 - Los artifacts operativos se consideran stale tras 24 horas para `rest/ws canary`, `vendor_contracts`, `soak`, `failure_injection` y `live_drill`; `replay` parity y `storage_benchmark` admiten 7 dias como maximo.
 - Un gate paper/live ya no debe aceptarse si solo puede derivar la evidence en proceso o si faltan `owner`, `surface_ref`, `verification_mode`, `verified_at` o `verification_ref` en las superficies declaradas del contrato de observabilidad.
+- Un gate final ya no debe aceptarse si `verification_source = manual_surface_check` o si la governance del runner no demuestra cadence valida.
