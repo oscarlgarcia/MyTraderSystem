@@ -156,7 +156,7 @@ def run_release_gates(
         _canary_block(
             name="replay_parity",
             path=Path(replay_parity_path or "docs/validation/ingestion_replay_parity.json"),
-            required=True,
+            required=_requires_replay_artifacts(normalized_stream_types, target=target),
             expected_keys=("pass_ok", "order_match", "manifest_ok", "generated_at", "normalized_path", "symbol", "stream_type"),
             bool_paths=(("pass_ok",), ("order_match",), ("manifest_ok",)),
             extra_checks=lambda payload: _validate_replay_parity_payload(payload, stream_types=normalized_stream_types),
@@ -763,6 +763,15 @@ def _requires_runtime_artifacts(stream_types: tuple[str, ...], *, target: Releas
         return True
     return any(
         feed_support(stream_type).paper_validation_basis == "runtime_validated"
+        for stream_type in stream_types
+    )
+
+
+def _requires_replay_artifacts(stream_types: tuple[str, ...], *, target: ReleaseTarget) -> bool:
+    if target != "paper":
+        return False
+    return any(
+        feed_support(stream_type).paper_validation_basis == "replay_validated"
         for stream_type in stream_types
     )
 

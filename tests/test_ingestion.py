@@ -32,7 +32,7 @@ def test_negative_price_rejected():
 
 def test_build_ws_url_formats_streams():
     url = build_ws_url("wss://stream.binance.com:9443", ["BTCUSDT"])
-    assert "btcusdt@trade" in url and "btcusdt@kline_1m" in url
+    assert "btcusdt@aggTrade" in url and "btcusdt@kline_1m" in url
 
 
 def test_parse_message_dispatches_kline():
@@ -56,7 +56,7 @@ def json_dumps(obj):
 
 def test_parse_message_trade():
     msg = {
-        "stream": "btcusdt@trade",
+        "stream": "btcusdt@aggTrade",
         "data": {"s": "BTCUSDT", "E": 1710000000000, "p": "100", "q": "1"},
     }
     ev = parse_message(json_dumps(msg))
@@ -68,8 +68,8 @@ def test_parse_typed_trade_message_captures_exchange_receive_and_process_timesta
     receive_ts = datetime(2024, 1, 1, 0, 0, 2, tzinfo=timezone.utc)
     process_ts = datetime(2024, 1, 1, 0, 0, 3, tzinfo=timezone.utc)
     msg = {
-        "stream": "btcusdt@trade",
-        "data": {"s": "BTCUSDT", "E": 1704067200000, "p": "100", "q": "1", "t": 42},
+        "stream": "btcusdt@aggTrade",
+        "data": {"e": "aggTrade", "s": "BTCUSDT", "E": 1704067200000, "p": "100", "q": "1", "a": 42, "f": 40, "l": 42},
     }
 
     ev = parse_typed_message(json_dumps(msg), receive_ts=receive_ts, process_ts=process_ts)
@@ -126,8 +126,8 @@ def test_normalize_kline_negative_price():
 
 def test_build_ws_url_dedupes_and_orders():
     url = build_ws_url("wss://example/stream", ["ETHUSDT", "ethusdt", "BTCUSDT"])
-    assert url.count("ethusdt@trade") == 1
-    assert url.index("ethusdt@trade") < url.index("btcusdt@trade")
+    assert url.count("ethusdt@aggTrade") == 1
+    assert url.index("ethusdt@aggTrade") < url.index("btcusdt@aggTrade")
 
 
 def test_register_normalizer_used_by_parse_message():
@@ -173,7 +173,7 @@ def test_register_stream_builder_generates_custom_stream_and_parse_message():
 
 def test_default_streams_unchanged_without_custom_types():
     streams = build_streams(["BTCUSDT"])
-    assert streams == ["btcusdt@trade", "btcusdt@kline_1m"]
+    assert streams == ["btcusdt@aggTrade", "btcusdt@kline_1m"]
 
 
 def test_normalize_trade_typed_sets_process_ts_when_not_provided():

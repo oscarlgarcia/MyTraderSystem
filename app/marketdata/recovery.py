@@ -129,6 +129,14 @@ def _bar_open_ts(event: IngestionEvent) -> datetime | None:
 
 
 def _trade_cursor_value(event: IngestionEvent) -> int | None:
+    metadata = getattr(event, "metadata", {})
+    if isinstance(metadata, dict):
+        raw_aggregate_trade_id = metadata.get("aggregate_trade_id")
+        if raw_aggregate_trade_id not in (None, ""):
+            try:
+                return int(str(raw_aggregate_trade_id))
+            except (TypeError, ValueError):
+                pass
     if isinstance(event, TradeEvent):
         for candidate in (event.trade_id, event.source_id):
             if candidate in (None, ""):
@@ -138,9 +146,8 @@ def _trade_cursor_value(event: IngestionEvent) -> int | None:
             except (TypeError, ValueError):
                 continue
         return None
-    metadata = getattr(event, "metadata", {})
     if isinstance(metadata, dict):
-        for key in ("trade_id", "source_id", "aggregate_trade_id"):
+        for key in ("trade_id", "source_id"):
             raw = metadata.get(key)
             if raw in (None, ""):
                 continue
@@ -149,6 +156,13 @@ def _trade_cursor_value(event: IngestionEvent) -> int | None:
             except (TypeError, ValueError):
                 continue
     return None
+
+
+def _trade_cursor_kind(event: IngestionEvent) -> str:
+    metadata = getattr(event, "metadata", {})
+    if isinstance(metadata, dict) and metadata.get("aggregate_trade_id") not in (None, ""):
+        return "aggregate_trade_id"
+    return "trade_id"
 
 
 def _expected_window_timestamps(request: RecoveryRequest) -> tuple[datetime, ...]:
@@ -178,20 +192,22 @@ def build_recovery_request(
     if str(stream_type) == "trade":
         current_cursor = _trade_cursor_value(event)
         previous_cursor = None
-        if previous_cursor_kind in {"trade_id", "sequence_id", "source_id"} and previous_cursor_value not in (None, ""):
+        if previous_cursor_kind in {"aggregate_trade_id", "trade_id", "sequence_id", "source_id"} and previous_cursor_value not in (None, ""):
             try:
                 previous_cursor = int(str(previous_cursor_value))
             except (TypeError, ValueError):
                 previous_cursor = None
         if current_cursor is None or previous_cursor is None or current_cursor <= previous_cursor:
             return None
-        requested_rows = max(1, current_cursor - previous_cursor)
+        requested_rows = max(0, current_cursor - previous_cursor - 1)
+        if requested_rows <= 0:
+            return None
         return RecoveryRequest(
             partition=partition,
             start_ts=previous_ts,
             end_ts=event.event_ts,
             limit=requested_rows,
-            cursor_kind="trade_id",
+            cursor_kind=_trade_cursor_kind(event),
             cursor_value=str(previous_cursor + 1),
             gap_seconds=gap_observation.gap_seconds,
             missing_count=gap_observation.missing_count,
@@ -325,7 +341,7 @@ def verify_recovery_window(
     if request is None:
         return RecoveryVerification(exact=True, expected_rows=0, received_rows=len(events))
     if partition.stream_type == "trade":
-        if request.cursor_kind not in {"trade_id", "sequence_id"} or request.cursor_value in (None, ""):
+        if request.cursor_kind not in {"aggregate_trade_id", "trade_id", "sequence_id"} or request.cursor_value in (None, ""):
             expected_rows = int(request.limit or 0)
             return RecoveryVerification(
                 exact=len(events) >= expected_rows if expected_rows else True,

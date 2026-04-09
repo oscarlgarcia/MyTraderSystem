@@ -104,6 +104,16 @@ def test_detect_marketdata_anomalies_emits_trade_fail_for_extreme_price_jump():
     assert anomaly.threshold == 0.60
 
 
+def test_detect_marketdata_anomalies_skips_trade_volume_spike_detection_for_single_trade_sizes():
+    anomalies = detect_marketdata_anomalies(
+        event=_trade(price=101.0, size=100.0),
+        previous_price=100.0,
+        previous_volume=1.0,
+    )
+
+    assert anomalies == ()
+
+
 def test_detect_marketdata_anomalies_emits_kline_volume_spike_warn():
     anomalies = detect_marketdata_anomalies(
         event=_bar(close=101.0, volume=6.0),

@@ -172,6 +172,11 @@ def detect_marketdata_anomalies(
             if price_jump_warn is not None:
                 anomalies.append(price_jump_warn)
 
+    # Single-trade sizes are too noisy for adjacent-event spike detection.
+    # Keep volume spike checks for aggregated feeds where the semantics are stable.
+    if feed_type == "trade":
+        return tuple(anomalies)
+
     volume_spike_fail = detect_volume_spike(
         previous_volume=previous_volume,
         current_volume=current_volume,

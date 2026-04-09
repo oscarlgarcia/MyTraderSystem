@@ -109,6 +109,8 @@ BINANCE_SCHEMA_SPECS: dict[str, _SchemaSpec] = {
             "a": "int",
             "b": "int",
             "e": "str",
+            "f": "int",
+            "l": "int",
             "m": "bool",
             "M": "bool",
             "t": "int",
@@ -150,7 +152,11 @@ def assert_binance_payload_schema(event_type: str, payload: dict[str, Any]) -> N
     spec = BINANCE_SCHEMA_SPECS.get(event_type)
     if spec is None:
         return
-    actual_shape = _flatten_payload_shape(payload)
+    actual_shape = {
+        path: kind
+        for path, kind in _flatten_payload_shape(payload).items()
+        if not str(path).split(".", 1)[0].startswith("_")
+    }
     allowed_paths = spec.allowed_paths
     missing_required_paths = sorted(
         path for path in spec.required_paths if path not in actual_shape
@@ -204,7 +210,7 @@ class BinanceTradeNormalizer:
 
     @staticmethod
     def build_stream(symbol: str) -> str:
-        return f"{normalize_symbol(symbol).lower()}@trade"
+        return f"{normalize_symbol(symbol).lower()}@aggTrade"
 
     @staticmethod
     def normalize_typed(
@@ -216,6 +222,9 @@ class BinanceTradeNormalizer:
     ) -> TradeEvent:
         validate_trade_payload(payload)
         metadata = _instrument_metadata(str(payload["s"]), venue)
+        canonical_trade_id = payload.get("a")
+        if canonical_trade_id is None:
+            canonical_trade_id = payload.get("t")
         if payload.get("_backfill_endpoint") is not None:
             metadata["historical_trade_endpoint"] = str(payload["_backfill_endpoint"])
         if payload.get("_historical_trade_kind") is not None:
@@ -226,17 +235,19 @@ class BinanceTradeNormalizer:
             metadata["aggregate_trade_first_id"] = str(payload["f"])
         if payload.get("l") is not None:
             metadata["aggregate_trade_last_id"] = str(payload["l"])
+        if payload.get("t") is not None:
+            metadata["raw_trade_id"] = str(payload["t"])
         event = TradeEvent(
             symbol=normalize_symbol(str(payload["s"])),
             exchange_ts=_ts_from_ms(int(payload["E"])),
             receive_ts=receive_ts,
             process_ts=_process_ts(process_ts),
             venue=venue,
-            source_id=str(payload.get("t")) if payload.get("t") is not None else None,
+            source_id=str(canonical_trade_id) if canonical_trade_id is not None else None,
             metadata=stamp_normalizer_version(metadata),
             price=float(payload["p"]),
             size=float(payload["q"]),
-            trade_id=str(payload.get("t")) if payload.get("t") is not None else None,
+            trade_id=str(canonical_trade_id) if canonical_trade_id is not None else None,
             side="sell" if payload.get("m") else "buy" if payload.get("m") is not None else None,
         )
         validate_ingestion_event(event)

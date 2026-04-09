@@ -29,13 +29,15 @@ def _cfg():
 
 def test_binance_trade_normalizer_returns_trade_event():
     event = BinanceTradeNormalizer.normalize_typed(
-        {"s": "BTCUSDT", "E": 1704067200000, "p": "100", "q": "1", "t": 7},
+        {"s": "BTCUSDT", "E": 1704067200000, "p": "100", "q": "1", "a": 7, "f": 7, "l": 7},
         receive_ts=datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
         process_ts=datetime(2024, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
     )
 
     assert isinstance(event, TradeEvent)
     assert event.trade_id == "7"
+    assert event.source_id == "7"
+    assert event.metadata["aggregate_trade_id"] == "7"
     assert "instrument_catalog_version" in event.metadata
     assert "instrument_snapshot" in event.metadata
     assert event.metadata["metadata_source"] in {"venue_snapshot", "venue_runtime_snapshot"}
@@ -103,6 +105,21 @@ def test_trade_schema_drift_raises_typed_error_for_unexpected_shape():
         )
 
 
+def test_trade_schema_allows_internal_snapshot_metadata_fields():
+    assert_binance_payload_schema(
+        "trade",
+        {
+            "s": "BTCUSDT",
+            "E": 1704067200000,
+            "p": "100",
+            "q": "1",
+            "a": 9,
+            "_backfill_endpoint": "aggTrades",
+            "_historical_trade_kind": "aggregate_trade",
+        },
+    )
+
+
 def test_kline_schema_drift_raises_typed_error_for_unexpected_nested_field():
     with pytest.raises(SchemaDriftError, match="schema drift detected"):
         assert_binance_payload_schema(
@@ -136,7 +153,7 @@ def test_normalize_binance_event_dispatches_by_feed():
 
 
 def test_build_binance_stream_uses_feed_specific_builder():
-    assert build_binance_stream("trade", "BTCUSDT") == "btcusdt@trade"
+    assert build_binance_stream("trade", "BTCUSDT") == "btcusdt@aggTrade"
     assert build_binance_stream("kline", "BTCUSDT") == "btcusdt@kline_1m"
 
 

@@ -158,18 +158,21 @@ def temporal_partition_key(event: IngestionEvent) -> TemporalPartitionKey:
 
 def cursor_from_event(event: IngestionEvent) -> tuple[str | None, str | None]:
     if isinstance(event, BaseMarketEvent):
+        metadata = event.metadata
+        aggregate_trade_id = metadata.get("aggregate_trade_id")
+        if aggregate_trade_id not in (None, ""):
+            return "aggregate_trade_id", str(aggregate_trade_id)
         if getattr(event, "trade_id", None):
             return "trade_id", str(getattr(event, "trade_id"))
         if getattr(event, "sequence_id", None):
             return "sequence_id", str(getattr(event, "sequence_id"))
         if event.source_id:
             return "source_id", str(event.source_id)
-        metadata = event.metadata
     elif isinstance(event, MarketEvent):
         metadata = event.metadata
     else:
         metadata = {}
-    for key in ("trade_id", "sequence_id", "source_id"):
+    for key in ("aggregate_trade_id", "trade_id", "sequence_id", "source_id"):
         value = metadata.get(key)
         if value not in (None, ""):
             return key, str(value)

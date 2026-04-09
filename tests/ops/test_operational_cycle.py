@@ -137,6 +137,13 @@ def test_operational_cycle_runs_live_with_runtime_overrides(tmp_path: Path):
     assert "--runtime-owner" in commands[0]
     assert "team-ingestion" in commands[0]
     assert "--runner-governance-path" in commands[0]
+    assert "--ws-max-events" in commands[0] and "12" in commands[0]
+    assert "--ws-duration-seconds" in commands[0] and "120.0" in commands[0]
+    assert "--ws-reconnect-after-events" in commands[0] and "4" in commands[0]
+    assert "--soak-iterations" in commands[0] and "3" in commands[0]
+    assert "--soak-events-per-iteration" in commands[0] and "200" in commands[0]
+    assert "--soak-duration-seconds" in commands[0] and "180.0" in commands[0]
+    assert "--soak-reconnect-after-events" in commands[0] and "100" in commands[0]
 
 
 def test_operational_cycle_passes_surface_manifest_and_runtime_tunables(tmp_path: Path):

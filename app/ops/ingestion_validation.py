@@ -31,7 +31,7 @@ from app.ingestion.shadow import (
     persist_shadow_comparison,
 )
 from app.ingestion.sinks import MirroredEventSink, ParquetEventSink
-from app.ingestion.sources import BinanceSource, Source, heartbeat_policy_for_streams, StaticSource, _ws_stream
+from app.ingestion.sources import BinanceSource, Source, heartbeat_policy_for_streams, StaticSource, _default_ws_connect
 from app.ingestion.storage import ParquetWriter, normalized_partition_path, read_parquet
 from app.ingestion.storage_health import collect_storage_health
 from app.marketdata.instruments import ensure_default_instruments, get_default_instrument_catalog
@@ -903,13 +903,45 @@ def _build_ws_live_canary_source(
     heartbeat = heartbeat_policy_for_streams((stream_type,))
 
     def controlled_ws_stream(url: str, end_time: float | None = None):
+        ws = _default_ws_connect(url)
+        last_activity = time.monotonic()
+        last_ping = last_activity
         session_events = 0
-        for raw in _ws_stream(url, end_time=end_time, heartbeat=heartbeat):
-            yield raw
-            session_events += 1
-            if reconnect_state["remaining"] > 0 and session_events >= max(1, reconnect_after_events):
-                reconnect_state["remaining"] -= 1
-                raise ConnectionAbortedError("ws canary induced reconnect")
+        try:
+            while True:
+                if end_time and time.time() >= end_time:
+                    break
+                try:
+                    raw = ws.recv(timeout=heartbeat.recv_timeout_seconds)
+                except TimeoutError:
+                    now = time.monotonic()
+                    idle_seconds = now - last_activity
+                    if idle_seconds >= heartbeat.ping_interval_seconds and now - last_ping >= heartbeat.ping_interval_seconds:
+                        pong = ws.ping()
+                        if not pong.wait(timeout=heartbeat.ping_timeout_seconds):
+                            raise TimeoutError(
+                                f"websocket heartbeat timeout after {idle_seconds:.1f}s idle"
+                            )
+                        last_activity = time.monotonic()
+                        last_ping = last_activity
+                        continue
+                    if idle_seconds >= heartbeat.inactivity_timeout_seconds:
+                        raise TimeoutError(
+                            f"websocket inactivity watchdog exceeded {heartbeat.inactivity_timeout_seconds:.1f}s"
+                        )
+                    continue
+                last_activity = time.monotonic()
+                yield raw
+                session_events += 1
+                if reconnect_state["remaining"] > 0 and session_events >= max(1, reconnect_after_events):
+                    reconnect_state["remaining"] -= 1
+                    ws.close_socket()
+                    raise ConnectionAbortedError("ws canary induced reconnect")
+        finally:
+            try:
+                ws.close_socket()
+            except Exception:
+                pass
 
     return BinanceSource(
         cfg=cfg,

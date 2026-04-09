@@ -94,6 +94,17 @@ STREAM_BUILDERS: Dict[str, Callable[[str], str]] = {
 DEFAULT_STREAM_TYPES: Tuple[str, ...] = ("trade", "kline")
 
 
+def canonical_event_type(event_type: str | None, *, stream: str = "") -> str:
+    event_type_text = str(event_type or "").strip()
+    lowered = event_type_text.lower()
+    stream_lower = str(stream).lower()
+    if lowered == "aggtrade" or "@aggtrade" in stream_lower:
+        return "trade"
+    if event_type_text:
+        return event_type_text
+    return "kline" if "kline" in stream_lower else "trade"
+
+
 def register_normalizer(event_type: str, fn: Callable[[dict], IngestionEvent]) -> None:
     NORMALIZERS[event_type] = fn
 
@@ -139,9 +150,7 @@ def parse_message_parts(msg: str) -> tuple[dict, dict, str, str]:
     payload = json.loads(msg)
     data = payload.get("data", payload)
     stream = payload.get("stream", "")
-    event_type = data.get("e")
-    if not event_type:
-        event_type = "kline" if "kline" in stream else "trade"
+    event_type = canonical_event_type(data.get("e"), stream=stream)
     return payload, data, stream, event_type
 
 

@@ -6,6 +6,10 @@ Ejecutar el caso estandar de cierre operativo de ingestion para `live` sobre el 
 ## Scope soportado
 - feeds soportados: `trade`, `kline`
 - feed excluido: `book`
+- `trade live` usa dominio canónico `aggregate trade` extremo a extremo:
+  - websocket: `@aggTrade`
+  - cursor: `aggregate_trade_id`
+  - recovery REST: `/api/v3/aggTrades`
 - canal valido para promotion final: `scheduled` o `pipeline`
 - `manual` solo sirve para simulacion o diagnostico y debe terminar en `NO-GO`
 
@@ -55,19 +59,24 @@ poetry run python scripts/ingestion_operational_cycle.py `
   --trigger scheduled_live_cycle `
   --provenance-source ingestion_operational_cycle `
   --runner-context-path ops/runner-context/live-dev.json `
-  --surface-manifest ops/observability/live-dev-surfaces.json `
-  --ws-max-events 2 `
-  --ws-duration-seconds 60 `
-  --ws-reconnect-after-events 1 `
-  --ws-induced-reconnects 1 `
-  --benchmark-min-rows-per-second 1 `
-  --soak-mode ws-live `
-  --soak-iterations 1 `
-  --soak-events-per-iteration 40 `
-  --soak-duration-seconds 60 `
-  --soak-reconnect-after-events 1 `
-  --soak-induced-reconnects 1
+  --surface-manifest ops/observability/live-dev-surfaces.json
 ```
+
+## Defaults canónicos de cierre live
+- `trade ws canary`
+  - `max_events = 12`
+  - `duration_seconds = 120`
+  - `reconnect_after_events = 4`
+  - `induced_reconnects = 1`
+- `trade soak`
+  - `mode = ws-live`
+  - `iterations = 3`
+  - `events_per_iteration = 200`
+  - `duration_seconds = 180`
+  - `reconnect_after_events = 100`
+  - `induced_reconnects = 1`
+- `kline`
+  - usa el perfil canónico del ciclo operativo sin overrides manuales
 
 ## Ejemplo minimo de runner context
 
@@ -218,6 +227,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
   - `canary_rest.required = false`
   - `canary_ws.required = true`
   - `paper_soak.status = pass`
+  - el artifact WS confirma continuidad en `aggregate trade`
 - `kline`:
   - `canary_rest.status = pass`
   - `canary_ws.status = pass`
@@ -229,6 +239,25 @@ poetry run python scripts/ingestion_operational_cycle.py `
 - `rollback_ready = true`
 - `overall_status = PASS`
 
+7. Artefactos runtime de `trade`
+- `ingestion_ws_canary_report_live_trade.json`
+  - `stream_type = "trade"`
+  - `continuity.cursor_kind = "aggregate_trade_id"` o metadata equivalente por stream
+  - `continuity.gap_irreparable = 0`
+  - `continuity.streams_degraded = []`
+- `ingestion_soak_evidence_live_trade.json`
+  - `pass_ok = true`
+  - `max_gap_irreparable = 0`
+  - `max_streams_degraded = 0`
+- `ingestion_readiness_live_trade.json`
+  - `overall_status = PASS`
+  - el drill final aparece en verde
+- stream metrics de `trade`
+  - `aggregate_trade_id` visible en el flujo real
+  - `recovery_window_rows_received > 0` cuando hubo recovery reparable
+  - `gap_irreparable_total = 0`
+  - `streams_degraded = []`
+
 ## Criterio de decision
 - `GO`
   - ambos perfiles live en `PASS`
@@ -236,6 +265,7 @@ poetry run python scripts/ingestion_operational_cycle.py `
   - observabilidad externa verificada
   - live drill verde
   - provenance operacional valida
+  - 3 ciclos consecutivos verdes en `dev proving`
 - `GO CONDICIONAL`
   - no aplica como cierre operativo final
 - `NO-GO`

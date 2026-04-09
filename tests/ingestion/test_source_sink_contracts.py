@@ -87,7 +87,7 @@ def test_binance_source_preserves_current_behavior():
     out = list(source.stream(end_time=123.0))
 
     assert out == [event]
-    assert "btcusdt@trade" in seen["url"]
+    assert "btcusdt@aggTrade" in seen["url"]
     assert "btcusdt@kline_1m" in seen["url"]
     assert seen["end_time"] == 123.0
 
@@ -97,7 +97,7 @@ def test_binance_source_captures_receive_and_process_timestamps_on_raw_stream():
 
     def fake_ws_stream(url: str, end_time=None):
         del url, end_time
-        yield '{"stream":"btcusdt@trade","data":{"s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","t":7}}'
+        yield '{"stream":"btcusdt@aggTrade","data":{"e":"aggTrade","s":"BTCUSDT","E":1704067200000,"p":"100","q":"1","a":7,"f":7,"l":7,"m":false}}'
 
     source = BinanceSource(cfg, ws_stream=fake_ws_stream)
     out = list(source.stream(end_time=123.0))

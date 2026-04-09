@@ -71,6 +71,51 @@ def test_live_cutover_drill_writes_evidence_and_completed_checklist(tmp_path: Pa
     assert "Live cutover drill: PASS" in render_live_cutover_summary(report)
 
 
+def test_live_cutover_drill_allows_missing_rest_canary_for_live_trade(tmp_path: Path):
+    release_gate_path = tmp_path / "release-gates.json"
+    ws_canary_path = tmp_path / "ws.json"
+    benchmark_path = tmp_path / "benchmark.json"
+    failure_injection_path = tmp_path / "failure-injection.json"
+    rollback_path = tmp_path / "rollback.md"
+    live_cutover_doc_path = tmp_path / "live_cutover.md"
+    promotion_runbook_path = tmp_path / "promotion_runbook.md"
+
+    now = datetime.now(timezone.utc).isoformat()
+    _write_json(release_gate_path, {"generated_at": now, "target": "live", "overall_status": "PASS", "pass_ok": True})
+    _write_json(
+        ws_canary_path,
+        {
+            "report_generated_at": now,
+            "pass_ok": True,
+            "comparison_reason": "continuity_ok",
+            "stream_type": "trade",
+        },
+    )
+    _write_json(benchmark_path, {"generated_at": now, "pass_ok": True, "slo": {"min_rows_per_second": 1.0}})
+    _write_json(failure_injection_path, {"generated_at": now, "pass_ok": True, "critical_test_ids": ["a", "b", "c"]})
+    rollback_path.write_text("# rollback\n", encoding="utf-8")
+    live_cutover_doc_path.write_text("# cutover\n", encoding="utf-8")
+    promotion_runbook_path.write_text("# promotion\n", encoding="utf-8")
+
+    report = run_live_cutover_drill(
+        base_dir=tmp_path,
+        env="dev",
+        release_gate_path=release_gate_path,
+        rest_canary_path=tmp_path / "missing-rest.json",
+        ws_canary_path=ws_canary_path,
+        benchmark_path=benchmark_path,
+        failure_injection_path=failure_injection_path,
+        rollback_checklist_path=rollback_path,
+        live_cutover_doc_path=live_cutover_doc_path,
+        promotion_runbook_path=promotion_runbook_path,
+    )
+
+    assert report.overall_status == "PASS"
+    items = {item.name: item for item in report.checklist}
+    assert items["canary_rest"].required is False
+    assert items["canary_ws"].required is True
+
+
 def test_live_cutover_drill_fails_when_required_artifact_is_red(tmp_path: Path):
     release_gate_path = tmp_path / "release-gates.json"
     rest_canary_path = tmp_path / "rest.json"

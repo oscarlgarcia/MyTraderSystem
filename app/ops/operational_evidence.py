@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
-from app.marketdata.support_matrix import excluded_feed_types, normalize_feed_types
+from app.marketdata.support_matrix import excluded_feed_types, feed_support, normalize_feed_types
 from app.ops.observability_contract import build_observability_contract_report
 
 
@@ -387,8 +387,11 @@ def _required_artifact_specs(
 ) -> tuple[tuple[str, Path, bool, timedelta], ...]:
     runtime_required = target == "live" or "kline" in stream_types
     rest_required = "kline" in stream_types
+    replay_required = target == "paper" and any(
+        feed_support(stream_type).paper_validation_basis == "replay_validated" for stream_type in stream_types
+    )
     specs: list[tuple[str, Path, bool, timedelta]] = [
-        ("replay_parity", Path(replay_parity_path or "docs/validation/ingestion_replay_parity.json"), True, timedelta(days=7)),
+        ("replay_parity", Path(replay_parity_path or "docs/validation/ingestion_replay_parity.json"), replay_required, timedelta(days=7)),
         ("storage_benchmark", Path(benchmark_path or "docs/validation/ingestion_storage_benchmark.json"), True, timedelta(days=7)),
         ("vendor_contracts", Path(network_contracts_path or "docs/validation/ingestion_vendor_contracts.json"), True, timedelta(hours=24)),
         ("rest_canary", Path(rest_canary_path or "docs/validation/ingestion_canary_report.json"), rest_required, timedelta(hours=24)),

@@ -120,10 +120,9 @@ def test_readiness_orchestrator_runs_paper_kline_runtime_steps(tmp_path: Path):
     assert report.profile == "paper_kline"
     assert report.evidence_basis == "runtime_validated"
     assert [step.name for step in report.steps] == [
-        "replay_parity",
+        "storage_benchmark",
         "rest_canary",
         "ws_canary",
-        "storage_benchmark",
         "vendor_contracts",
         "observability_verification",
         "soak",
@@ -131,7 +130,7 @@ def test_readiness_orchestrator_runs_paper_kline_runtime_steps(tmp_path: Path):
         "release_gates_final",
     ]
     assert "--target-profile" in commands[2] and "paper" in commands[2]
-    assert "--target-profile" in commands[6] and "paper" in commands[6]
+    assert "--target-profile" in commands[5] and "paper" in commands[5]
 
 
 def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path):
@@ -160,10 +159,9 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
     assert report.profile == "live_kline"
     assert report.evidence_basis == "runtime_validated"
     assert [step.name for step in report.steps] == [
-        "replay_parity",
+        "storage_benchmark",
         "rest_canary",
         "ws_canary",
-        "storage_benchmark",
         "vendor_contracts",
         "observability_verification",
         "soak",
@@ -174,13 +172,13 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
         "operational_evidence_final",
         "release_gates_final",
     ]
-    observability = commands[5]
-    failure_injection = commands[7]
-    predrill_evidence = commands[8]
-    predrill = commands[9]
-    drill = commands[10]
-    final_evidence = commands[11]
-    final_gate = commands[12]
+    observability = commands[4]
+    failure_injection = commands[6]
+    predrill_evidence = commands[7]
+    predrill = commands[8]
+    drill = commands[9]
+    final_evidence = commands[10]
+    final_gate = commands[11]
     assert "--output" in observability
     assert str(tmp_path / "docs" / "validation" / "ingestion_observability_verification_live_kline.json") in observability
     assert "--verification-source" in observability and "pipeline_surface_check" in observability
@@ -192,8 +190,8 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
     assert "--observability-verification-path" in predrill_evidence
     assert "--runner-governance-path" in predrill_evidence
     assert "--phase" in predrill and "predrill" in predrill
-    assert "--target-profile" in commands[3] and "live" in commands[3]
-    assert "--target-profile" in commands[6] and "live" in commands[6]
+    assert "--target-profile" in commands[2] and "live" in commands[2]
+    assert "--target-profile" in commands[5] and "live" in commands[5]
     assert "--release-gates-path" in drill
     assert str(tmp_path / "docs" / "validation" / "ingestion_release_gates_pre_drill_live_kline.json") in drill
     assert "--phase" in final_evidence and "final" in final_evidence
@@ -232,9 +230,8 @@ def test_readiness_orchestrator_runs_live_trade_without_rest_canary(tmp_path: Pa
     assert report.live_scope == ("trade", "kline")
     assert report.paper_replay_validated_scope == ("trade",)
     assert [step.name for step in report.steps] == [
-        "replay_parity",
-        "ws_canary",
         "storage_benchmark",
+        "ws_canary",
         "vendor_contracts",
         "observability_verification",
         "soak",
@@ -245,6 +242,18 @@ def test_readiness_orchestrator_runs_live_trade_without_rest_canary(tmp_path: Pa
         "operational_evidence_final",
         "release_gates_final",
     ]
+    ws_canary_command = commands[1]
+    soak_command = commands[4]
+    assert "--max-events" in ws_canary_command and "12" in ws_canary_command
+    assert "--duration-seconds" in ws_canary_command and "120.0" in ws_canary_command
+    assert "--reconnect-after-events" in ws_canary_command and "4" in ws_canary_command
+    assert "--induced-reconnects" in ws_canary_command and "1" in ws_canary_command
+    assert "--mode" in soak_command and "ws-live" in soak_command
+    assert "--iterations" in soak_command and "3" in soak_command
+    assert "--events-per-iteration" in soak_command and "200" in soak_command
+    assert "--duration-seconds" in soak_command and "180.0" in soak_command
+    assert "--reconnect-after-events" in soak_command and "100" in soak_command
+    assert "--induced-reconnects" in soak_command and "1" in soak_command
 
 
 def test_readiness_orchestrator_fails_clearly_when_prereq_paths_are_missing(tmp_path: Path):

@@ -14,6 +14,7 @@ from app.ops.operational_governance import (
     build_operational_governance_report,
     write_operational_governance_report,
 )
+from app.ops.readiness_orchestrator import resolve_runtime_validation_tunables
 
 
 OperationalTarget = Literal["paper", "live"]
@@ -180,6 +181,31 @@ def run_ingestion_operational_cycle(
     steps: list[OperationalCycleStepResult] = []
     overall_status: Literal["PASS", "FAIL"] = "PASS" if governance_report.pass_ok else "FAIL"
     for stream_type in normalized_stream_types:
+        (
+            effective_ws_max_events,
+            effective_ws_duration_seconds,
+            effective_ws_reconnect_after_events,
+            effective_ws_induced_reconnects,
+            effective_soak_mode,
+            effective_soak_iterations,
+            effective_soak_events_per_iteration,
+            effective_soak_duration_seconds,
+            effective_soak_reconnect_after_events,
+            effective_soak_induced_reconnects,
+        ) = resolve_runtime_validation_tunables(
+            target=target,
+            stream_type=stream_type,
+            ws_max_events=ws_max_events,
+            ws_duration_seconds=ws_duration_seconds,
+            ws_reconnect_after_events=ws_reconnect_after_events,
+            ws_induced_reconnects=ws_induced_reconnects,
+            soak_mode=soak_mode,
+            soak_iterations=soak_iterations,
+            soak_events_per_iteration=soak_events_per_iteration,
+            soak_duration_seconds=soak_duration_seconds,
+            soak_reconnect_after_events=soak_reconnect_after_events,
+            soak_induced_reconnects=soak_induced_reconnects,
+        )
         profile = f"{target}_{stream_type}"
         report_path = output_dir / f"ingestion_readiness_{profile}.json"
         command = [
@@ -214,13 +240,13 @@ def run_ingestion_operational_cycle(
             "--runner-governance-path",
             str(governance_path),
             "--ws-max-events",
-            str(ws_max_events),
+            str(effective_ws_max_events),
             "--ws-duration-seconds",
-            str(ws_duration_seconds),
+            str(effective_ws_duration_seconds),
             "--ws-reconnect-after-events",
-            str(ws_reconnect_after_events),
+            str(effective_ws_reconnect_after_events),
             "--ws-induced-reconnects",
-            str(ws_induced_reconnects),
+            str(effective_ws_induced_reconnects),
             "--benchmark-symbol-count",
             str(benchmark_symbol_count),
             "--benchmark-bursts",
@@ -228,17 +254,17 @@ def run_ingestion_operational_cycle(
             "--benchmark-events-per-symbol-per-burst",
             str(benchmark_events_per_symbol_per_burst),
             "--soak-mode",
-            soak_mode,
+            effective_soak_mode,
             "--soak-iterations",
-            str(soak_iterations),
+            str(effective_soak_iterations),
             "--soak-events-per-iteration",
-            str(soak_events_per_iteration),
+            str(effective_soak_events_per_iteration),
             "--soak-duration-seconds",
-            str(soak_duration_seconds),
+            str(effective_soak_duration_seconds),
             "--soak-reconnect-after-events",
-            str(soak_reconnect_after_events),
+            str(effective_soak_reconnect_after_events),
             "--soak-induced-reconnects",
-            str(soak_induced_reconnects),
+            str(effective_soak_induced_reconnects),
         ]
         if benchmark_high_cardinality_symbol_counts is not None:
             command.extend(

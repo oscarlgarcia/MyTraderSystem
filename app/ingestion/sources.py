@@ -24,6 +24,7 @@ from app.ingestion.circuit_breaker import CircuitBreaker
 from app.ingestion.client import (
     DEFAULT_STREAM_TYPES,
     build_ws_url,
+    canonical_event_type,
     parse_message_parts,
 )
 from app.ingestion.errors import IngestionError, classify_connector_error
@@ -46,6 +47,12 @@ from app.observability.logger import get_trace_id
 
 def _identity_delay(delay: float) -> float:
     return delay
+
+
+def _default_ws_connect(url: str) -> object:
+    # We run our own heartbeat policy in _ws_stream; disabling the library
+    # keepalive avoids leaked keepalive threads on induced reconnect drills.
+    return connect(url, ping_interval=None, close_timeout=0.1)
 
 
 class Source(Protocol):
@@ -125,6 +132,15 @@ def _event_stream_context(event: IngestionEvent) -> tuple[str, str, str]:
     return str(venue).upper(), event.symbol, event.source
 
 
+def _is_recovery_snapshot_event(event: IngestionEvent) -> bool:
+    metadata = getattr(event, "metadata", None)
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("recovery_source") == "snapshot":
+        return True
+    return metadata.get("historical_trade_kind") not in (None, "")
+
+
 def _raw_message_context(raw_message: object) -> tuple[str, str, str]:
     venue = "BINANCE"
     symbol = "UNKNOWN"
@@ -136,13 +152,13 @@ def _raw_message_context(raw_message: object) -> tuple[str, str, str]:
         elif "p" in raw_message and "q" in raw_message:
             stream_type = "trade"
         elif raw_message.get("e"):
-            stream_type = str(raw_message["e"])
+            stream_type = canonical_event_type(str(raw_message["e"]))
         return venue, symbol, stream_type
     try:
         payload, data, stream_name, event_type = parse_message_parts(str(raw_message))
-        del payload, stream_name
+        del payload
         symbol = str(data.get("s", symbol)).upper()
-        stream_type = str(event_type)
+        stream_type = canonical_event_type(str(event_type), stream=stream_name)
     except Exception:
         return venue, symbol, stream_type
     return venue, symbol, stream_type
@@ -198,7 +214,7 @@ def _ws_stream(
     *,
     heartbeat: HeartbeatPolicy | None = None,
     monotonic_fn: Callable[[], float] = time.monotonic,
-    connect_fn: Callable[[str], object] = connect,
+    connect_fn: Callable[[str], object] = _default_ws_connect,
 ) -> Iterable[str]:
     heartbeat_policy = heartbeat or heartbeat_policy_for_streams(DEFAULT_STREAM_TYPES)
     with connect_fn(url) as ws:
@@ -258,7 +274,7 @@ class BinanceSource:
     raw_sink: RawSink = field(default_factory=NullRawSink)
     stream_types: tuple[str, ...] = DEFAULT_STREAM_TYPES
     heartbeat_policy: HeartbeatPolicy | None = None
-    ws_connect_fn: Callable[[str], object] = connect
+    ws_connect_fn: Callable[[str], object] = _default_ws_connect
     monotonic_fn: Callable[[], float] = time.monotonic
     snapshot_sleeper: Callable[[float], None] = time.sleep
     snapshot_jitter_fn: Callable[[float], float] = _identity_delay
@@ -413,6 +429,8 @@ class BinanceSource:
             raise IngestionError("sink", "transient", f"raw sink write failed: {exc}") from exc
 
     def _record_temporal_quality(self, event: IngestionEvent) -> None:
+        if _is_recovery_snapshot_event(event):
+            return
         venue, symbol, stream_type = _event_stream_context(event)
         metric = _ensure_stream_metric(self.stats, venue=venue, symbol=symbol, stream_type=stream_type)
         exchange_receive_skew = 0.0
@@ -670,7 +688,7 @@ class BinanceSource:
             params["startTime"] = int(request.start_ts.timestamp() * 1000)
         if request is not None and request.end_ts is not None:
             params["endTime"] = int(request.end_ts.timestamp() * 1000)
-        if stream_type == "trade" and request is not None and request.cursor_kind in {"trade_id", "sequence_id"}:
+        if stream_type == "trade" and request is not None and request.cursor_kind in {"aggregate_trade_id", "trade_id", "sequence_id"}:
             if request.cursor_value not in (None, ""):
                 params["fromId"] = int(str(request.cursor_value))
             params.pop("startTime", None)
@@ -903,6 +921,10 @@ class BinanceSource:
                                     receive_ts=receive_ts,
                                     process_ts=None,
                                 )
+                            metadata = getattr(event, "metadata", None)
+                            if isinstance(metadata, dict):
+                                metadata.setdefault("recovery_source", "snapshot")
+                                metadata.setdefault("ingestion_stage", "snapshot")
                             self._stamp_catalog_metadata(event)
                             validate_ingestion_event(event)
                             metric = _ensure_stream_metric(self.stats, venue=getattr(event, "venue", "BINANCE"), symbol=event.symbol, stream_type=stream_type)

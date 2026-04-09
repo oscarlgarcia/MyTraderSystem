@@ -98,10 +98,19 @@ def run_live_cutover_drill(
     ws_canary_payload = _load_json_if_exists(ws_canary_path)
     benchmark_payload = _load_json_if_exists(benchmark_path)
     failure_injection_payload = _load_json_if_exists(failure_injection_path)
+    rest_canary_required = _requires_rest_canary(
+        ws_canary_payload=ws_canary_payload,
+        rest_canary_payload=rest_canary_payload,
+    )
 
     checklist = (
         _check_release_gate(release_gate_path, release_gate_payload),
-        _check_canary("canary_rest", rest_canary_path, rest_canary_payload),
+        _check_canary(
+            "canary_rest",
+            rest_canary_path,
+            rest_canary_payload,
+            required=rest_canary_required,
+        ),
         _check_canary("canary_ws", ws_canary_path, ws_canary_payload),
         _check_benchmark(benchmark_path, benchmark_payload),
         _check_failure_injection(failure_injection_path, failure_injection_payload),
@@ -204,7 +213,28 @@ def _check_release_gate(path: Path, payload: dict[str, object] | None) -> Cutove
     )
 
 
-def _check_canary(name: str, path: Path, payload: dict[str, object] | None) -> CutoverChecklistItem:
+def _requires_rest_canary(
+    *,
+    ws_canary_payload: dict[str, object] | None,
+    rest_canary_payload: dict[str, object] | None,
+) -> bool:
+    stream_type = None
+    if ws_canary_payload is not None:
+        stream_type = ws_canary_payload.get("stream_type")
+    elif rest_canary_payload is not None:
+        stream_type = rest_canary_payload.get("stream_type")
+    if str(stream_type or "").lower() == "trade":
+        return False
+    return True
+
+
+def _check_canary(
+    name: str,
+    path: Path,
+    payload: dict[str, object] | None,
+    *,
+    required: bool = True,
+) -> CutoverChecklistItem:
     age_seconds = _artifact_age_seconds(path, payload)
     passed = bool(
         payload
@@ -214,7 +244,7 @@ def _check_canary(name: str, path: Path, payload: dict[str, object] | None) -> C
     )
     return CutoverChecklistItem(
         name=name,
-        required=True,
+        required=required,
         passed=passed,
         details={
             "path": str(path),

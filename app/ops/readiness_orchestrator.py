@@ -66,6 +66,27 @@ class ReadinessReport:
 
 Executor = Callable[[Sequence[str], Path], subprocess.CompletedProcess[str]]
 
+DEFAULT_WS_MAX_EVENTS = 2
+DEFAULT_WS_DURATION_SECONDS = 130.0
+DEFAULT_WS_RECONNECT_AFTER_EVENTS = 1
+DEFAULT_WS_INDUCED_RECONNECTS = 1
+DEFAULT_SOAK_MODE: Literal["deterministic", "ws-live"] = "ws-live"
+DEFAULT_SOAK_ITERATIONS = 5
+DEFAULT_SOAK_EVENTS_PER_ITERATION = 500
+DEFAULT_SOAK_DURATION_SECONDS = 150.0
+DEFAULT_SOAK_RECONNECT_AFTER_EVENTS = 1
+DEFAULT_SOAK_INDUCED_RECONNECTS = 1
+CANONICAL_LIVE_TRADE_WS_MAX_EVENTS = 12
+CANONICAL_LIVE_TRADE_WS_DURATION_SECONDS = 120.0
+CANONICAL_LIVE_TRADE_WS_RECONNECT_AFTER_EVENTS = 4
+CANONICAL_LIVE_TRADE_WS_INDUCED_RECONNECTS = 1
+CANONICAL_LIVE_TRADE_SOAK_MODE: Literal["deterministic", "ws-live"] = "ws-live"
+CANONICAL_LIVE_TRADE_SOAK_ITERATIONS = 3
+CANONICAL_LIVE_TRADE_SOAK_EVENTS_PER_ITERATION = 200
+CANONICAL_LIVE_TRADE_SOAK_DURATION_SECONDS = 180.0
+CANONICAL_LIVE_TRADE_SOAK_RECONNECT_AFTER_EVENTS = 100
+CANONICAL_LIVE_TRADE_SOAK_INDUCED_RECONNECTS = 1
+
 
 def write_readiness_report(path: Path, report: ReadinessReport) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,21 +109,21 @@ def run_ingestion_readiness(
     gate_stream_types: tuple[str, ...] | None = None,
     validation_dir: Path,
     output_path: Path,
-    ws_max_events: int = 2,
-    ws_duration_seconds: float = 130.0,
-    ws_reconnect_after_events: int = 1,
-    ws_induced_reconnects: int = 1,
+    ws_max_events: int = DEFAULT_WS_MAX_EVENTS,
+    ws_duration_seconds: float = DEFAULT_WS_DURATION_SECONDS,
+    ws_reconnect_after_events: int = DEFAULT_WS_RECONNECT_AFTER_EVENTS,
+    ws_induced_reconnects: int = DEFAULT_WS_INDUCED_RECONNECTS,
     benchmark_symbol_count: int = 12,
     benchmark_high_cardinality_symbol_counts: tuple[int, ...] | None = None,
     benchmark_bursts: int = 4,
     benchmark_events_per_symbol_per_burst: int = 12,
     benchmark_min_rows_per_second: float | None = None,
-    soak_mode: Literal["deterministic", "ws-live"] = "ws-live",
-    soak_iterations: int = 5,
-    soak_events_per_iteration: int = 500,
-    soak_duration_seconds: float = 150.0,
-    soak_reconnect_after_events: int = 1,
-    soak_induced_reconnects: int = 1,
+    soak_mode: Literal["deterministic", "ws-live"] = DEFAULT_SOAK_MODE,
+    soak_iterations: int = DEFAULT_SOAK_ITERATIONS,
+    soak_events_per_iteration: int = DEFAULT_SOAK_EVENTS_PER_ITERATION,
+    soak_duration_seconds: float = DEFAULT_SOAK_DURATION_SECONDS,
+    soak_reconnect_after_events: int = DEFAULT_SOAK_RECONNECT_AFTER_EVENTS,
+    soak_induced_reconnects: int = DEFAULT_SOAK_INDUCED_RECONNECTS,
     provenance_source: str = "readiness_orchestrator",
     execution_ref: str | None = None,
     channel: Literal["manual", "scheduled", "pipeline"] = "pipeline",
@@ -137,6 +158,31 @@ def run_ingestion_readiness(
         target=target,
         stream_type=stream_type,
         gate_stream_types=gate_stream_types,
+    )
+    (
+        ws_max_events,
+        ws_duration_seconds,
+        ws_reconnect_after_events,
+        ws_induced_reconnects,
+        soak_mode,
+        soak_iterations,
+        soak_events_per_iteration,
+        soak_duration_seconds,
+        soak_reconnect_after_events,
+        soak_induced_reconnects,
+    ) = resolve_runtime_validation_tunables(
+        target=target,
+        stream_type=stream_type,
+        ws_max_events=ws_max_events,
+        ws_duration_seconds=ws_duration_seconds,
+        ws_reconnect_after_events=ws_reconnect_after_events,
+        ws_induced_reconnects=ws_induced_reconnects,
+        soak_mode=soak_mode,
+        soak_iterations=soak_iterations,
+        soak_events_per_iteration=soak_events_per_iteration,
+        soak_duration_seconds=soak_duration_seconds,
+        soak_reconnect_after_events=soak_reconnect_after_events,
+        soak_induced_reconnects=soak_induced_reconnects,
     )
     gate_stream_types_arg = ",".join(gate_stream_types)
 
@@ -236,26 +282,6 @@ def run_ingestion_readiness(
 
     steps: list[tuple[str, tuple[str, ...], str | None]] = [
         (
-            "replay_parity",
-            (
-                sys.executable,
-                "scripts/check_replay_parity.py",
-                "--raw-base-dir",
-                str(raw_base_dir),
-                "--normalized-path",
-                str(normalized_path),
-                "--env",
-                env,
-                "--symbol",
-                symbol,
-                "--stream-type",
-                stream_type,
-                "--output",
-                str(replay_parity_path),
-            ),
-            str(replay_parity_path),
-        ),
-        (
             "storage_benchmark",
             tuple(storage_benchmark_command),
             str(benchmark_path),
@@ -276,6 +302,30 @@ def run_ingestion_readiness(
             str(observability_verification_path),
         ),
     ]
+    if _requires_replay_validation(profile):
+        steps.insert(
+            0,
+            (
+                "replay_parity",
+                (
+                    sys.executable,
+                    "scripts/check_replay_parity.py",
+                    "--raw-base-dir",
+                    str(raw_base_dir),
+                    "--normalized-path",
+                    str(normalized_path),
+                    "--env",
+                    env,
+                    "--symbol",
+                    symbol,
+                    "--stream-type",
+                    stream_type,
+                    "--output",
+                    str(replay_parity_path),
+                ),
+                str(replay_parity_path),
+            ),
+        )
 
     if _requires_rest_validation(profile):
         steps[1:1] = [
@@ -717,9 +767,79 @@ def _requires_runtime_validation(profile: ReadinessProfile) -> bool:
     return profile in {"paper_kline", "live_trade", "live_kline"}
 
 
+def _requires_replay_validation(profile: ReadinessProfile) -> bool:
+    return profile == "paper_trade"
+
+
 def _requires_rest_validation(profile: ReadinessProfile) -> bool:
     return profile in {"paper_kline", "live_kline"}
 
 
 def _profile_artifact_path(validation_dir: Path, stem: str, profile: ReadinessProfile) -> Path:
     return validation_dir / f"{stem}_{profile}.json"
+
+
+def resolve_runtime_validation_tunables(
+    *,
+    target: ReadinessTarget,
+    stream_type: str,
+    ws_max_events: int,
+    ws_duration_seconds: float,
+    ws_reconnect_after_events: int,
+    ws_induced_reconnects: int,
+    soak_mode: Literal["deterministic", "ws-live"],
+    soak_iterations: int,
+    soak_events_per_iteration: int,
+    soak_duration_seconds: float,
+    soak_reconnect_after_events: int,
+    soak_induced_reconnects: int,
+) -> tuple[
+    int,
+    float,
+    int,
+    int,
+    Literal["deterministic", "ws-live"],
+    int,
+    int,
+    float,
+    int,
+    int,
+]:
+    normalized_stream_type = str(stream_type).strip().lower()
+    if target == "live" and normalized_stream_type == "trade":
+        if (
+            ws_max_events == DEFAULT_WS_MAX_EVENTS
+            and ws_duration_seconds == DEFAULT_WS_DURATION_SECONDS
+            and ws_reconnect_after_events == DEFAULT_WS_RECONNECT_AFTER_EVENTS
+            and ws_induced_reconnects == DEFAULT_WS_INDUCED_RECONNECTS
+        ):
+            ws_max_events = CANONICAL_LIVE_TRADE_WS_MAX_EVENTS
+            ws_duration_seconds = CANONICAL_LIVE_TRADE_WS_DURATION_SECONDS
+            ws_reconnect_after_events = CANONICAL_LIVE_TRADE_WS_RECONNECT_AFTER_EVENTS
+            ws_induced_reconnects = CANONICAL_LIVE_TRADE_WS_INDUCED_RECONNECTS
+        if (
+            soak_mode == DEFAULT_SOAK_MODE
+            and soak_iterations == DEFAULT_SOAK_ITERATIONS
+            and soak_events_per_iteration == DEFAULT_SOAK_EVENTS_PER_ITERATION
+            and soak_duration_seconds == DEFAULT_SOAK_DURATION_SECONDS
+            and soak_reconnect_after_events == DEFAULT_SOAK_RECONNECT_AFTER_EVENTS
+            and soak_induced_reconnects == DEFAULT_SOAK_INDUCED_RECONNECTS
+        ):
+            soak_mode = CANONICAL_LIVE_TRADE_SOAK_MODE
+            soak_iterations = CANONICAL_LIVE_TRADE_SOAK_ITERATIONS
+            soak_events_per_iteration = CANONICAL_LIVE_TRADE_SOAK_EVENTS_PER_ITERATION
+            soak_duration_seconds = CANONICAL_LIVE_TRADE_SOAK_DURATION_SECONDS
+            soak_reconnect_after_events = CANONICAL_LIVE_TRADE_SOAK_RECONNECT_AFTER_EVENTS
+            soak_induced_reconnects = CANONICAL_LIVE_TRADE_SOAK_INDUCED_RECONNECTS
+    return (
+        ws_max_events,
+        ws_duration_seconds,
+        ws_reconnect_after_events,
+        ws_induced_reconnects,
+        soak_mode,
+        soak_iterations,
+        soak_events_per_iteration,
+        soak_duration_seconds,
+        soak_reconnect_after_events,
+        soak_induced_reconnects,
+    )

@@ -42,6 +42,13 @@ def _trade(ts: datetime, trade_id: str) -> TradeEvent:
     )
 
 
+def _snapshot_trade(ts: datetime, trade_id: str) -> TradeEvent:
+    event = _trade(ts, trade_id)
+    event.metadata["recovery_source"] = "snapshot"
+    event.metadata["historical_trade_kind"] = "aggregate_trade"
+    return event
+
+
 class DummySink:
     def __init__(self) -> None:
         self.items: list[object] = []
@@ -172,7 +179,6 @@ def test_trade_reconnect_old_resend_is_deduplicated_after_exact_recovery() -> No
         snapshot_fn=lambda *, request=None: [
             _trade(base + timedelta(seconds=1), "2"),
             _trade(base + timedelta(seconds=2), "3"),
-            _trade(base + timedelta(seconds=3), "4"),
         ],
         lag_threshold_seconds=0.5,
         sleeper=lambda _seconds: None,
@@ -182,3 +188,98 @@ def test_trade_reconnect_old_resend_is_deduplicated_after_exact_recovery() -> No
     assert handled == ["1", "2", "3", "4"]
     assert runner.metrics.dedup_skipped >= 1
     assert runner.metrics.recovery_exactness_violation_total == 0
+
+
+def test_trade_exact_recovery_clears_gap_totals_after_successful_resync() -> None:
+    base = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    handled: list[str] = []
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter([
+            _trade(base, "1"),
+            _trade(base + timedelta(seconds=3), "4"),
+        ]),
+        snapshot_fn=lambda *, request=None: [
+            _snapshot_trade(base + timedelta(seconds=1), "2"),
+            _snapshot_trade(base + timedelta(seconds=2), "3"),
+        ],
+        lag_threshold_seconds=0.5,
+        sleeper=lambda _seconds: None,
+    )
+
+    runner.run(lambda event: handled.append(event.trade_id or ""), stop_on_complete=True)
+
+    assert handled == ["1", "2", "3", "4"]
+    assert runner.metrics.gaps_total == 0
+    stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:trade"]
+    assert stream_metrics["gaps_total"] == 0
+    assert stream_metrics["gap_irreparable_total"] == 0
+    assert stream_metrics["gap_detected"] is False
+
+
+def test_trade_recovery_snapshot_events_do_not_count_toward_live_skew_metrics() -> None:
+    base = datetime.now(timezone.utc)
+    now = base + timedelta(seconds=30)
+    event = TradeEvent(
+        symbol="BTCUSDT",
+        exchange_ts=base,
+        receive_ts=now,
+        process_ts=now + timedelta(seconds=10),
+        venue="BINANCE",
+        source_id="2",
+        price=100.0,
+        size=1.0,
+        trade_id="2",
+        metadata={
+            "aggregate_trade_id": "2",
+            "recovery_source": "snapshot",
+            "historical_trade_kind": "aggregate_trade",
+        },
+    )
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter([event]),
+        sleeper=lambda _seconds: None,
+    )
+
+    runner.run(lambda _event: None, stop_on_complete=True)
+
+    assert runner.metrics.exchange_receive_skew_seconds == 0.0
+    assert runner.metrics.receive_process_skew_seconds == 0.0
+    assert runner.metrics.max_latency_seconds == 0.0
+
+
+def test_trade_gap_boundary_event_does_not_count_as_live_exchange_receive_skew_when_recovered() -> None:
+    base = datetime.now(timezone.utc)
+    late_receive_ts = base + timedelta(seconds=15)
+    boundary = TradeEvent(
+        symbol="BTCUSDT",
+        exchange_ts=base + timedelta(seconds=3),
+        receive_ts=late_receive_ts,
+        process_ts=late_receive_ts,
+        venue="BINANCE",
+        source_id="4",
+        price=100.0,
+        size=1.0,
+        trade_id="4",
+        metadata={"aggregate_trade_id": "4"},
+    )
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter([
+            _trade(base, "1"),
+            boundary,
+        ]),
+        snapshot_fn=lambda *, request=None: [
+            _snapshot_trade(base + timedelta(seconds=1), "2"),
+            _snapshot_trade(base + timedelta(seconds=2), "3"),
+        ],
+        lag_threshold_seconds=0.5,
+        sleeper=lambda _seconds: None,
+    )
+
+    runner.run(lambda _event: None, stop_on_complete=True)
+
+    assert runner.metrics.gaps_total == 0
+    assert runner.metrics.exchange_receive_skew_seconds == 0.0
+    assert runner.metrics.max_latency_seconds < 2.0

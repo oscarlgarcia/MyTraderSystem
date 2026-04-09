@@ -47,6 +47,21 @@ def _trade(symbol: str, ts: datetime, trade_id: str) -> TradeEvent:
     )
 
 
+def _aggregate_trade(symbol: str, ts: datetime, aggregate_trade_id: str) -> TradeEvent:
+    return TradeEvent(
+        symbol=symbol,
+        exchange_ts=ts,
+        receive_ts=ts,
+        process_ts=ts,
+        venue="BINANCE",
+        source_id=aggregate_trade_id,
+        metadata={"aggregate_trade_id": aggregate_trade_id},
+        price=100.0,
+        size=1.0,
+        trade_id=aggregate_trade_id,
+    )
+
+
 def test_live_recovery_scope_is_explicitly_trade_and_kline():
     assert supports_live_recovery("kline") is True
     assert supports_live_recovery("trade") is True
@@ -92,7 +107,6 @@ def test_exact_trade_recovery_fills_gap_without_duplicate_delivery():
     ]
     snapshot_events = [
         _trade("BTCUSDT", base + timedelta(milliseconds=500), "2"),
-        _trade("BTCUSDT", base + timedelta(seconds=1), "3"),
     ]
     handled: list[str] = []
 
@@ -104,15 +118,15 @@ def test_exact_trade_recovery_fills_gap_without_duplicate_delivery():
     )
     runner.run(lambda event: handled.append(getattr(event, "trade_id", "")), stop_on_complete=True)
 
-    assert runner.metrics.gaps_total == 1
+    assert runner.metrics.gaps_total == 0
     assert runner.metrics.gap_irreparable_total == 0
     assert runner.metrics.snapshot_runs == 1
     assert runner.metrics.recovery_exactness_violation_total == 0
     assert handled == ["1", "2", "3"]
     stream_metrics = runner.metrics.temporal_streams["BINANCE:BTCUSDT:trade"]
-    assert stream_metrics["gap_detected"] is True
+    assert stream_metrics["gap_detected"] is False
     assert stream_metrics["gap_irreparable"] is False
-    assert stream_metrics["last_gap_detection_mode"] == "sequence_gap_detection"
+    assert stream_metrics["last_gap_detection_mode"] is None
 
 
 @pytest.mark.parametrize(
@@ -201,7 +215,35 @@ def test_runner_passes_trade_recovery_request_cursor_window_to_snapshot_fn():
     assert request.partition == TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="trade")
     assert request.cursor_kind == "trade_id"
     assert request.cursor_value == "2"
-    assert request.limit == 3
+    assert request.limit == 2
+
+
+def test_runner_passes_aggregate_trade_recovery_request_cursor_window_to_snapshot_fn():
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    stream_events = [
+        _aggregate_trade("BTCUSDT", base, "10"),
+        _aggregate_trade("BTCUSDT", base + timedelta(seconds=1), "13"),
+    ]
+    captured: dict[str, object] = {}
+
+    def snapshot_fn(*, request=None):
+        captured["request"] = request
+        return [_aggregate_trade("BTCUSDT", base + timedelta(milliseconds=500), "11")]
+
+    runner = ResilientRunner(
+        stream_fn=lambda: iter(stream_events),
+        snapshot_fn=snapshot_fn,
+        lag_threshold_seconds=0.5,
+        sleeper=lambda _seconds: None,
+    )
+    runner.run(lambda _event: None, stop_on_complete=True)
+
+    request = captured["request"]
+    assert request is not None
+    assert request.partition == TemporalPartitionKey(venue="BINANCE", symbol="BTCUSDT", stream_type="trade")
+    assert request.cursor_kind == "aggregate_trade_id"
+    assert request.cursor_value == "11"
+    assert request.limit == 2
 
 
 def test_exact_kline_recovery_uses_open_time_window_without_gap_or_double_count():
@@ -349,7 +391,7 @@ def test_verify_recovery_window_rejects_missing_and_unexpected_trade_rows():
 
     assert request is not None
     assert verification.exact is False
-    assert verification.expected_rows == 3
+    assert verification.expected_rows == 2
     assert verification.received_rows == 2
-    assert verification.missing_timestamps == ("3", "4")
+    assert verification.missing_timestamps == ("3",)
     assert verification.unexpected_timestamps == ("5",)

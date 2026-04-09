@@ -53,6 +53,15 @@ TemporalPolicy = Literal["accept", "drop", "fail"]
 def default_retry_jitter(delay_seconds: float) -> float:
     return delay_seconds * random.uniform(0.9, 1.1)
 
+
+def _is_recovery_snapshot_event(event: IngestionEvent) -> bool:
+    metadata = getattr(event, "metadata", None)
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("recovery_source") == "snapshot":
+        return True
+    return metadata.get("historical_trade_kind") not in (None, "")
+
 @dataclass
 class ResilienceMetrics:
     # events_in counts source/snapshot events observed before runner-level dedup.
@@ -323,25 +332,13 @@ class ResilientRunner:
         k = _key(ev)
         partition_key, stream_state = self.temporal_state.state_for_event(ev)
         stream_state.messages_in_total += 1
+        exchange_receive_skew = 0.0
+        receive_process_skew = 0.0
+        should_record_skew = isinstance(ev, BaseMarketEvent) and not _is_recovery_snapshot_event(ev)
+        should_record_runtime_latency = not _is_recovery_snapshot_event(ev)
         if isinstance(ev, BaseMarketEvent):
             exchange_receive_skew = max(0.0, (ev.receive_ts - ev.exchange_ts).total_seconds()) if ev.receive_ts is not None else 0.0
             receive_process_skew = max(0.0, (ev.process_ts - ev.receive_ts).total_seconds()) if ev.receive_ts is not None and ev.process_ts is not None else 0.0
-            stream_state.exchange_receive_skew_seconds = max(
-                stream_state.exchange_receive_skew_seconds,
-                exchange_receive_skew,
-            )
-            stream_state.receive_process_skew_seconds = max(
-                stream_state.receive_process_skew_seconds,
-                receive_process_skew,
-            )
-            self.metrics.exchange_receive_skew_seconds = max(
-                self.metrics.exchange_receive_skew_seconds,
-                exchange_receive_skew,
-            )
-            self.metrics.receive_process_skew_seconds = max(
-                self.metrics.receive_process_skew_seconds,
-                receive_process_skew,
-            )
         self._update_temporal_metrics(partition_key, stream_state)
         recovery_policy = self.recovery_policy_resolver(ev)
         # dedup
@@ -378,6 +375,8 @@ class ResilientRunner:
                 self._update_temporal_metrics(partition_key, stream_state)
 
                 if gap_observation.detected and recovery_policy.can_recover(self.snapshot_fn):
+                    should_record_skew = False
+                    should_record_runtime_latency = False
                     recovery_request = build_recovery_request(
                         ev,
                         partition=partition_key,
@@ -397,16 +396,35 @@ class ResilientRunner:
                     if self.deduplicator.contains_key(k):
                         self.metrics.snapshot_duplicates_skipped += 1
                         return
-            if delta_seconds > self.max_lag_seconds:
-                # log via handler extra if it accepts 'warning' pattern? we can't assume; emit via logging module
-                logging.getLogger("ingest.resilience").warning(
-                    "Event gap exceeds max_lag_seconds",
-                    extra={
-                        "event_gap_seconds": delta_seconds,
-                        "max_lag_seconds": self.max_lag_seconds,
-                        "temporal_partition": partition_key.label(),
-                    },
-                )
+                if delta_seconds > self.max_lag_seconds:
+                    # log via handler extra if it accepts 'warning' pattern? we can't assume; emit via logging module
+                    logging.getLogger("ingest.resilience").warning(
+                        "Event gap exceeds max_lag_seconds",
+                        extra={
+                            "event_gap_seconds": delta_seconds,
+                            "max_lag_seconds": self.max_lag_seconds,
+                            "temporal_partition": partition_key.label(),
+                        },
+                    )
+
+        if should_record_skew:
+            stream_state.exchange_receive_skew_seconds = max(
+                stream_state.exchange_receive_skew_seconds,
+                exchange_receive_skew,
+            )
+            stream_state.receive_process_skew_seconds = max(
+                stream_state.receive_process_skew_seconds,
+                receive_process_skew,
+            )
+            self.metrics.exchange_receive_skew_seconds = max(
+                self.metrics.exchange_receive_skew_seconds,
+                exchange_receive_skew,
+            )
+            self.metrics.receive_process_skew_seconds = max(
+                self.metrics.receive_process_skew_seconds,
+                receive_process_skew,
+            )
+            self._update_temporal_metrics(partition_key, stream_state)
 
         handler(ev)
         self.metrics.events_out += 1
@@ -420,14 +438,17 @@ class ResilientRunner:
         stream_state.last_event_ts = max(stream_state.last_event_ts or ev.event_ts, ev.event_ts)
         self._update_temporal_metrics(partition_key, stream_state)
 
-        # Runtime latency should reflect ingest handling after the event becomes
-        # available to the process, not the vendor event clock itself.
-        now = datetime.now(timezone.utc)
-        latency_reference = getattr(ev, "receive_ts", None) or getattr(ev, "provider_ts", None) or ev.event_ts
-        latency = max(0.0, (now - latency_reference).total_seconds())
-        self.metrics.last_latency_seconds = latency
-        if latency > self.metrics.max_latency_seconds:
-            self.metrics.max_latency_seconds = latency
+        # Runtime latency should reflect the live-path ingest handling only.
+        # Snapshot recovery rows and the boundary event that triggered a repaired
+        # gap are excluded because they measure closure time of a recovery
+        # window, not steady-state live processing latency.
+        if should_record_runtime_latency:
+            now = datetime.now(timezone.utc)
+            latency_reference = getattr(ev, "receive_ts", None) or getattr(ev, "provider_ts", None) or ev.event_ts
+            latency = max(0.0, (now - latency_reference).total_seconds())
+            self.metrics.last_latency_seconds = latency
+            if latency > self.metrics.max_latency_seconds:
+                self.metrics.max_latency_seconds = latency
 
     def _resync(
         self,
@@ -472,6 +493,7 @@ class ResilientRunner:
         recovered_rows = 0
         recovered_events: list[IngestionEvent] = []
         recovery_verification = RecoveryVerification(exact=True, expected_rows=0, received_rows=0)
+        stop_signal: BaseException | None = None
         try:
             recovered_events = list(recovery_policy.recover(self.snapshot_fn, partition=partition_key, request=request))
             if request is not None and request.limit is not None:
@@ -492,6 +514,15 @@ class ResilientRunner:
                         verification=recovery_verification,
                     )
                 else:
+                    if stream_state.gaps_total > 0:
+                        stream_state.gaps_total -= 1
+                        self.metrics.gaps_total = max(0, self.metrics.gaps_total - 1)
+                    stream_state.gap_detected = False
+                    stream_state.gap_irreparable = False
+                    stream_state.last_gap_detection_mode = None
+                    stream_state.last_gap_missing_count = 0
+                    stream_state.last_gap_seconds = 0.0
+                    stream_state.last_event_gap_seconds = 0.0
                     self._update_temporal_metrics(partition_key, stream_state)
             for ev in recovered_events:
                 event_partition_key, stream_state = self.temporal_state.state_for_event(ev)
@@ -505,7 +536,17 @@ class ResilientRunner:
                     stream_state.duplicates_total += 1
                     self._update_temporal_metrics(event_partition_key, stream_state)
                     continue
-                handler(ev)
+                should_stop_after_event = False
+                try:
+                    handler(ev)
+                except StopIteration as exc:
+                    should_stop_after_event = True
+                    stop_signal = exc
+                except RuntimeError as exc:
+                    if "StopIteration" not in str(exc):
+                        raise
+                    should_stop_after_event = True
+                    stop_signal = StopIteration()
                 self.metrics.events_out += 1
                 recovered_rows += 1
                 if self.dedup_enabled:
@@ -517,6 +558,8 @@ class ResilientRunner:
                     stream_state.cursor_value = cursor_value
                 stream_state.last_event_ts = max(stream_state.last_event_ts or ev.event_ts, ev.event_ts)
                 self._update_temporal_metrics(event_partition_key, stream_state)
+                if should_stop_after_event:
+                    break
         except Exception:
             logger.error(
                 "recovery failed",
@@ -588,6 +631,8 @@ class ResilientRunner:
                 "snapshot_duplicates_skipped": self.metrics.snapshot_duplicates_skipped,
             },
         )
+        if stop_signal is not None:
+            raise stop_signal
 
     def _handle_out_of_order(
         self,

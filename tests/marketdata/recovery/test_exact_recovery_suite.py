@@ -180,7 +180,7 @@ def test_exact_verified_trade_recovery_handles_controlled_cuts(
         ]),
         snapshot_fn=lambda *, request=None: [
             _trade(base + timedelta(seconds=offset), str(offset + 1))
-            for offset in range(0, resume_trade_id)
+            for offset in range(1, max(1, resume_trade_id - 1))
         ],
         lag_threshold_seconds=0.5,
         sleeper=lambda _seconds: None,
@@ -207,7 +207,6 @@ def test_exact_verified_trade_recovery_tolerates_duplicates_during_catchup() -> 
             _trade(base + timedelta(seconds=1), "2"),
             _trade(base + timedelta(seconds=1), "2"),
             _trade(base + timedelta(seconds=2), "3"),
-            _trade(base + timedelta(seconds=3), "4"),
         ],
         lag_threshold_seconds=0.5,
         sleeper=lambda _seconds: None,

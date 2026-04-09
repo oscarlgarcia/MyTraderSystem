@@ -6,6 +6,9 @@ Ejecutar el caso estandar de cierre operativo de ingestion para `paper` sobre el
 ## Scope soportado
 - feeds soportados: `trade`, `kline`
 - feed excluido: `book`
+- `trade` mantiene consistencia con el contrato canónico de continuidad:
+  - identidad operativa basada en `aggregate_trade_id`
+  - `book` sigue fuera sin excepcion
 - canal valido para cierre operativo final: `scheduled` o `pipeline`
 - `manual` solo sirve para runs informativos y debe terminar en `NO-GO`
 
