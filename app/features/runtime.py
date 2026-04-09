@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 from app.common.dto import FeatureVector, MarketEvent
+from app.features.bundles import DEFAULT_RUNTIME_AGGREGATORS, DEFAULT_RUNTIME_WINDOWS
 from app.features.cache import FeatureCache
 from app.features.entity_codec import entity_scope, normalize_entity_keys, primary_symbol
 from app.features.event_journal import FeatureEventJournal
@@ -213,11 +214,13 @@ def build_legacy_runtime_feature_set(
     aggregators: Iterable[str] | None = None,
     transformers: Iterable[str] | None = None,
 ) -> FeatureSetDefinition:
+    default_windows = tuple(DEFAULT_RUNTIME_WINDOWS) if windows is None and window == 5 else tuple(windows or [window])
+    default_aggregators = tuple(DEFAULT_RUNTIME_AGGREGATORS) if aggregators is None and window == 5 else tuple(aggregators or ["sma", "ema", "max", "min"])
     return build_legacy_feature_set_definition(
         name="legacy",
         version="legacy",
         description="Legacy runtime feature set",
-        windows=tuple(windows or [window]),
-        aggregators=tuple(aggregators or ["sma", "ema", "max", "min"]),
+        windows=default_windows,
+        aggregators=default_aggregators,
         transformers=tuple(transformers or []),
     )

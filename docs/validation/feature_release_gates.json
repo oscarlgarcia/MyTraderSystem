@@ -1,0 +1,122 @@
+{
+  "target": "live",
+  "generated_at": "2026-04-08T18:12:31.441683+00:00",
+  "overall_status": "PASS",
+  "pass_ok": true,
+  "gate_report": {
+    "pass_ok": true,
+    "target": "live",
+    "stale_count": 0,
+    "latency_breaches": 0,
+    "invalid_ratio": 0.0,
+    "invalid_ratio_breaches": 0,
+    "cardinality_breaches": 0,
+    "reasons": []
+  },
+  "live_readiness": {
+    "pass_ok": true,
+    "action": "go",
+    "reasons": []
+  },
+  "blocks": [
+    {
+      "name": "parity",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_parity_report.json"
+      }
+    },
+    {
+      "name": "benchmark",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_benchmark_report.json"
+      }
+    },
+    {
+      "name": "observability",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_observability.json"
+      }
+    },
+    {
+      "name": "contract_validation",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_contract_validation.json"
+      }
+    },
+    {
+      "name": "shadow_validation",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_shadow_summary.json"
+      }
+    },
+    {
+      "name": "serving_soak",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_serving_soak.json"
+      }
+    },
+    {
+      "name": "serving_concurrency",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_serving_concurrency.json"
+      }
+    },
+    {
+      "name": "rollout_audit",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_rollout_audit.json"
+      }
+    },
+    {
+      "name": "evidence_manifest",
+      "status": "pass",
+      "required": true,
+      "reasons": [
+        "ok"
+      ],
+      "details": {
+        "path": "docs\\validation\\feature_release_evidence_manifest.json"
+      }
+    }
+  ]
+}

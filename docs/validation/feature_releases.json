@@ -1,0 +1,10 @@
+{
+  "legacy": {
+    "active_version": "legacy",
+    "previous_version": "legacy"
+  },
+  "legacy_live": {
+    "active_version": "v2",
+    "previous_version": "v2"
+  }
+}

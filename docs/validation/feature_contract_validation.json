@@ -1,0 +1,9 @@
+{
+  "dataset_id": "live-runtime-btcusdt",
+  "feature_bundle_id": "legacy_live-v2-live-742ce043a2db",
+  "feature_schema_hash": "20827131d9436f0ae3010ea1b9865702bb4f6244f0b262e83aeefe80fb3deea0",
+  "generated_at": "2026-04-08T18:09:16.037397+00:00",
+  "pass_ok": true,
+  "reasons": [],
+  "training_bundle_id": "legacy_live-v2-live-1afff73510ca"
+}

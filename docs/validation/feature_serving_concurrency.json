@@ -1,0 +1,13 @@
+{
+  "degrade_count": 0,
+  "duration_seconds": 0.841000999789685,
+  "fail_count": 0,
+  "generated_at": "2026-04-08T18:09:39.136978+00:00",
+  "max_latency_seconds": 0.14639199990779161,
+  "mode": "concurrency",
+  "ok_count": 120,
+  "p95_latency_seconds": 0.12675630021840334,
+  "pass_ok": true,
+  "total_requests": 120,
+  "unknown_count": 0
+}

@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-04-08T18:09:15.941827+00:00",
+  "materialization_rows": 32,
+  "materialization_rows_per_second": 723.8312394417213,
+  "materialization_seconds": 0.04420919995754957,
+  "online_update_seconds": 0.8395370999351144,
+  "online_updates": 32,
+  "online_updates_per_second": 38.11624287059285,
+  "pass_ok": true,
+  "serving_requests": 10,
+  "serving_requests_per_second": 131.09664943470756,
+  "serving_seconds": 0.0762796001508832,
+  "threshold_pass_ok": true
+}

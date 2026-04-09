@@ -17,5 +17,5 @@ def build_basic_strategy_view(feature_vector: FeatureVector) -> BasicStrategyFea
     return BasicStrategyFeatureView(
         price=values.get("price"),
         ret_1=values.get("ret_1"),
-        sma_3=values.get("sma_3"),
+        sma_3=values.get("sma_3", values.get("sma_5")),
     )

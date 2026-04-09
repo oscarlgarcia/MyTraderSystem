@@ -6,6 +6,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Query
 
+from app.features.catalog import FeatureCatalog, get_default_feature_catalog
 from app.features.online_store_base import FeatureOnlineStore
 from app.features.online_store_codec import deserialize_feature_vector, serialize_feature_vector
 
@@ -19,7 +20,9 @@ def _parse_entity_keys(entity_keys: str | None) -> dict[str, str] | None:
     return {str(key): str(value) for key, value in payload.items()}
 
 
-def create_feature_store_api(*, online_store: FeatureOnlineStore) -> FastAPI:
+def create_feature_store_api(*, online_store: FeatureOnlineStore, catalog: FeatureCatalog | None = None) -> FastAPI:
+    catalog = catalog or get_default_feature_catalog()
+
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         yield
@@ -32,6 +35,41 @@ def create_feature_store_api(*, online_store: FeatureOnlineStore) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, bool]:
         return {"ok": True}
+
+    @app.get("/catalog/features")
+    def get_catalog_features(
+        family: str | None = None,
+        strategy_family: str | None = None,
+        phase: str | None = None,
+        source_scope: str | None = None,
+        status: str | None = None,
+        bundle_name: str | None = None,
+    ) -> dict[str, object]:
+        features = catalog.list_features(
+            family=family,
+            strategy_family=strategy_family,
+            phase=phase,
+            source_scope=source_scope,
+            status=status,
+            bundle_name=bundle_name,
+        )
+        return {"features": [item.to_dict() for item in features]}
+
+    @app.get("/catalog/families")
+    def get_catalog_families() -> dict[str, object]:
+        return {"families": list(catalog.list_families())}
+
+    @app.get("/catalog/strategy-families")
+    def get_catalog_strategy_families() -> dict[str, object]:
+        return {"strategy_families": list(catalog.list_strategy_families())}
+
+    @app.get("/catalog/source-scopes")
+    def get_catalog_source_scopes() -> dict[str, object]:
+        return {"source_scopes": list(catalog.list_source_scopes())}
+
+    @app.get("/catalog/bundles")
+    def get_catalog_bundles() -> dict[str, object]:
+        return {"bundles": list(catalog.list_bundles())}
 
     @app.post("/vectors")
     def upsert_vector(payload: dict[str, object]) -> dict[str, bool]:

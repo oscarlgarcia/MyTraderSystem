@@ -1,0 +1,24 @@
+{
+  "alerts": [],
+  "generated_at": "2026-04-08T18:09:16.052396+00:00",
+  "metrics": {
+    "compute_latency_max": 0.0,
+    "compute_latency_total": 0.0,
+    "contract_validation_failures": 0,
+    "dropped_non_finite": 0,
+    "events_in": 0,
+    "features_out": 0,
+    "invalid_serves": 0,
+    "parity_mismatches": 0,
+    "serving_degraded": 0,
+    "serving_failures": 0,
+    "serving_latency_max": 0.008743599988520145,
+    "serving_latency_total": 0.008743599988520145,
+    "serving_requests": 1,
+    "shadow_failures": 0,
+    "shadow_requests": 0,
+    "stale_serves": 0,
+    "transform_errors": 0
+  },
+  "target": "live"
+}

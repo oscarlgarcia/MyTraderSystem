@@ -1,0 +1,23 @@
+{
+  "artifact_pass": {
+    "concurrency": true,
+    "shadow": true,
+    "soak": true
+  },
+  "artifacts": {
+    "concurrency_path": "docs\\validation\\feature_serving_concurrency.json",
+    "shadow_report_path": "docs\\validation\\feature_shadow_reports.jsonl",
+    "shadow_summary_path": "docs\\validation\\feature_shadow_summary.json",
+    "soak_path": "docs\\validation\\feature_serving_soak.json"
+  },
+  "feature_set_name": "legacy_live",
+  "feature_set_version": "v2",
+  "generated_at": "2026-04-08T18:09:41.045358+00:00",
+  "pass_ok": true,
+  "primary_backend": "http",
+  "primary_url": "http://127.0.0.1:8011",
+  "shadow_backend": "http",
+  "shadow_url": "http://127.0.0.1:8011",
+  "symbol": "BTCUSDT",
+  "target": "live"
+}
