@@ -33,12 +33,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    stream_types = tuple(part.strip() for part in str(args.stream_types).split(",") if part.strip())
+    if "book" in {stream_type.lower() for stream_type in stream_types}:
+        raise SystemExit("release gates do not support stream_type=book")
     base_dir = Path(args.base_dir) if args.base_dir else Path(load_config(args.env).data_dir)
     report = run_release_gates(
         base_dir=base_dir,
         env=args.env,
         target=args.target,
-        stream_types=tuple(part.strip() for part in str(args.stream_types).split(",") if part.strip()),
+        stream_types=stream_types,
         output_path=Path(args.output),
         rest_canary_path=Path(args.rest_canary_path),
         ws_canary_path=Path(args.ws_canary_path),

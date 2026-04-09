@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from app.ops.operational_cycle import run_ingestion_operational_cycle
+
+
+def _executor_with_reports(commands: list[tuple[str, ...]], workspace: Path):
+    def _run(command, _cwd):
+        commands.append(tuple(command))
+        command = tuple(command)
+        output_path = Path(command[command.index("--output") + 1])
+        validation_dir = Path(command[command.index("--validation-dir") + 1])
+        stream_type = str(command[command.index("--stream-type") + 1])
+        target = str(command[command.index("--target") + 1])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        validation_dir.mkdir(parents=True, exist_ok=True)
+        profile = f"{target}_{stream_type}"
+        payload = {
+            "overall_status": "PASS",
+            "steps": [
+                {
+                    "name": "replay_parity",
+                    "artifact_path": str(validation_dir / f"ingestion_replay_parity_{profile}.json"),
+                },
+                {
+                    "name": "operational_evidence_final",
+                    "artifact_path": str(validation_dir / f"ingestion_operational_evidence_{profile}.json"),
+                },
+                {
+                    "name": "release_gates_final",
+                    "artifact_path": str(validation_dir / f"ingestion_release_gates_{profile}.json"),
+                },
+            ],
+        }
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    return _run
+
+
+def test_operational_cycle_runs_paper_for_trade_and_kline(tmp_path: Path):
+    commands: list[tuple[str, ...]] = []
+    raw_base_dir = tmp_path / "raw"
+    raw_base_dir.mkdir()
+    trade_normalized = tmp_path / "normalized" / "trade"
+    trade_normalized.mkdir(parents=True)
+    kline_normalized = tmp_path / "normalized" / "kline"
+    kline_normalized.mkdir(parents=True)
+
+    report = run_ingestion_operational_cycle(
+        workspace=tmp_path,
+        target="paper",
+        env="dev",
+        raw_base_dir=raw_base_dir,
+        normalized_paths={"trade": trade_normalized, "kline": kline_normalized},
+        symbol="BTCUSDT",
+        interval="1m",
+        output_dir=tmp_path / "docs" / "validation",
+        runner_id="ops-cycle-paper",
+        trigger="scheduled_paper_cycle",
+        provenance_source="ingestion_operational_cycle",
+        execution_ref="exec-paper-001",
+        channel="scheduled",
+        stream_types=("trade", "kline"),
+        executor=_executor_with_reports(commands, tmp_path),
+    )
+
+    assert report.pass_ok is True
+    assert report.overall_status == "PASS"
+    assert report.channel == "scheduled"
+    assert report.execution_ref == "exec-paper-001"
+    assert [step.stream_type for step in report.steps] == ["trade", "kline"]
+    assert "--execution-ref" in commands[0] and "exec-paper-001" in commands[0]
+    assert "--channel" in commands[1] and "scheduled" in commands[1]
+    assert "--stream-type" in commands[0] and "trade" in commands[0]
+    assert "--stream-type" in commands[1] and "kline" in commands[1]
+    manifest = json.loads((tmp_path / "docs" / "validation" / "ingestion_operational_cycle_paper.json").read_text(encoding="utf-8"))
+    assert manifest["overall_status"] == "PASS"
+    assert manifest["stream_types"] == ["trade", "kline"]
+    assert manifest["execution_ref"] == "exec-paper-001"
+    assert manifest["steps"][0]["artifacts_generated"]
+
+
+def test_operational_cycle_runs_live_with_runtime_overrides(tmp_path: Path):
+    commands: list[tuple[str, ...]] = []
+    raw_base_dir = tmp_path / "raw"
+    raw_base_dir.mkdir()
+    trade_normalized = tmp_path / "normalized" / "trade"
+    trade_normalized.mkdir(parents=True)
+    runtime_base_dir = tmp_path / "data" / "dev"
+    runtime_base_dir.mkdir(parents=True)
+
+    report = run_ingestion_operational_cycle(
+        workspace=tmp_path,
+        target="live",
+        env="dev",
+        runtime_env="prodshadow",
+        runtime_base_dir=runtime_base_dir,
+        raw_base_dir=raw_base_dir,
+        normalized_paths={"trade": trade_normalized},
+        symbol="BTCUSDT",
+        interval="1m",
+        output_dir=tmp_path / "docs" / "validation",
+        runner_id="ops-cycle-live",
+        trigger="pipeline_live_cycle",
+        provenance_source="ingestion_operational_cycle",
+        execution_ref="exec-live-001",
+        channel="pipeline",
+        stream_types=("trade",),
+        runtime_owner="team-ingestion",
+        runtime_surface_ref="grafana://ingestion/live/runtime",
+        runtime_verification_ref="check://grafana/runtime",
+        executor=_executor_with_reports(commands, tmp_path),
+    )
+
+    assert report.pass_ok is True
+    assert report.runtime_env == "prodshadow"
+    assert report.runtime_base_dir == str(runtime_base_dir)
+    assert "--runtime-base-dir" in commands[0]
+    assert str(runtime_base_dir) in commands[0]
+    assert "--runtime-owner" in commands[0]
+    assert "team-ingestion" in commands[0]
+
+
+def test_operational_cycle_rejects_book_stream_type(tmp_path: Path):
+    raw_base_dir = tmp_path / "raw"
+    raw_base_dir.mkdir()
+    with pytest.raises(ValueError, match="stream_type=book"):
+        run_ingestion_operational_cycle(
+            workspace=tmp_path,
+            target="paper",
+            env="dev",
+            raw_base_dir=raw_base_dir,
+            normalized_paths={},
+            symbol="BTCUSDT",
+            interval="1m",
+            output_dir=tmp_path / "docs" / "validation",
+            runner_id="ops-cycle-paper",
+            trigger="scheduled_paper_cycle",
+            provenance_source="ingestion_operational_cycle",
+            execution_ref="exec-paper-001",
+            channel="scheduled",
+            stream_types=("book",),
+        )
+
+
+def test_operational_cycle_requires_normalized_path_mapping(tmp_path: Path):
+    raw_base_dir = tmp_path / "raw"
+    raw_base_dir.mkdir()
+    with pytest.raises(ValueError, match="missing normalized path mapping"):
+        run_ingestion_operational_cycle(
+            workspace=tmp_path,
+            target="paper",
+            env="dev",
+            raw_base_dir=raw_base_dir,
+            normalized_paths={},
+            symbol="BTCUSDT",
+            interval="1m",
+            output_dir=tmp_path / "docs" / "validation",
+            runner_id="ops-cycle-paper",
+            trigger="scheduled_paper_cycle",
+            provenance_source="ingestion_operational_cycle",
+            execution_ref="exec-paper-001",
+            channel="scheduled",
+            stream_types=("trade",),
+        )

@@ -57,6 +57,8 @@ class ReadinessReport:
     raw_base_dir: str
     normalized_path: str
     validation_dir: str
+    execution_ref: str
+    channel: str
     overall_status: Literal["PASS", "FAIL"]
     pass_ok: bool
     steps: tuple[ReadinessStepResult, ...]
@@ -101,6 +103,24 @@ def run_ingestion_readiness(
     soak_duration_seconds: float = 150.0,
     soak_reconnect_after_events: int = 1,
     soak_induced_reconnects: int = 1,
+    provenance_source: str = "readiness_orchestrator",
+    execution_ref: str | None = None,
+    channel: Literal["manual", "scheduled", "pipeline"] = "pipeline",
+    runtime_owner: str | None = None,
+    runtime_surface_ref: str | None = None,
+    runtime_verification_ref: str | None = None,
+    alerts_owner: str | None = None,
+    alerts_surface_ref: str | None = None,
+    alerts_verification_ref: str | None = None,
+    logs_owner: str | None = None,
+    logs_surface_ref: str | None = None,
+    logs_verification_ref: str | None = None,
+    promotion_owner: str | None = None,
+    promotion_surface_ref: str | None = None,
+    promotion_verification_ref: str | None = None,
+    cutover_owner: str | None = None,
+    cutover_surface_ref: str | None = None,
+    cutover_verification_ref: str | None = None,
     executor: Executor | None = None,
 ) -> ReadinessReport:
     raw_base_dir = Path(raw_base_dir)
@@ -124,11 +144,11 @@ def run_ingestion_readiness(
     workspace = Path(workspace)
     validation_dir.mkdir(parents=True, exist_ok=True)
     executor = executor or _default_executor
-    benchmark_high_cardinality_symbol_counts = (
-        (100, 500) if target == "live" else (100,)
-        if benchmark_high_cardinality_symbol_counts is None
-        else tuple(int(value) for value in benchmark_high_cardinality_symbol_counts)
-    )
+    execution_ref = str(execution_ref or f"{target}:{stream_type}:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}")
+    if benchmark_high_cardinality_symbol_counts is None:
+        benchmark_high_cardinality_symbol_counts = (100, 500) if target == "live" else (100,)
+    else:
+        benchmark_high_cardinality_symbol_counts = tuple(int(value) for value in benchmark_high_cardinality_symbol_counts)
 
     replay_parity_path = _profile_artifact_path(validation_dir, "ingestion_replay_parity", profile)
     rest_canary_path = _profile_artifact_path(validation_dir, "ingestion_canary_report", profile)
@@ -142,8 +162,37 @@ def run_ingestion_readiness(
     live_drill_path = _profile_artifact_path(validation_dir, "ingestion_live_drill_report", profile)
     operational_evidence_path = _profile_artifact_path(validation_dir, "ingestion_operational_evidence", profile)
     operational_evidence_predrill_path = _profile_artifact_path(validation_dir, "ingestion_operational_evidence_pre_drill", profile)
+    observability_verification_path = _profile_artifact_path(validation_dir, "ingestion_observability_verification", profile)
 
     high_cardinality_arg = ",".join(str(value) for value in benchmark_high_cardinality_symbol_counts)
+    observability_command = [
+        sys.executable,
+        "scripts/ingestion_observability_verify.py",
+        "--target",
+        target,
+        "--output",
+        str(observability_verification_path),
+    ]
+    observability_args = (
+        ("--runtime-owner", runtime_owner),
+        ("--runtime-surface-ref", runtime_surface_ref),
+        ("--runtime-verification-ref", runtime_verification_ref),
+        ("--alerts-owner", alerts_owner),
+        ("--alerts-surface-ref", alerts_surface_ref),
+        ("--alerts-verification-ref", alerts_verification_ref),
+        ("--logs-owner", logs_owner),
+        ("--logs-surface-ref", logs_surface_ref),
+        ("--logs-verification-ref", logs_verification_ref),
+        ("--promotion-owner", promotion_owner),
+        ("--promotion-surface-ref", promotion_surface_ref),
+        ("--promotion-verification-ref", promotion_verification_ref),
+        ("--cutover-owner", cutover_owner),
+        ("--cutover-surface-ref", cutover_surface_ref),
+        ("--cutover-verification-ref", cutover_verification_ref),
+    )
+    for flag, value in observability_args:
+        if value:
+            observability_command.extend([flag, str(value)])
 
     gate_base_dir_args: tuple[str, ...] = ()
     if runtime_base_dir is not None:
@@ -212,6 +261,11 @@ def run_ingestion_readiness(
                 str(vendor_contracts_path),
             ),
             str(vendor_contracts_path),
+        ),
+        (
+            "observability_verification",
+            tuple(observability_command),
+            str(observability_verification_path),
         ),
     ]
 
@@ -341,11 +395,17 @@ def run_ingestion_readiness(
                         "--live-drill-path",
                         str(live_drill_path),
                         "--provenance-source",
-                        "readiness_orchestrator",
+                        provenance_source,
                         "--runner-id",
                         f"readiness:{profile}:predrill",
                         "--trigger",
                         "readiness_live_predrill",
+                        "--execution-ref",
+                        execution_ref,
+                        "--channel",
+                        channel,
+                        "--observability-verification-path",
+                        str(observability_verification_path),
                         "--output",
                         str(operational_evidence_predrill_path),
                     ),
@@ -437,11 +497,17 @@ def run_ingestion_readiness(
                         "--live-drill-path",
                         str(live_drill_path),
                         "--provenance-source",
-                        "readiness_orchestrator",
+                        provenance_source,
                         "--runner-id",
                         f"readiness:{profile}:final",
                         "--trigger",
                         "readiness_live_final",
+                        "--execution-ref",
+                        execution_ref,
+                        "--channel",
+                        channel,
+                        "--observability-verification-path",
+                        str(observability_verification_path),
                         "--output",
                         str(operational_evidence_path),
                     ),
@@ -479,11 +545,17 @@ def run_ingestion_readiness(
                     "--live-drill-path",
                     str(live_drill_path),
                     "--provenance-source",
-                    "readiness_orchestrator",
+                    provenance_source,
                     "--runner-id",
                     f"readiness:{profile}:final",
                     "--trigger",
                     "readiness_paper_final",
+                    "--execution-ref",
+                    execution_ref,
+                    "--channel",
+                    channel,
+                    "--observability-verification-path",
+                    str(observability_verification_path),
                     "--output",
                     str(operational_evidence_path),
                 ),
@@ -568,6 +640,8 @@ def run_ingestion_readiness(
         raw_base_dir=str(raw_base_dir),
         normalized_path=str(normalized_path),
         validation_dir=str(validation_dir),
+        execution_ref=execution_ref,
+        channel=channel,
         overall_status=overall_status,
         pass_ok=overall_status == "PASS",
         steps=tuple(step_results),

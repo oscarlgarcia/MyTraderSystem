@@ -27,12 +27,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provenance-source", default="scripted_operational_evidence")
     parser.add_argument("--runner-id", default="ingestion_operational_evidence")
     parser.add_argument("--trigger", default="manual")
+    parser.add_argument("--execution-ref", default="manual-local")
+    parser.add_argument("--channel", default="manual", choices=["manual", "scheduled", "pipeline"])
+    parser.add_argument("--observability-verification-path", default=None)
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     stream_types = tuple(part.strip() for part in str(args.stream_types).split(",") if part.strip())
+    if "book" in {stream_type.lower() for stream_type in stream_types}:
+        raise SystemExit("operational evidence does not support stream_type=book")
     report = build_operational_evidence_report(
         target=args.target,
         phase=args.phase,
@@ -48,6 +53,9 @@ def main() -> int:
         provenance_source=str(args.provenance_source),
         runner_id=str(args.runner_id),
         trigger=str(args.trigger),
+        execution_ref=str(args.execution_ref),
+        channel=str(args.channel),
+        observability_verification_path=Path(args.observability_verification_path) if args.observability_verification_path else None,
     )
     output_path = Path(args.output)
     write_operational_evidence_report(output_path, report)

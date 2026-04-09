@@ -572,3 +572,6 @@
 - `trade` en `live` queda respaldado por exact recovery, handoff historico-live y runtime validation
 - `book` permanece fuera de `paper` y `live` hasta contar con runtime y recovery propios
 - la promotion paper/live consolida artifacts en `docs/validation/ingestion_operational_evidence*.json`, donde se bloquea evidence stale, origen incoherente, evidence derivada inline y ausencia de `owner`/`surface_ref`/`verification_ref` en las surfaces externas de observabilidad
+- el cierre operativo estandar se orquesta con `scripts/ingestion_operational_cycle.py`, que encapsula readiness por perfil, verificacion de observabilidad, evidence agregada y gates finales
+- `scripts/ingestion_observability_verify.py` persiste las surfaces externas verificadas y `release_gates` debe fallar si ese artifact falta o viene de derivacion inline
+- el contrato operativo final exige `execution_ref` y `channel`; solo `scheduled` o `pipeline` son validos para promotion final

@@ -30,6 +30,8 @@
 - `docs/validation/ingestion_live_drill_report.json`
 - `docs/operations/ingestion_rollback_checklist.md`
 - `docs/ops/live_cutover.md`
+- `docs/operations/ingestion_operational_closure_paper.md`
+- `docs/operations/ingestion_operational_closure_live.md`
 
 ## Artifact Freshness And Invalidation
 
@@ -147,20 +149,14 @@ Waivers are forbidden for:
 Run these commands from the project root in the production-ready environment:
 
 ```powershell
-docker compose exec app poetry run python scripts/promote_ingestion_dataset.py --target live --contract-mode strict
-docker compose exec app poetry run python scripts/check_replay_parity.py
-docker compose exec app poetry run python scripts/ingestion_canary.py --mode rest-baseline
-docker compose exec app poetry run python scripts/ingestion_ws_canary.py --symbol BTCUSDT --stream-type kline --interval 1m
-docker compose exec app poetry run python scripts/ingestion_storage_benchmark.py
-docker compose exec app poetry run python scripts/ingestion_vendor_contracts.py
-docker compose exec app poetry run python scripts/ingestion_soak.py --mode ws-live --symbol BTCUSDT --stream-type kline --interval 1m
-docker compose exec app poetry run python scripts/ingestion_failure_injection.py
-docker compose exec app poetry run python scripts/ingestion_operational_evidence.py --target live --phase predrill --stream-types trade,kline --provenance-source readiness_orchestrator --runner-id readiness:live_trade_kline:predrill --trigger readiness_live_predrill --output docs/validation/ingestion_operational_evidence_pre_drill_live.json
-docker compose exec app poetry run python scripts/ingestion_release_gates.py --target live --operational-evidence-path docs/validation/ingestion_operational_evidence_pre_drill_live.json
-docker compose exec app poetry run python scripts/ingestion_live_drill.py --env dev
-docker compose exec app poetry run python scripts/ingestion_operational_evidence.py --target live --phase final --stream-types trade,kline --provenance-source readiness_orchestrator --runner-id readiness:live_trade_kline:final --trigger readiness_live_final --output docs/validation/ingestion_operational_evidence_live.json
-docker compose exec app poetry run python scripts/ingestion_release_gates.py --target live --operational-evidence-path docs/validation/ingestion_operational_evidence_live.json
+poetry run python scripts/ingestion_operational_cycle.py --target live --env dev --runtime-env dev --runtime-base-dir data/dev --raw-base-dir data/dev/raw --normalized-path trade=data/dev/normalized/trades/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09 --normalized-path kline=data/dev/normalized/bars/env=dev/venue=BINANCE/symbol=BTCUSDT/date=2026-04-09 --symbol BTCUSDT --stream-types trade,kline --interval 1m --output-dir docs/validation/operational/live --runner-id ingestion-live-closure --trigger scheduled_live_cycle --provenance-source ingestion_operational_cycle --execution-ref live-dev-btcusdt-20260409T100000Z --channel scheduled --runtime-owner team-ingestion --runtime-surface-ref grafana://ingestion/live/runtime --runtime-verification-ref ops://live/runtime/20260409T100000Z --alerts-owner team-ingestion-oncall --alerts-surface-ref pagerduty://ingestion/live/alerts --alerts-verification-ref ops://live/alerts/20260409T100000Z --logs-owner team-observability --logs-surface-ref loki://ingestion/live/logs --logs-verification-ref ops://live/logs/20260409T100000Z --promotion-owner team-ingestion --promotion-surface-ref runbook://docs/operations/ingestion_promotion_runbook.md --promotion-verification-ref ops://live/promotion/20260409T100000Z --cutover-owner team-ingestion --cutover-surface-ref runbook://docs/ops/live_cutover.md --cutover-verification-ref ops://live/cutover/20260409T100000Z
 ```
+
+Notas obligatorias:
+- el comando anterior ya encapsula el caso estandar por perfil (`live_trade`, `live_kline`)
+- `channel=manual` no es valido para promotion final
+- `execution_ref` debe ser unico por corrida operativa
+- cualquier intento con `book` debe considerarse `NO-GO`
 
 ## Abort Conditions
 

@@ -31,6 +31,9 @@ class OperationalArtifactEvidence:
 class OperationalObservabilityEvidence:
     external_surfaces: tuple[dict[str, object], ...]
     repo_runbooks: tuple[str, ...]
+    verification_artifact_path: str | None
+    verification_generated_at: str | None
+    verification_source: str
     pass_ok: bool
     reasons: tuple[str, ...]
 
@@ -41,6 +44,8 @@ class OperationalEvidenceProvenance:
     runner_id: str
     trigger: str
     generated_by: str
+    execution_ref: str
+    channel: str
     verification_scope: str
     derived_in_process: bool
 
@@ -84,6 +89,9 @@ def build_operational_evidence_report(
     runner_id: str = "ingestion_operational_evidence",
     trigger: str = "manual",
     generated_by: str = "scripts/ingestion_operational_evidence.py",
+    execution_ref: str = "manual-local",
+    channel: str = "manual",
+    observability_verification_path: Path | None = None,
     derived_in_process: bool = False,
 ) -> OperationalEvidenceReport:
     normalized_stream_types = normalize_feed_types(stream_types)
@@ -102,7 +110,11 @@ def build_operational_evidence_report(
     )
     artifacts = tuple(_collect_artifact_evidence(name=name, path=path, required=required, max_age=max_age) for name, path, required, max_age in artifact_specs)
     generated_at = datetime.now(timezone.utc).isoformat()
-    observability = _collect_observability_evidence(target=target, generated_at=generated_at)
+    observability = _collect_observability_evidence(
+        target=target,
+        generated_at=generated_at,
+        observability_verification_path=observability_verification_path,
+    )
     reasons = [reason for artifact in artifacts for reason in artifact.reasons]
     reasons.extend(observability.reasons)
     pass_ok = all((artifact.pass_ok and artifact.fresh) if artifact.required else True for artifact in artifacts) and observability.pass_ok
@@ -129,6 +141,8 @@ def build_operational_evidence_report(
             runner_id=runner_id,
             trigger=trigger,
             generated_by=generated_by,
+            execution_ref=execution_ref,
+            channel=channel,
             verification_scope="external_operational_surfaces",
             derived_in_process=derived_in_process,
         ),
@@ -140,28 +154,108 @@ def build_operational_evidence_report(
     )
 
 
-def _collect_observability_evidence(*, target: ReleaseTarget, generated_at: str) -> OperationalObservabilityEvidence:
+def build_observability_verification_report(
+    *,
+    target: ReleaseTarget,
+    generated_at: str | None = None,
+    verification_source: str = "manual_surface_check",
+    surface_overrides: dict[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
     report = build_observability_contract_report(target=target)
-    repo_runbooks = tuple(sorted({surface.repo_reference for surface in report.external_surfaces if surface.kind == "runbook"}))
+    checked_at = generated_at or datetime.now(timezone.utc).isoformat()
+    overrides = surface_overrides or {}
+    surfaces: list[dict[str, object]] = []
     reasons: list[str] = []
-    for repo_reference in repo_runbooks:
-        if not Path(repo_reference).exists():
-            reasons.append(f"missing observability runbook reference: {repo_reference}")
-    surfaces = tuple(
-        {
+    for surface in report.external_surfaces:
+        override = overrides.get(surface.surface_id, {})
+        payload = {
             "surface_id": surface.surface_id,
             "kind": surface.kind,
             "description": surface.description,
             "repo_reference": surface.repo_reference,
-            "owner": surface.owner,
-            "surface_ref": surface.surface_ref,
-            "verification_mode": surface.verification_mode,
-            "verified_at": generated_at,
-            "verification_ref": f"artifact://ingestion-operational-evidence/{target}/{surface.surface_id}",
-            "pass_ok": True,
+            "owner": str(override.get("owner", surface.owner)),
+            "surface_ref": str(override.get("surface_ref", surface.surface_ref)),
+            "verification_mode": str(override.get("verification_mode", surface.verification_mode)),
+            "verified_at": str(override.get("verified_at", checked_at)),
+            "verification_ref": str(override.get("verification_ref", f"manual://{surface.surface_id}")),
+            "pass_ok": bool(override.get("pass_ok", True)),
         }
-        for surface in report.external_surfaces
-    )
+        if not payload["owner"]:
+            reasons.append(f"missing observability owner for {surface.surface_id}")
+        if not payload["surface_ref"]:
+            reasons.append(f"missing observability surface_ref for {surface.surface_id}")
+        if not payload["verification_ref"]:
+            reasons.append(f"missing observability verification_ref for {surface.surface_id}")
+        if not payload["verified_at"]:
+            reasons.append(f"missing observability verified_at for {surface.surface_id}")
+        if payload["pass_ok"] is not True:
+            reasons.append(f"observability surface not passing: {surface.surface_id}")
+        surfaces.append(payload)
+    repo_runbooks = tuple(sorted({surface.repo_reference for surface in report.external_surfaces if surface.kind == "runbook"}))
+    for repo_reference in repo_runbooks:
+        if not Path(repo_reference).exists():
+            reasons.append(f"missing observability runbook reference: {repo_reference}")
+    return {
+        "generated_at": checked_at,
+        "target": target,
+        "verification_source": verification_source,
+        "repo_runbooks": list(repo_runbooks),
+        "external_surfaces": surfaces,
+        "pass_ok": report.pass_ok and not reasons,
+        "reasons": reasons or ["observability verification artifact aligned"],
+    }
+
+
+def write_observability_verification_report(path: Path, report: dict[str, object]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _collect_observability_evidence(
+    *,
+    target: ReleaseTarget,
+    generated_at: str,
+    observability_verification_path: Path | None,
+) -> OperationalObservabilityEvidence:
+    report = build_observability_contract_report(target=target)
+    reasons: list[str] = []
+    repo_runbooks: tuple[str, ...]
+    verification_artifact_path: str | None = None
+    verification_generated_at: str | None = None
+    verification_source = "inline_contract_derivation"
+    if observability_verification_path is not None and observability_verification_path.exists():
+        payload = json.loads(observability_verification_path.read_text(encoding="utf-8"))
+        verification_artifact_path = str(observability_verification_path)
+        verification_generated_at = str(payload.get("generated_at") or "")
+        verification_source = str(payload.get("verification_source") or "persisted_operational_verification")
+        repo_runbooks = tuple(str(item) for item in payload.get("repo_runbooks", []))
+        surfaces = tuple(payload.get("external_surfaces", []))
+        if payload.get("target") != target:
+            reasons.append(f"observability verification target {payload.get('target')!r} does not match {target!r}")
+        if payload.get("pass_ok") is not True:
+            reasons.append("observability verification artifact is not passing")
+    else:
+        repo_runbooks = tuple(sorted({surface.repo_reference for surface in report.external_surfaces if surface.kind == "runbook"}))
+        surfaces = tuple(
+            {
+                "surface_id": surface.surface_id,
+                "kind": surface.kind,
+                "description": surface.description,
+                "repo_reference": surface.repo_reference,
+                "owner": surface.owner,
+                "surface_ref": surface.surface_ref,
+                "verification_mode": surface.verification_mode,
+                "verified_at": generated_at,
+                "verification_ref": f"artifact://ingestion-operational-evidence/{target}/{surface.surface_id}",
+                "pass_ok": True,
+            }
+            for surface in report.external_surfaces
+        )
+        reasons.append("observability verification artifact missing; using inline contract derivation")
+    for repo_reference in repo_runbooks:
+        if not Path(repo_reference).exists():
+            reasons.append(f"missing observability runbook reference: {repo_reference}")
     if not surfaces:
         reasons.append("missing external observability surfaces")
     for surface in surfaces:
@@ -174,6 +268,9 @@ def _collect_observability_evidence(*, target: ReleaseTarget, generated_at: str)
     return OperationalObservabilityEvidence(
         external_surfaces=surfaces,
         repo_runbooks=repo_runbooks,
+        verification_artifact_path=verification_artifact_path,
+        verification_generated_at=verification_generated_at,
+        verification_source=verification_source,
         pass_ok=report.pass_ok and not reasons,
         reasons=tuple(reasons or ["observability surfaces verified and runbooks present"]),
     )

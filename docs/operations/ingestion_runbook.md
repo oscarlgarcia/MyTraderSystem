@@ -7,6 +7,26 @@ Runbook operativo minimo para validar el modulo de ingestion antes de promoverlo
 - La observabilidad externa exigida por contrato se resume en cuatro superficies minimas por target: `ingestion.<target>.runtime`, `ingestion.<target>.alerts`, `ingestion.<target>.logs` e `ingestion.<target>.promotion`. Para `live` se exige ademas `ingestion.live.cutover`.
 - Un gate ya no debe aceptar evidence derivada inline dentro de `run_release_gates`. El artefacto agregado debe venir persistido desde `scripts/ingestion_operational_evidence.py`, con `provenance.source`, `provenance.runner_id`, `provenance.trigger`, `provenance.generated_by` y `provenance.derived_in_process = false`.
 
+## Cierre operativo estandar
+- El flujo operativo recomendado ya no es lanzar piezas sueltas una a una, sino ejecutar el orquestador:
+  - `poetry run python scripts/ingestion_operational_cycle.py`
+- Ese script ejecuta por perfil:
+  - `replay_parity`
+  - canaries
+  - benchmark
+  - vendor contracts
+  - `ingestion_observability_verify.py`
+  - `ingestion_operational_evidence.py`
+  - `ingestion_release_gates.py`
+  - para `live`, tambien:
+    - `failure_injection`
+    - predrill gates
+    - `ingestion_live_drill.py`
+- Los playbooks ejecutables del caso estandar quedan en:
+  - `docs/operations/ingestion_operational_closure_paper.md`
+  - `docs/operations/ingestion_operational_closure_live.md`
+- `book` no es un feed valido para este flujo y cualquier intento debe tratarse como `NO-GO`.
+
 ## Comandos base
 - Shell del contenedor:
   - `docker compose exec app bash`

@@ -537,3 +537,20 @@ flowchart LR
 - La promotion operativa usa ahora un artefacto agregado `ingestion_operational_evidence*.json` para fijar freshness, origen de la evidence y surfaces externas obligatorias de observabilidad.
 - Ese artefacto ya no puede derivarse inline desde `run_release_gates`: debe existir persistido y declarar `provenance.source`, `provenance.runner_id`, `provenance.trigger`, `provenance.generated_by` y `provenance.derived_in_process = false`.
 - Cada surface de observabilidad declarada debe incluir `owner`, `surface_ref`, `verification_mode`, `verified_at`, `verification_ref` y `pass_ok = true`; si falta alguno, el gate de promotion debe fallar.
+
+## Cierre operativo estandar
+- El caso estandar de cierre operativo se ejecuta con `scripts/ingestion_operational_cycle.py`.
+- El script dispara `scripts/ingestion_readiness.py` por perfil y deja un manifest por target:
+  - `ingestion_operational_cycle_paper.json`
+  - `ingestion_operational_cycle_live.json`
+- Cada corrida debe fijar:
+  - `execution_ref`
+  - `channel`
+  - `runner_id`
+  - `trigger`
+  - `provenance_source`
+- `channel=manual` no es valido para cierre final de promotion.
+- La verificacion de observabilidad externa se persiste con `scripts/ingestion_observability_verify.py` y deja artifacts `ingestion_observability_verification_<profile>.json`.
+- Los playbooks ejecutables de referencia quedan en:
+  - `docs/operations/ingestion_operational_closure_paper.md`
+  - `docs/operations/ingestion_operational_closure_live.md`

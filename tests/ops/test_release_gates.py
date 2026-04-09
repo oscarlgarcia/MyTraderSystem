@@ -72,6 +72,7 @@ def _write_release_artifacts(
     failure_injection_path = tmp_path / "failure-injection.json"
     live_drill_path = tmp_path / "live-drill.json"
     operational_evidence_path = tmp_path / "operational-evidence.json"
+    observability_verification_path = tmp_path / f"observability-{target}.json"
     rest_generated_at = (NOW - timedelta(days=2)).isoformat() if stale_rest else NOW.isoformat()
     _write_json(
         rest_path,
@@ -205,6 +206,71 @@ def _write_release_artifacts(
     )
     observability_contract = build_observability_contract_report(target=target)
     _write_json(
+        observability_verification_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target": target,
+            "verification_source": "scheduled_surface_check",
+            "repo_runbooks": [
+                "docs/operations/ingestion_runbook.md",
+                "docs/operations/ingestion_promotion_runbook.md",
+                *(
+                    ["docs/ops/live_cutover.md"]
+                    if target == "live"
+                    else []
+                ),
+            ],
+            "external_surfaces": [
+                {
+                    "surface_id": surface.surface_id,
+                    "kind": surface.kind,
+                    "description": surface.description,
+                    "repo_reference": surface.repo_reference,
+                    "owner": surface.owner,
+                    "surface_ref": surface.surface_ref,
+                    "verification_mode": surface.verification_mode,
+                    "verified_at": NOW.isoformat(),
+                    "verification_ref": f"artifact://tests/{surface.surface_id}",
+                    "pass_ok": True,
+                }
+                for surface in observability_contract.external_surfaces
+            ],
+            "pass_ok": True,
+            "reasons": ["observability verification artifact aligned"],
+        },
+    )
+    observability_verification_path = tmp_path / "observability-paper-trade.json"
+    _write_json(
+        observability_verification_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target": "paper",
+            "verification_source": "scheduled_surface_check",
+            "repo_runbooks": [
+                "docs/operations/ingestion_runbook.md",
+                "docs/operations/ingestion_promotion_runbook.md",
+            ],
+            "external_surfaces": [
+                {
+                    "surface_id": surface.surface_id,
+                    "kind": surface.kind,
+                    "description": surface.description,
+                    "repo_reference": surface.repo_reference,
+                    "owner": surface.owner,
+                    "surface_ref": surface.surface_ref,
+                    "verification_mode": surface.verification_mode,
+                    "verified_at": NOW.isoformat(),
+                    "verification_ref": f"artifact://tests/{surface.surface_id}",
+                    "pass_ok": True,
+                }
+                for surface in build_observability_contract_report(target="paper").external_surfaces
+            ],
+            "pass_ok": True,
+            "reasons": ["observability verification artifact aligned"],
+        },
+    )
+
+    _write_json(
         operational_evidence_path,
         {
             "generated_at": NOW.isoformat(),
@@ -224,12 +290,17 @@ def _write_release_artifacts(
                 "runner_id": f"tests:{target}:{stream_type}:{phase}",
                 "trigger": f"tests_{target}_{phase}",
                 "generated_by": "tests/ops/test_release_gates.py",
+                "execution_ref": f"exec-{target}-{stream_type}-{phase}",
+                "channel": "pipeline",
                 "verification_scope": "external_operational_surfaces",
                 "derived_in_process": False,
             },
             "excluded_feed_policy": {"book": "excluded"},
             "observability": {
                 "pass_ok": True,
+                "verification_artifact_path": str(observability_verification_path),
+                "verification_generated_at": NOW.isoformat(),
+                "verification_source": "scheduled_surface_check",
                 "repo_runbooks": [
                     "docs/operations/ingestion_runbook.md",
                     "docs/operations/ingestion_promotion_runbook.md",
@@ -335,6 +406,7 @@ def test_release_gates_paper_trade_passes_without_runtime_proxy_artifacts(tmp_pa
     parity_path = tmp_path / "parity.json"
     vendor_contracts_path = tmp_path / "vendor-contracts.json"
     operational_evidence_path = tmp_path / "operational-evidence.json"
+    observability_verification_path = tmp_path / "observability-paper-trade.json"
     _write_json(
         benchmark_path,
         {
@@ -377,7 +449,35 @@ def test_release_gates_paper_trade_passes_without_runtime_proxy_artifacts(tmp_pa
             "returncode": 0,
         },
     )
-
+    _write_json(
+        observability_verification_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target": "paper",
+            "verification_source": "scheduled_surface_check",
+            "repo_runbooks": [
+                "docs/operations/ingestion_runbook.md",
+                "docs/operations/ingestion_promotion_runbook.md",
+            ],
+            "external_surfaces": [
+                {
+                    "surface_id": surface.surface_id,
+                    "kind": surface.kind,
+                    "description": surface.description,
+                    "repo_reference": surface.repo_reference,
+                    "owner": surface.owner,
+                    "surface_ref": surface.surface_ref,
+                    "verification_mode": surface.verification_mode,
+                    "verified_at": NOW.isoformat(),
+                    "verification_ref": f"artifact://tests/{surface.surface_id}",
+                    "pass_ok": True,
+                }
+                for surface in build_observability_contract_report(target="paper").external_surfaces
+            ],
+            "pass_ok": True,
+            "reasons": ["observability verification artifact aligned"],
+        },
+    )
     _write_json(
         operational_evidence_path,
         {
@@ -398,12 +498,17 @@ def test_release_gates_paper_trade_passes_without_runtime_proxy_artifacts(tmp_pa
                 "runner_id": "tests:paper:trade:final",
                 "trigger": "tests_paper_final",
                 "generated_by": "tests/ops/test_release_gates.py",
+                "execution_ref": "exec-paper-trade-final",
+                "channel": "pipeline",
                 "verification_scope": "external_operational_surfaces",
                 "derived_in_process": False,
             },
             "excluded_feed_policy": {"book": "excluded"},
             "observability": {
                 "pass_ok": True,
+                "verification_artifact_path": str(observability_verification_path),
+                "verification_generated_at": NOW.isoformat(),
+                "verification_source": "scheduled_surface_check",
                 "repo_runbooks": [
                     "docs/operations/ingestion_runbook.md",
                     "docs/operations/ingestion_promotion_runbook.md",
@@ -509,7 +614,36 @@ def test_release_gates_paper_book_is_rejected_by_support_matrix(tmp_path: Path):
             "returncode": 0,
         },
     )
-
+    observability_verification_path = tmp_path / "observability-paper-book.json"
+    _write_json(
+        observability_verification_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target": "paper",
+            "verification_source": "scheduled_surface_check",
+            "repo_runbooks": [
+                "docs/operations/ingestion_runbook.md",
+                "docs/operations/ingestion_promotion_runbook.md",
+            ],
+            "external_surfaces": [
+                {
+                    "surface_id": surface.surface_id,
+                    "kind": surface.kind,
+                    "description": surface.description,
+                    "repo_reference": surface.repo_reference,
+                    "owner": surface.owner,
+                    "surface_ref": surface.surface_ref,
+                    "verification_mode": surface.verification_mode,
+                    "verified_at": NOW.isoformat(),
+                    "verification_ref": f"artifact://tests/{surface.surface_id}",
+                    "pass_ok": True,
+                }
+                for surface in build_observability_contract_report(target="paper").external_surfaces
+            ],
+            "pass_ok": True,
+            "reasons": ["observability verification artifact aligned"],
+        },
+    )
     _write_json(
         operational_evidence_path,
         {
@@ -527,12 +661,17 @@ def test_release_gates_paper_book_is_rejected_by_support_matrix(tmp_path: Path):
                 "runner_id": "tests:paper:book:final",
                 "trigger": "tests_paper_final",
                 "generated_by": "tests/ops/test_release_gates.py",
+                "execution_ref": "exec-paper-book-final",
+                "channel": "pipeline",
                 "verification_scope": "external_operational_surfaces",
                 "derived_in_process": False,
             },
             "excluded_feed_policy": {"book": "excluded"},
             "observability": {
                 "pass_ok": True,
+                "verification_artifact_path": str(observability_verification_path),
+                "verification_generated_at": NOW.isoformat(),
+                "verification_source": "scheduled_surface_check",
                 "repo_runbooks": [
                     "docs/operations/ingestion_runbook.md",
                     "docs/operations/ingestion_promotion_runbook.md",
@@ -661,6 +800,91 @@ def test_release_gates_fail_when_operational_evidence_is_only_derived_inline(tmp
     block = next(block for block in report.blocks if block.name == "operational_evidence")
     assert block.status == "fail"
     assert any("inline derived evidence" in reason for reason in block.reasons)
+
+
+def test_release_gates_fail_when_final_operational_evidence_channel_is_manual(tmp_path: Path):
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path, operational_evidence_path = _write_release_artifacts(tmp_path)
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    payload = json.loads(operational_evidence_path.read_text(encoding="utf-8"))
+    payload["provenance"]["channel"] = "manual"
+    _write_json(operational_evidence_path, payload)
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("kline",),
+        rest_canary_path=rest_path,
+        ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+        operational_evidence_path=operational_evidence_path,
+    )
+
+    block = next(block for block in report.blocks if block.name == "operational_evidence")
+    assert block.status == "fail"
+    assert any("provenance.channel" in reason for reason in block.reasons)
+
+
+def test_release_gates_fail_when_operational_evidence_execution_ref_is_missing(tmp_path: Path):
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path, operational_evidence_path = _write_release_artifacts(tmp_path)
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    payload = json.loads(operational_evidence_path.read_text(encoding="utf-8"))
+    payload["provenance"]["execution_ref"] = ""
+    _write_json(operational_evidence_path, payload)
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("kline",),
+        rest_canary_path=rest_path,
+        ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+        operational_evidence_path=operational_evidence_path,
+    )
+
+    block = next(block for block in report.blocks if block.name == "operational_evidence")
+    assert block.status == "fail"
+    assert any("execution_ref" in reason for reason in block.reasons)
+
+
+def test_release_gates_fail_when_observability_verification_artifact_metadata_is_missing(tmp_path: Path):
+    rest_path, ws_path, benchmark_path, parity_path, soak_path, vendor_contracts_path, failure_injection_path, live_drill_path, operational_evidence_path = _write_release_artifacts(tmp_path)
+    _write_metadata_snapshot(tmp_path, env="dev", mode="runtime")
+    payload = json.loads(operational_evidence_path.read_text(encoding="utf-8"))
+    payload["observability"]["verification_artifact_path"] = ""
+    payload["observability"]["verification_source"] = "inline_contract_derivation"
+    _write_json(operational_evidence_path, payload)
+
+    report = run_release_gates(
+        base_dir=tmp_path,
+        env="dev",
+        target="paper",
+        stream_types=("kline",),
+        rest_canary_path=rest_path,
+        ws_canary_path=ws_path,
+        replay_parity_path=parity_path,
+        benchmark_path=benchmark_path,
+        soak_path=soak_path,
+        network_contracts_path=vendor_contracts_path,
+        failure_injection_path=failure_injection_path,
+        live_drill_path=live_drill_path,
+        operational_evidence_path=operational_evidence_path,
+    )
+
+    block = next(block for block in report.blocks if block.name == "operational_observability")
+    assert block.status == "fail"
+    assert any("verification_artifact_path" in reason or "verification_source" in reason for reason in block.reasons)
 
 
 def test_release_gates_fail_when_observability_surface_verification_is_incomplete(tmp_path: Path):
@@ -860,6 +1084,37 @@ def test_release_gates_live_trade_passes_without_rest_canary(tmp_path: Path):
             "overall_status": "PASS",
         },
     )
+    observability_verification_path = tmp_path / "observability-live-trade.json"
+    _write_json(
+        observability_verification_path,
+        {
+            "generated_at": NOW.isoformat(),
+            "target": "live",
+            "verification_source": "scheduled_surface_check",
+            "repo_runbooks": [
+                "docs/operations/ingestion_runbook.md",
+                "docs/operations/ingestion_promotion_runbook.md",
+                "docs/ops/live_cutover.md",
+            ],
+            "external_surfaces": [
+                {
+                    "surface_id": surface.surface_id,
+                    "kind": surface.kind,
+                    "description": surface.description,
+                    "repo_reference": surface.repo_reference,
+                    "owner": surface.owner,
+                    "surface_ref": surface.surface_ref,
+                    "verification_mode": surface.verification_mode,
+                    "verified_at": NOW.isoformat(),
+                    "verification_ref": f"artifact://tests/{surface.surface_id}",
+                    "pass_ok": True,
+                }
+                for surface in build_observability_contract_report(target="live").external_surfaces
+            ],
+            "pass_ok": True,
+            "reasons": ["observability verification artifact aligned"],
+        },
+    )
     _write_json(
         operational_evidence_path,
         {
@@ -888,12 +1143,17 @@ def test_release_gates_live_trade_passes_without_rest_canary(tmp_path: Path):
                 "runner_id": "tests:live:trade:final",
                 "trigger": "tests_live_final",
                 "generated_by": "tests/ops/test_release_gates.py",
+                "execution_ref": "exec-live-trade-final",
+                "channel": "pipeline",
                 "verification_scope": "external_operational_surfaces",
                 "derived_in_process": False,
             },
             "excluded_feed_policy": {"book": "excluded"},
             "observability": {
                 "pass_ok": True,
+                "verification_artifact_path": str(observability_verification_path),
+                "verification_generated_at": NOW.isoformat(),
+                "verification_source": "scheduled_surface_check",
                 "repo_runbooks": [
                     "docs/operations/ingestion_runbook.md",
                     "docs/operations/ingestion_promotion_runbook.md",

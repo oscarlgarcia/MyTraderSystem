@@ -410,6 +410,14 @@ def _operational_evidence_block(
         reasons.append("operational evidence provenance missing generated_by")
     if not str(provenance.get("trigger") or "").strip():
         reasons.append("operational evidence provenance missing trigger")
+    if not str(provenance.get("execution_ref") or "").strip():
+        reasons.append("operational evidence provenance missing execution_ref")
+    channel = str(provenance.get("channel") or "").strip().lower()
+    if not channel:
+        reasons.append("operational evidence provenance missing channel")
+    phase = str(payload.get("phase") or "").strip().lower()
+    if phase == "final" and channel not in {"scheduled", "pipeline"}:
+        reasons.append("final promotion requires provenance.channel in {scheduled, pipeline}")
     age = _artifact_age(path, payload)
     if age is not None and age > timedelta(hours=24):
         reasons.append("operational evidence artifact stale: older than 86400s")
@@ -434,6 +442,8 @@ def _operational_evidence_block(
             "evidence_origin": evidence_origin,
             "cadence_policy": payload.get("cadence_policy"),
             "provenance": provenance,
+            "execution_ref": provenance.get("execution_ref"),
+            "channel": provenance.get("channel"),
             "derived_in_process": derived_in_process,
         },
     )
@@ -993,6 +1003,12 @@ def _operational_observability_block(
     if not isinstance(external_surfaces, (list, tuple)) or not external_surfaces:
         reasons.append("operational observability evidence missing external surfaces")
         external_surfaces = []
+    verification_artifact_path = str(observability_payload.get("verification_artifact_path") or "").strip()
+    verification_source = str(observability_payload.get("verification_source") or "").strip()
+    if not verification_artifact_path:
+        reasons.append("operational observability evidence missing verification_artifact_path")
+    if verification_source in {"", "inline_contract_derivation"}:
+        reasons.append("operational observability evidence must come from a persisted verification artifact")
     expected_contract = build_observability_contract_report(target=target)
     expected_surface_ids = {surface.surface_id for surface in expected_contract.external_surfaces}
     observed_surface_ids: set[str] = set()
@@ -1036,6 +1052,9 @@ def _operational_observability_block(
             "artifact_age_seconds": age.total_seconds() if age is not None else None,
             "repo_runbooks": repo_runbooks,
             "external_surfaces": external_surfaces,
+            "verification_artifact_path": verification_artifact_path,
+            "verification_generated_at": observability_payload.get("verification_generated_at"),
+            "verification_source": verification_source,
             "derived_in_process": derived_in_process,
         },
     )

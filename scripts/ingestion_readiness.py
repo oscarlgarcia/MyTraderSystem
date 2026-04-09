@@ -51,6 +51,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--soak-duration-seconds", type=float, default=150.0)
     parser.add_argument("--soak-reconnect-after-events", type=int, default=1)
     parser.add_argument("--soak-induced-reconnects", type=int, default=1)
+    parser.add_argument("--provenance-source", default="readiness_orchestrator")
+    parser.add_argument("--execution-ref", default=None)
+    parser.add_argument("--channel", choices=["manual", "scheduled", "pipeline"], default="pipeline")
+    parser.add_argument("--runtime-owner", default=None)
+    parser.add_argument("--runtime-surface-ref", default=None)
+    parser.add_argument("--runtime-verification-ref", default=None)
+    parser.add_argument("--alerts-owner", default=None)
+    parser.add_argument("--alerts-surface-ref", default=None)
+    parser.add_argument("--alerts-verification-ref", default=None)
+    parser.add_argument("--logs-owner", default=None)
+    parser.add_argument("--logs-surface-ref", default=None)
+    parser.add_argument("--logs-verification-ref", default=None)
+    parser.add_argument("--promotion-owner", default=None)
+    parser.add_argument("--promotion-surface-ref", default=None)
+    parser.add_argument("--promotion-verification-ref", default=None)
+    parser.add_argument("--cutover-owner", default=None)
+    parser.add_argument("--cutover-surface-ref", default=None)
+    parser.add_argument("--cutover-verification-ref", default=None)
     return parser
 
 
@@ -92,6 +110,24 @@ def main() -> int:
         soak_duration_seconds=args.soak_duration_seconds,
         soak_reconnect_after_events=args.soak_reconnect_after_events,
         soak_induced_reconnects=args.soak_induced_reconnects,
+        provenance_source=args.provenance_source,
+        execution_ref=args.execution_ref,
+        channel=args.channel,
+        runtime_owner=args.runtime_owner,
+        runtime_surface_ref=args.runtime_surface_ref,
+        runtime_verification_ref=args.runtime_verification_ref,
+        alerts_owner=args.alerts_owner,
+        alerts_surface_ref=args.alerts_surface_ref,
+        alerts_verification_ref=args.alerts_verification_ref,
+        logs_owner=args.logs_owner,
+        logs_surface_ref=args.logs_surface_ref,
+        logs_verification_ref=args.logs_verification_ref,
+        promotion_owner=args.promotion_owner,
+        promotion_surface_ref=args.promotion_surface_ref,
+        promotion_verification_ref=args.promotion_verification_ref,
+        cutover_owner=args.cutover_owner,
+        cutover_surface_ref=args.cutover_surface_ref,
+        cutover_verification_ref=args.cutover_verification_ref,
     )
     print(f"ingestion readiness: {report.overall_status} ({report.target})")
     for step in report.steps:

@@ -47,10 +47,13 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
     assert report.pass_ok is True
     assert report.profile == "paper_trade"
     assert report.evidence_basis == "replay_validated"
+    assert report.channel == "pipeline"
+    assert report.execution_ref.startswith("paper:trade:")
     assert [step.name for step in report.steps] == [
         "replay_parity",
         "storage_benchmark",
         "vendor_contracts",
+        "observability_verification",
         "operational_evidence_final",
         "release_gates_final",
     ]
@@ -66,12 +69,18 @@ def test_readiness_orchestrator_runs_paper_trade_steps_in_order(tmp_path: Path):
     assert "--high-cardinality-symbol-counts" in commands[1]
     assert "100" in commands[1]
     assert "500" not in commands[1]
-    assert "--target" in commands[3] and "paper" in commands[3]
-    assert "--phase" in commands[3] and "final" in commands[3]
-    assert "--provenance-source" in commands[3] and "readiness_orchestrator" in commands[3]
-    assert "--runner-id" in commands[3]
-    assert "--operational-evidence-path" in commands[4]
-    assert str(tmp_path / "docs" / "validation" / "ingestion_operational_evidence_paper_trade.json") in commands[4]
+    assert "--target" in commands[4] and "paper" in commands[4]
+    assert "--phase" in commands[4] and "final" in commands[4]
+    assert "--provenance-source" in commands[4] and "readiness_orchestrator" in commands[4]
+    assert "--runner-id" in commands[4]
+    assert "--execution-ref" in commands[4]
+    assert "--channel" in commands[4] and "pipeline" in commands[4]
+    assert "--output" in commands[3]
+    assert str(tmp_path / "docs" / "validation" / "ingestion_observability_verification_paper_trade.json") in commands[3]
+    assert "--observability-verification-path" in commands[4]
+    assert str(tmp_path / "docs" / "validation" / "ingestion_observability_verification_paper_trade.json") in commands[4]
+    assert "--operational-evidence-path" in commands[5]
+    assert str(tmp_path / "docs" / "validation" / "ingestion_operational_evidence_paper_trade.json") in commands[5]
     assert "--min-rows-per-second" not in commands[1]
     written = json.loads((tmp_path / "docs" / "validation" / "paper.json").read_text(encoding="utf-8"))
     assert written["overall_status"] == "PASS"
@@ -111,12 +120,13 @@ def test_readiness_orchestrator_runs_paper_kline_runtime_steps(tmp_path: Path):
         "ws_canary",
         "storage_benchmark",
         "vendor_contracts",
+        "observability_verification",
         "soak",
         "operational_evidence_final",
         "release_gates_final",
     ]
     assert "--target-profile" in commands[2] and "paper" in commands[2]
-    assert "--target-profile" in commands[5] and "paper" in commands[5]
+    assert "--target-profile" in commands[6] and "paper" in commands[6]
 
 
 def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path):
@@ -149,6 +159,7 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
         "ws_canary",
         "storage_benchmark",
         "vendor_contracts",
+        "observability_verification",
         "soak",
         "failure_injection",
         "operational_evidence_predrill",
@@ -157,20 +168,30 @@ def test_readiness_orchestrator_runs_live_predrill_and_final_gate(tmp_path: Path
         "operational_evidence_final",
         "release_gates_final",
     ]
-    predrill_evidence = commands[7]
-    predrill = commands[8]
-    drill = commands[9]
-    final_evidence = commands[10]
-    final_gate = commands[11]
+    observability = commands[5]
+    failure_injection = commands[7]
+    predrill_evidence = commands[8]
+    predrill = commands[9]
+    drill = commands[10]
+    final_evidence = commands[11]
+    final_gate = commands[12]
+    assert "--output" in observability
+    assert str(tmp_path / "docs" / "validation" / "ingestion_observability_verification_live_kline.json") in observability
+    assert "scripts/ingestion_failure_injection.py" in failure_injection
     assert "--phase" in predrill_evidence and "predrill" in predrill_evidence
     assert "--provenance-source" in predrill_evidence and "readiness_orchestrator" in predrill_evidence
+    assert "--execution-ref" in predrill_evidence
+    assert "--channel" in predrill_evidence and "pipeline" in predrill_evidence
+    assert "--observability-verification-path" in predrill_evidence
     assert "--phase" in predrill and "predrill" in predrill
     assert "--target-profile" in commands[3] and "live" in commands[3]
-    assert "--target-profile" in commands[5] and "live" in commands[5]
+    assert "--target-profile" in commands[6] and "live" in commands[6]
     assert "--release-gates-path" in drill
     assert str(tmp_path / "docs" / "validation" / "ingestion_release_gates_pre_drill_live_kline.json") in drill
     assert "--phase" in final_evidence and "final" in final_evidence
     assert "--runner-id" in final_evidence
+    assert "--execution-ref" in final_evidence
+    assert "--channel" in final_evidence and "pipeline" in final_evidence
     assert "--phase" in final_gate and "final" in final_gate
 
 
@@ -205,6 +226,7 @@ def test_readiness_orchestrator_runs_live_trade_without_rest_canary(tmp_path: Pa
         "ws_canary",
         "storage_benchmark",
         "vendor_contracts",
+        "observability_verification",
         "soak",
         "failure_injection",
         "operational_evidence_predrill",
@@ -253,6 +275,7 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
     artifact_dir = tmp_path / "artifacts"
     artifact_dir.mkdir()
     operational_evidence_path = artifact_dir / "operational-evidence.json"
+    observability_verification_path = artifact_dir / "observability-live.json"
     for name, payload in {
         "rest.json": {"generated_at": now, "pass_ok": True, "diffs": {}, "comparison_reason": "semantic_match"},
         "ws.json": {"report_generated_at": now, "target_profile": "live", "pass_ok": True, "continuity": {"reconnects": 1, "duplicates": 0, "gaps": 0, "gap_irreparable": 0, "streams_degraded": [], "heartbeat_missed_total": 0, "exchange_receive_skew_seconds": 0.1, "receive_process_skew_seconds": 0.1, "processing_latency_seconds": 0.1}, "slo": {"target_profile": "live"}, "reconnects_observed": 1, "reconnects_target": 1, "symbol": "BTCUSDT", "stream_type": "kline"},
@@ -264,6 +287,38 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
     }.items():
         (artifact_dir / name).write_text(json.dumps(payload), encoding="utf-8")
     observability_contract = build_observability_contract_report(target="live")
+    observability_verification_path.write_text(
+        json.dumps(
+            {
+                "generated_at": now,
+                "target": "live",
+                "verification_source": "scheduled_surface_check",
+                "repo_runbooks": [
+                    "docs/operations/ingestion_runbook.md",
+                    "docs/operations/ingestion_promotion_runbook.md",
+                    "docs/ops/live_cutover.md",
+                ],
+                "external_surfaces": [
+                    {
+                        "surface_id": surface.surface_id,
+                        "kind": surface.kind,
+                        "description": surface.description,
+                        "repo_reference": surface.repo_reference,
+                        "owner": surface.owner,
+                        "surface_ref": surface.surface_ref,
+                        "verification_mode": surface.verification_mode,
+                        "verified_at": now,
+                        "verification_ref": f"artifact://tests/{surface.surface_id}",
+                        "pass_ok": True,
+                    }
+                    for surface in observability_contract.external_surfaces
+                ],
+                "pass_ok": True,
+                "reasons": ["observability verification artifact aligned"],
+            }
+        ),
+        encoding="utf-8",
+    )
     operational_evidence_path.write_text(
         json.dumps(
             {
@@ -292,12 +347,17 @@ def test_release_gates_live_predrill_can_pass_without_live_drill(tmp_path: Path)
                     "runner_id": "tests:live:kline:predrill",
                     "trigger": "tests_live_predrill",
                     "generated_by": "tests/ops/test_readiness_orchestrator.py",
+                    "execution_ref": "exec-live-kline-predrill",
+                    "channel": "pipeline",
                     "verification_scope": "external_operational_surfaces",
                     "derived_in_process": False,
                 },
                 "excluded_feed_policy": {"book": "excluded"},
                 "observability": {
                     "pass_ok": True,
+                    "verification_artifact_path": str(observability_verification_path),
+                    "verification_generated_at": now,
+                    "verification_source": "scheduled_surface_check",
                     "repo_runbooks": [
                         "docs/operations/ingestion_runbook.md",
                         "docs/operations/ingestion_promotion_runbook.md",
