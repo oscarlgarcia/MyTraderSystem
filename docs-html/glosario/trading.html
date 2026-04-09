@@ -6,9 +6,9 @@
   <title>Terminos de Trading</title>
   <link rel="stylesheet" href="../assets/styles.css" />
   <!-- doc_id: glosario/trading -->
-<!-- version_doc: 0.1.0 -->
-<!-- estado: Base creada -->
-<!-- ultima_actualizacion: 2026-04-07 11:25 -->
+<!-- version_doc: 0.2.0 -->
+<!-- estado: Ampliada -->
+<!-- ultima_actualizacion: 2026-04-09 21:10 -->
 <!-- ruta_canonica_publicacion: /docs/docs-html/ -->
 <!-- ruta_workspace_actual: /docs-html/ -->
 <!-- secciones_clave: Proposito, Contenido inicial, Placeholders estructurados -->
@@ -33,8 +33,8 @@
 <section><h2>Enlaces cruzados recomendados</h2><p>Usa estas referencias para completar el contexto de esta pagina desde arquitectura, dominio, datos, flujos u operacion, segun corresponda.</p><ul class="related-links"><li><div class="related-link-body"><p class="related-link-meta">Glosario</p><a class="related-link-title" href="index.html">Indice Global de Glosario</a><p class="related-link-copy">Vuelve al indice global del vocabulario compartido.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Dominio Trading</p><a class="related-link-title" href="../dominio-trading/index.html">Indice de Dominio Trading</a><p class="related-link-copy">Conecta los terminos con el dominio funcional donde se usan.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Modulos</p><a class="related-link-title" href="../modulos/index.html">Indice de Modulos</a><p class="related-link-copy">Relaciona el vocabulario con los modulos de la plataforma.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Operacion</p><a class="related-link-title" href="../operacion/index.html">Indice de Operacion</a><p class="related-link-copy">Ayuda a vincular terminos tecnicos con su uso operativo.</p></div></li></ul></section>
 
 <section><h2>Placeholders estructurados</h2><ul><li>Completar detalles reales de la plataforma sin inventar implementacion no verificada.</li><li>Anadir enlaces a codigo, dashboards, runbooks o ADRs reales cuando existan.</li><li>Confirmar responsable de mantenimiento de esta pagina.</li></ul></section>
-<section><h2>Entradas iniciales</h2><table><thead><tr><th>Termino</th><th>Definicion</th></tr></thead><tbody><tr><td>Orden</td><td>Instruccion para comprar o vender un instrumento.</td></tr><tr><td>Fill</td><td>Ejecucion parcial o total de una orden.</td></tr><tr><td>Liquidez</td><td>Capacidad del mercado para absorber volumen.</td></tr><tr><td>Exposicion</td><td>Riesgo agregado derivado de posiciones abiertas.</td></tr></tbody></table></section>
-    <section class="status-card status-card-footer"><h2>Estado de la pagina</h2><dl><dt>Estado</dt><dd>Base creada</dd><dt>Informacion pendiente</dt><dd><ul><li>Completar detalles reales de la aplicacion.</li><li>Validar fuentes de verdad y responsables.</li></ul></dd><dt>Ultima actualizacion</dt><dd>2026-04-07 11:25</dd></dl></section>
+<section><h2>Entradas iniciales</h2><table><thead><tr><th>Termino</th><th>Definicion</th></tr></thead><tbody><tr><td>Orden</td><td>Instruccion para comprar o vender un instrumento.</td></tr><tr><td>Fill</td><td>Ejecucion parcial o total de una orden.</td></tr><tr><td>Liquidez</td><td>Capacidad del mercado para absorber volumen.</td></tr><tr><td>Exposicion</td><td>Riesgo agregado derivado de posiciones abiertas.</td></tr><tr><td>OrderIntent</td><td>Entidad de frontera entre senal y ejecucion; representa una intencion de orden ya filtrada por riesgo.</td></tr><tr><td>ExecutionReport</td><td>Estado observable de una orden una vez enviada al venue u OMS, incluyendo aceptacion, rechazo o ejecucion.</td></tr><tr><td>PortfolioState</td><td>Fotografia agregada de posiciones, balances y P&amp;L usada para operacion y reconciliacion.</td></tr><tr><td>Aggregate trade</td><td>Dominio de trade agregado usado por Binance <code>aggTrade</code>; en el runtime soportado se usa como cursor canonico de continuidad para <code>trade</code>.</td></tr><tr><td>Acknowledgement</td><td>Confirmacion administrativa de que una orden fue aceptada por el venue o adaptador y ha pasado a estar viva.</td></tr><tr><td>Reject</td><td>Resultado terminal por el que una orden no llega a entrar en ejecucion efectiva.</td></tr><tr><td>Partial fill</td><td>Fill que ejecuta solo una parte de la cantidad objetivo y deja remanente abierto.</td></tr><tr><td>Estado terminal</td><td>Estado que cierra el lifecycle normal de una orden, por ejemplo <code>filled</code>, <code>canceled</code>, <code>expired</code> o <code>rejected</code>.</td></tr><tr><td>Position</td><td>Inventario abierto por instrumento, expresado como cantidad y direccion neta o bruta segun el modelo operativo.</td></tr><tr><td>Balance disponible</td><td>Parte del balance utilizable para seguir operando sin contar recursos comprometidos.</td></tr><tr><td>Exposure</td><td>Lectura agregada del riesgo del portfolio a partir de posiciones, balances y concentracion.</td></tr><tr><td>Decision de riesgo</td><td>Resultado del bounded context de riesgo que aprueba, reduce, bloquea o escala una intencion antes de execution.</td></tr><tr><td>Venue</td><td>Exchange o infraestructura externa concreta sobre la que corre una capacidad; no debe confundirse con un diseño aspiracional multi-venue.</td></tr><tr><td>Capability matrix</td><td>Comparativa contractual de capacidades por venue y feed, incluyendo soporte real, restricciones y exclusiones.</td></tr><tr><td>Operational tier</td><td>Nivel de soporte declarado para un feed o capacidad, por ejemplo <code>supported</code>, <code>experimental</code> o <code>excluded</code>.</td></tr></tbody></table></section>
+    <section class="status-card status-card-footer"><h2>Estado de la pagina</h2><dl><dt>Estado</dt><dd>Ampliada</dd><dt>Informacion pendiente</dt><dd><ul><li>Seguir ampliando terminos de riesgo, reconciliacion y contabilidad cuando esas paginas se completen.</li><li>Validar ownership editorial y referencias cruzadas adicionales.</li></ul></dd><dt>Ultima actualizacion</dt><dd>2026-04-09 21:10</dd></dl></section>
   </main>
   <div class="diagram-lightbox" hidden aria-hidden="true">
     <div class="diagram-lightbox-backdrop" data-close-lightbox="true"></div>
@@ -48,7 +48,7 @@
   </div>
   <footer class="site-footer">
     <p>Base documental HTML estatica preparada para actualizaciones incrementales.</p>
-    <p>Ultima generacion: 2026-04-07 11:25</p>
+    <p>Ultima generacion: 2026-04-09 21:10</p>
   </footer>
   <script src="../assets/app.js"></script>
 </body>

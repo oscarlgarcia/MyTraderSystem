@@ -6,9 +6,9 @@
   <title>Terminos de Aplicacion</title>
   <link rel="stylesheet" href="../assets/styles.css" />
   <!-- doc_id: glosario/aplicacion -->
-<!-- version_doc: 0.1.0 -->
-<!-- estado: Base creada -->
-<!-- ultima_actualizacion: 2026-04-07 11:25 -->
+<!-- version_doc: 0.2.0 -->
+<!-- estado: Ampliada -->
+<!-- ultima_actualizacion: 2026-04-09 19:20 -->
 <!-- ruta_canonica_publicacion: /docs/docs-html/ -->
 <!-- ruta_workspace_actual: /docs-html/ -->
 <!-- secciones_clave: Proposito, Contenido inicial, Placeholders estructurados -->
@@ -33,8 +33,8 @@
 <section><h2>Enlaces cruzados recomendados</h2><p>Usa estas referencias para completar el contexto de esta pagina desde arquitectura, dominio, datos, flujos u operacion, segun corresponda.</p><ul class="related-links"><li><div class="related-link-body"><p class="related-link-meta">Glosario</p><a class="related-link-title" href="index.html">Indice Global de Glosario</a><p class="related-link-copy">Vuelve al indice global del vocabulario compartido.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Dominio Trading</p><a class="related-link-title" href="../dominio-trading/index.html">Indice de Dominio Trading</a><p class="related-link-copy">Conecta los terminos con el dominio funcional donde se usan.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Modulos</p><a class="related-link-title" href="../modulos/index.html">Indice de Modulos</a><p class="related-link-copy">Relaciona el vocabulario con los modulos de la plataforma.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Operacion</p><a class="related-link-title" href="../operacion/index.html">Indice de Operacion</a><p class="related-link-copy">Ayuda a vincular terminos tecnicos con su uso operativo.</p></div></li></ul></section>
 
 <section><h2>Placeholders estructurados</h2><ul><li>Completar detalles reales de la plataforma sin inventar implementacion no verificada.</li><li>Anadir enlaces a codigo, dashboards, runbooks o ADRs reales cuando existan.</li><li>Confirmar responsable de mantenimiento de esta pagina.</li></ul></section>
-<section><h2>Entradas iniciales</h2><table><thead><tr><th>Termino</th><th>Definicion</th></tr></thead><tbody><tr><td>Modelo Canonico</td><td>Representacion comun usada entre modulos.</td></tr><tr><td>Plano de Control</td><td>Capa de control, operacion y gobierno.</td></tr><tr><td>Adaptador</td><td>Componente que traduce contratos externos al modelo interno.</td></tr><tr><td>Readiness</td><td>Estado que indica si un componente esta listo para operar.</td></tr><tr><td>WebUI</td><td>Interfaz web interna del plano de control que consume un read model desacoplado y solo encola comandos operativos.</td></tr><tr><td>Read Model</td><td>Vista materializada para consultas de UI construida desde telemetria append-only y no desde el hot path vivo.</td></tr><tr><td>Command Gateway</td><td>Superficie API que recibe acciones de operador y las convierte en comandos asincronos auditables.</td></tr><tr><td>Ownership Tecnico Observable</td><td>Paquete, modulo o superficie de codigo que concentra una capacidad cuando no existe un owner humano verificado en la documentacion.</td></tr></tbody></table></section>
-    <section class="status-card status-card-footer"><h2>Estado de la pagina</h2><dl><dt>Estado</dt><dd>Base creada</dd><dt>Informacion pendiente</dt><dd><ul><li>Completar detalles reales de la aplicacion.</li><li>Validar fuentes de verdad y responsables.</li></ul></dd><dt>Ultima actualizacion</dt><dd>2026-04-07 11:25</dd></dl></section>
+<section><h2>Entradas iniciales</h2><table><thead><tr><th>Termino</th><th>Definicion</th></tr></thead><tbody><tr><td>Modelo Canonico</td><td>Representacion comun usada entre modulos.</td></tr><tr><td>Plano de Control</td><td>Capa de control, operacion y gobierno.</td></tr><tr><td>Adaptador</td><td>Componente que traduce contratos externos al modelo interno.</td></tr><tr><td>Readiness</td><td>Estado que indica si un componente esta listo para operar.</td></tr><tr><td>WebUI</td><td>Interfaz web interna del plano de control que consume un read model desacoplado y solo encola comandos operativos.</td></tr><tr><td>Read Model</td><td>Vista materializada para consultas de UI construida desde telemetria append-only y no desde el hot path vivo.</td></tr><tr><td>Command Gateway</td><td>Superficie API que recibe acciones de operador y las convierte en comandos asincronos auditables.</td></tr><tr><td>Ownership Tecnico Observable</td><td>Paquete, modulo o superficie de codigo que concentra una capacidad cuando no existe un owner humano verificado en la documentacion.</td></tr><tr><td>Bounded context</td><td>Limite semantico y operativo dentro del cual un grupo de entidades, reglas y decisiones mantiene ownership coherente.</td></tr></tbody></table></section>
+    <section class="status-card status-card-footer"><h2>Estado de la pagina</h2><dl><dt>Estado</dt><dd>Ampliada</dd><dt>Informacion pendiente</dt><dd><ul><li>Seguir ampliando terminos de arquitectura y gobierno cuando se documenten ADRs especificas.</li><li>Validar fuentes de verdad y responsables.</li></ul></dd><dt>Ultima actualizacion</dt><dd>2026-04-09 19:20</dd></dl></section>
   </main>
   <div class="diagram-lightbox" hidden aria-hidden="true">
     <div class="diagram-lightbox-backdrop" data-close-lightbox="true"></div>
@@ -48,7 +48,7 @@
   </div>
   <footer class="site-footer">
     <p>Base documental HTML estatica preparada para actualizaciones incrementales.</p>
-    <p>Ultima generacion: 2026-04-07 11:25</p>
+    <p>Ultima generacion: 2026-04-09 19:20</p>
   </footer>
   <script src="../assets/app.js"></script>
 </body>

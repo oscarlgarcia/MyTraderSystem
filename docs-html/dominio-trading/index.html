@@ -6,9 +6,9 @@
   <title>Indice de Dominio Trading</title>
   <link rel="stylesheet" href="../assets/styles.css" />
   <!-- doc_id: dominio-trading/index -->
-<!-- version_doc: 0.1.0 -->
-<!-- estado: Base creada -->
-<!-- ultima_actualizacion: 2026-04-07 11:25 -->
+<!-- version_doc: 0.2.0 -->
+<!-- estado: Parcialmente ampliada -->
+<!-- ultima_actualizacion: 2026-04-09 21:10 -->
 <!-- ruta_canonica_publicacion: /docs/docs-html/ -->
 <!-- ruta_workspace_actual: /docs-html/ -->
 <!-- secciones_clave: Proposito, Contenido inicial, Placeholders estructurados -->
@@ -25,15 +25,16 @@
     <section class="publication-note"><div class="section-heading"><p class="section-kicker">Nota editorial</p><h2>Ruta canonica y convencion de publicacion</h2></div><p>La ruta canonica prevista para publicar esta documentacion es <code>/docs/docs-html/</code>.</p><p>El arbol auditado y mantenido en este workspace sigue estando en <code>/docs-html/</code>. Mientras no se alinee la publicacion fisica, esta diferencia debe considerarse un hueco conocido de empaquetado y no de cobertura documental.</p><h3>Informacion pendiente</h3><ul><li>Confirmar cuando la publicacion fisica se mueva o replique a la ruta canonica.</li><li>Revisar pipelines, enlaces externos o automatizaciones que dependan de la ruta actual.</li></ul></section>
     
     
-    <section><h2>Paginas incluidas</h2><ul class="link-list"><li><a href="vision-dominio.html">Vision del Dominio</a><span class="status-pill">Base creada</span></li><li><a href="modelo-dominio.html">Modelo de Dominio</a><span class="status-pill">Base creada</span></li><li><a href="semantica-ordenes.html">Semantica de Ordenes</a><span class="status-pill">Base creada</span></li><li><a href="fills.html">Fills</a><span class="status-pill">Base creada</span></li><li><a href="posiciones-balances.html">Posiciones y Balances</a><span class="status-pill">Base creada</span></li><li><a href="riesgo.html">Riesgo</a><span class="status-pill">Base creada</span></li><li><a href="execution-semantics.html">Semantica de Ejecucion</a><span class="status-pill">Base creada</span></li><li><a href="capability-matrix-exchanges.html">Matriz de Capacidades de Exchanges</a><span class="status-pill">Base creada</span></li></ul></section>
+    <section><h2>Paginas incluidas</h2><ul class="link-list"><li><a href="vision-dominio.html">Vision del Dominio</a><span class="status-pill">Ampliada</span></li><li><a href="modelo-dominio.html">Modelo de Dominio</a><span class="status-pill">Ampliada</span></li><li><a href="semantica-ordenes.html">Semantica de Ordenes</a><span class="status-pill">Ampliada</span></li><li><a href="fills.html">Fills</a><span class="status-pill">Ampliada</span></li><li><a href="posiciones-balances.html">Posiciones y Balances</a><span class="status-pill">Ampliada</span></li><li><a href="riesgo.html">Riesgo</a><span class="status-pill">Ampliada</span></li><li><a href="execution-semantics.html">Semantica de Ejecucion</a><span class="status-pill">Ampliada</span></li><li><a href="capability-matrix-exchanges.html">Matriz de Capacidades de Exchanges</a><span class="status-pill">Ampliada</span></li></ul></section>
+    <section><h2>Cobertura actual del area</h2><p>La seccion ya cubre vision, modelo, lifecycle de ordenes, estado economico del portfolio y riesgo. En esta iteracion tambien se ha ampliado <strong>capability-matrix-exchanges</strong> para dejar explicita la asimetria real entre venues y el contrato defendible actual por feed.</p><ul><li><strong>Capability Matrix Exchanges</strong>: deja claro que Binance es hoy el venue con evidencia operativa verificable y que <code>book</code> sigue excluido.</li><li><strong>Trade / Kline / Book</strong>: ya quedan diferenciados por soporte, recovery y promotion.</li><li><strong>Multi-venue</strong>: el diseño puede sugerir extensibilidad, pero la evidencia documental actual sigue siendo mono-venue operativa.</li><li><strong>Pendiente principal del area</strong>: decidir si Bybit sigue en roadmap real y documentar restricciones mas finas por tipo de orden si aparecen.</li></ul></section>
     <section><h2>Diagrama base</h2><p>Esta pagina publica una unica vista SVG generada automaticamente a partir del Mermaid fuente. Haz click sobre la imagen para verla ampliada sin perdida de nitidez.</p><div class="diagram-stack"><figure class="diagram-figure"><button class="diagram-zoom-trigger" type="button" data-diagram-src="../assets/diagrams/dominio-trading--index.svg" data-diagram-alt="Version SVG generada para Indice de Dominio Trading"><img src="../assets/diagrams/dominio-trading--index.svg" alt="Version SVG generada para Indice de Dominio Trading" loading="lazy" /></button><figcaption>SVG generado automaticamente a partir del Mermaid de esta pagina. Haz click para ampliarlo sin perdida de nitidez.</figcaption></figure></div></section>
     <section><h2>Proposito</h2><p>Organizar la seccion Dominio Trading y sus paginas hijas.</p></section>
 <section><h2>Contenido inicial</h2><ul><li>Explicar el alcance real de esta pagina.</li><li>Identificar las fuentes de verdad que deberian alimentarla.</li><li>Enlazar con modulos, datos, flujos u operacion cuando corresponda.</li></ul></section>
 
 
 
-<section><h2>Placeholders estructurados</h2><ul><li>Completar detalles reales de la plataforma sin inventar implementacion no verificada.</li><li>Anadir enlaces a codigo, dashboards, runbooks o ADRs reales cuando existan.</li><li>Confirmar responsable de mantenimiento de esta pagina.</li></ul></section>
-    <section class="status-card status-card-footer"><h2>Estado de la pagina</h2><dl><dt>Estado</dt><dd>Base creada</dd><dt>Informacion pendiente</dt><dd><ul><li>Completar detalles reales de la aplicacion.</li><li>Validar fuentes de verdad y responsables.</li></ul></dd><dt>Ultima actualizacion</dt><dd>2026-04-07 11:25</dd></dl></section>
+<section><h2>Informacion pendiente</h2><ul><li>Decidir si Bybit debe mantenerse como venue objetivo o retirarse del discurso principal hasta nueva evidencia.</li><li>Documentar restricciones por tipos de orden, time-in-force y execution por venue cuando exista evidencia contractual.</li><li>Confirmar responsables editoriales de cada pagina del area.</li></ul></section>
+    <section class="status-card status-card-footer"><h2>Estado de la pagina</h2><dl><dt>Estado</dt><dd>Parcialmente ampliada</dd><dt>Informacion pendiente</dt><dd><ul><li>El hueco principal restante del area es el roadmap real multi-venue y los contratos finos por tipo de orden.</li><li>Validar ownership editorial y, si aplica, formalizar ADRs de dominio para venues y restricciones.</li></ul></dd><dt>Ultima actualizacion</dt><dd>2026-04-09 21:10</dd></dl></section>
   </main>
   <div class="diagram-lightbox" hidden aria-hidden="true">
     <div class="diagram-lightbox-backdrop" data-close-lightbox="true"></div>
@@ -47,7 +48,7 @@
   </div>
   <footer class="site-footer">
     <p>Base documental HTML estatica preparada para actualizaciones incrementales.</p>
-    <p>Ultima generacion: 2026-04-07 11:25</p>
+    <p>Ultima generacion: 2026-04-09 21:10</p>
   </footer>
   <script src="../assets/app.js"></script>
 </body>
