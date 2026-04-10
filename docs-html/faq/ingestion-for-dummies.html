@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ingestion for Dummies</title>
+  <link rel="stylesheet" href="../assets/styles.css" />
+  <!-- doc_id: faq/ingestion-for-dummies -->
+<!-- version_doc: 0.1.0 -->
+<!-- estado: Nueva -->
+<!-- ultima_actualizacion: 2026-04-10 19:37 -->
+<!-- ruta_canonica_publicacion: /docs/docs-html/ -->
+<!-- ruta_workspace_actual: /docs-html/ -->
+<!-- secciones_clave: Funcionalidad principal, Operacion diaria, Comando principal, Funcionalidades adicionales -->
+</head>
+<body>
+  <header class="site-header"><div class="brand"><a href="../index.html">Portal Documental</a></div><nav class="top-nav" aria-label="Navegacion principal"><a class="nav-link-direct" href="../index.html"><svg class="ui-icon" aria-hidden="true"><use href="../assets/icons.svg#home"></use></svg><span>Inicio</span></a><a class="nav-link-direct" href="../modulos/index.html"><svg class="ui-icon" aria-hidden="true"><use href="../assets/icons.svg#modules"></use></svg><span>Modulos</span></a><details class="nav-group"><summary class="nav-group-summary"><svg class="ui-icon" aria-hidden="true"><use href="../assets/icons.svg#portal"></use></svg><span>Portal y Contexto</span></summary><div class="nav-group-panel"><a class="nav-sublink" href="../arquitectura/index.html">Arquitectura</a><a class="nav-sublink" href="../dominio-trading/index.html">Dominio Trading</a></div></details><details class="nav-group"><summary class="nav-group-summary"><svg class="ui-icon" aria-hidden="true"><use href="../assets/icons.svg#flow"></use></svg><span>Flujos y Datos</span></summary><div class="nav-group-panel"><a class="nav-sublink" href="../flujos/index.html">Flujos y Secuencias</a><a class="nav-sublink" href="../datos/index.html">Datos</a></div></details><details class="nav-group"><summary class="nav-group-summary"><svg class="ui-icon" aria-hidden="true"><use href="../assets/icons.svg#research"></use></svg><span>Research y Operacion</span></summary><div class="nav-group-panel"><a class="nav-sublink" href="../research-simulation/index.html">Investigacion / Backtesting / Simulacion</a><a class="nav-sublink" href="../operacion/index.html">Operacion</a></div></details><details class="nav-group active" open><summary class="nav-group-summary"><svg class="ui-icon" aria-hidden="true"><use href="../assets/icons.svg#support"></use></svg><span>Desarrollo, Gobierno y Soporte</span></summary><div class="nav-group-panel"><a class="nav-sublink" href="../desarrollo/index.html">Desarrollo</a><a class="nav-sublink" href="../seguridad-gobernanza/index.html">Seguridad y Gobernanza</a><a class="nav-sublink" href="../decisiones/index.html">Decisiones</a><a class="nav-sublink" href="../glosario/index.html">Glosario</a><a class="nav-sublink" href="index.html">Preguntas Frecuentes</a><a class="nav-sublink" href="../postmortems/index.html">Postmortems</a><a class="nav-sublink" href="../templates/index.html">Plantillas</a></div></details></nav><form class="site-search-form" action="../search.html" method="get" role="search"><label class="sr-only" for="site-search-q-faq-ingestion-for-dummies">Buscar en la documentacion</label><div class="site-search-shell"><svg class="ui-icon ui-icon-search" aria-hidden="true"><use href="../assets/icons.svg#search"></use></svg><input id="site-search-q-faq-ingestion-for-dummies" class="site-search-input" type="search" name="q" placeholder="Buscar en la documentacion" autocomplete="off" /><button class="site-search-submit" type="submit"><svg class="ui-icon ui-icon-submit" role="img" aria-label="Buscar"><use href="../assets/icons.svg#arrow-right"></use></svg></button></div></form></header>
+  <main class="layout">
+    <section class="hero">
+      <p class="eyebrow">Preguntas Frecuentes</p>
+      <h1>Ingestion for Dummies</h1>
+      <p class="lead">Explicacion operativa y funcional del modulo de ingestion para alguien que quiere entenderlo sin entrar primero al detalle del codigo interno.</p>
+      <p class="breadcrumbs"><a href="../index.html">Inicio</a> / <a href="index.html">Preguntas Frecuentes</a> / <a href="faq-general.html">Preguntas Frecuentes Generales</a> / <span>Ingestion for Dummies</span></p>
+    </section>
+
+    <section>
+      <p>He revisado el código y los runbooks reales. La idea clave es esta: el módulo de ingestion <strong>no es solo “un scraper de mercado”</strong>. Es la primera fase del pipeline y su trabajo es <strong>capturar market data, validarla, normalizarla, guardarla y dejarla lista para que el resto del sistema la consuma</strong>. La entrada principal real está en <a href="../modulos/ingestion.html">ingestion</a>, el runner aislado en <a href="../modulos/ingestion-cli.html">ingestion-cli</a> y el backfill histórico en <a href="../../docs/operations/ingestion/ingestion_operational_closure_paper.md">los runbooks operativos de ingestion</a>.</p>
+      <p>Su funcionalidad principal es:</p>
+      <ul>
+        <li>conectarse a la fuente de market data</li>
+        <li>recibir <code>trade</code> y <code>kline</code> en tiempo real</li>
+        <li>aplicar resiliencia: reconnect, checkpoints, deduplicación y control temporal</li>
+        <li>persistir <code>raw</code> y <code>normalized</code></li>
+        <li>materializar catálogo, calidad, service levels, snapshots y publication para consumidores downstream</li>
+      </ul>
+      <p>Hoy, el scope operativo formal es:</p>
+      <ul>
+        <li><code>paper</code>: <code>trade</code>, <code>kline</code></li>
+        <li><code>live</code>: <code>trade</code>, <code>kline</code></li>
+        <li><code>book</code>: sigue fuera del scope formal; existe camino experimental, pero no debes tratarlo como soporte operativo estable</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Qué funcionalidades tiene y para qué sirven</h2>
+      <ul>
+        <li>Ingesta live/paper: sirve para trading y paper trading. Recibe datos en vivo y abastece estrategia, riesgo, ejecución y portfolio.</li>
+        <li>Backfill histórico: sirve para research y backtesting. Descarga histórico soportado de <code>trade</code> y <code>kline</code>.</li>
+        <li>Persistencia <code>raw</code> + <code>normalized</code>: sirve para auditoría, replay y reproducibilidad.</li>
+        <li>Query histórica / snapshot / curated serving: sirve para bootstrap de consumidores, research y diagnósticos.</li>
+        <li>Quality / incidents / gap-fill / service levels: sirve para saber si el dato es confiable antes de usarlo en paper o live.</li>
+        <li>Control plane + worker: sirve para operar ingestion sin tocar el hot path, refrescar catálogo/calidad/serving y lanzar remediaciones.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Cómo debería funcionar día a día</h2>
+      <p>Hay dos maneras de pensar ingestion:</p>
+      <ol>
+        <li>Como parte de la app completa.<br />Esto es lo principal. Arrancas <a href="../modulos/ingestion.html">la app completa</a> con <code>python -m app</code> y ingestion corre como primera fase del pipeline. Si le das un <code>--max-events</code> muy alto, el proceso se queda corriendo mucho tiempo. No es un daemon “puro” por sí mismo; normalmente lo dejas vivo con supervisor externo.</li>
+        <li>Como herramienta aislada.<br />Puedes ejecutar el runner puntual de ingestion con <a href="../modulos/ingestion-cli.html">ingestion-cli</a>. Ese sí es más “me conecto, recibo datos durante X tiempo y termino”. Es útil para pruebas, capturas puntuales o diagnósticos, no como happy path principal del sistema.</li>
+      </ol>
+      <p>En operación diaria real:</p>
+      <ul>
+        <li>para <code>paper</code> o <code>live</code>, lo normal es arrancar la app completa</li>
+        <li>dejarla corriendo todo el día con supervisor</li>
+        <li>tener en paralelo el control plane API y el worker</li>
+        <li>usar el cierre operativo al final del ciclo para validar catálogo, calidad, serving y publication</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Comando principal para arrancarlo como ejecución diaria</h2>
+      <p>Si quieres arrancar el sistema “como si hoy fueras a operar”, el comando principal no es el runner aislado: es la app completa.</p>
+      <p>Para <code>paper</code>, el happy path actual es el de <a href="../../docs/operations/application/paper_happy_path_runbook.md">paper_happy_path_runbook.md</a>:</p>
+      <pre><code class="language-powershell">python -m app `
+  --env dev `
+  --mode paper `
+  --max-events 1000000000 `
+  --ingest-stream-types trade,kline `
+  --feature-audit-path docs/validation/feature_decision_audit_paper.jsonl `
+  --feature-consumer-name paper-runtime-strategy `
+  --feature-consumer-kind strategy `
+  --feature-dataset-id paper-runtime-btcusdt `
+  --feature-schema-hash 27c5133305845d68af4062d03dec1c32d61c8d3083c35e382a4dd702e200fd18 `
+  --feature-training-bundle-id legacy-legacy-paper `
+  --feature-training-bundle-registry data/dev/feature-store/training-bundles</code></pre>
+      <p>Para <code>producción/live</code>, el happy path documentado en <a href="../../docs/operations/application/production_happy_path_runbook.md">production_happy_path_runbook.md</a> usa el baseline más conservador, <code>kline</code>:</p>
+      <pre><code class="language-powershell">python -m app `
+  --env prod `
+  --mode live `
+  --production-mode `
+  --max-events 1000000000 `
+  --ingest-stream-types kline `
+  --feature-audit-path docs/validation/feature_decision_audit_live.jsonl `
+  --feature-consumer-name prod-live-strategy `
+  --feature-consumer-kind strategy `
+  --feature-dataset-id live-runtime-btcusdt `
+  --feature-schema-hash &lt;PROMOTED_FEATURE_SCHEMA_HASH&gt; `
+  --feature-training-bundle-id &lt;PROMOTED_TRAINING_BUNDLE_ID&gt; `
+  --feature-training-bundle-registry /var/lib/mytradersystem/data/prod/feature-store/training-bundles</code></pre>
+    </section>
+
+    <section>
+      <h2>Comandos para funcionalidades adicionales</h2>
+      <ul><li>Ingestion aislada puntual:</li></ul>
+      <pre><code class="language-powershell">python -m app.ingestion.runner --env dev --duration 600</code></pre>
+      <ul><li>Ingestion aislada con fixtures locales:</li></ul>
+      <pre><code class="language-powershell">python -m app.ingestion.runner --env dev --duration 30 --dry-run</code></pre>
+      <ul><li>Backfill histórico para research/backtesting:</li></ul>
+      <pre><code class="language-powershell">python -m app.ingestion.backfill --env dev --symbol BTCUSDT --feed-type kline --start 2024-01-01T00:00:00+00:00 --end 2024-01-02T00:00:00+00:00 --interval 1m --batch 1000</code></pre>
+      <ul><li>Levantar la API operativa:</li></ul>
+      <pre><code class="language-powershell">python -m app.controlplane.api --env dev --host 127.0.0.1 --port 8000</code></pre>
+      <ul><li>Levantar el worker operativo:</li></ul>
+      <pre><code class="language-powershell">python -m app.controlplane.worker --env dev</code></pre>
+      <ul><li>Cierre operativo estandar de ingestion:</li></ul>
+      <pre><code class="language-powershell">poetry run python scripts/ingestion_operational_cycle.py --target paper ...</code></pre>
+      <p>Los detalles completos están en <a href="../../docs/operations/ingestion/ingestion_operational_closure_paper.md">ingestion_operational_closure_paper.md</a> y <a href="../../docs/operations/ingestion/ingestion_operational_closure_live.md">ingestion_operational_closure_live.md</a>.</p>
+      <p>Si quieres, en el siguiente mensaje te lo explico todavía más “como operador”, en formato:</p>
+      <ol>
+        <li>qué proceso arranco primero</li>
+        <li>qué sidecars levanto</li>
+        <li>qué artefactos espero ver</li>
+        <li>cómo sé si ingestion está sana o no.</li>
+      </ol>
+    </section>
+
+    <section><h2>Enlaces cruzados recomendados</h2><ul class="related-links"><li><div class="related-link-body"><p class="related-link-meta">Modulo</p><a class="related-link-title" href="../modulos/ingestion.html">Modulo de Ingestion</a><p class="related-link-copy">Vista funcional de la ingestion dentro del portal documental.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Operacion</p><a class="related-link-title" href="../operacion/runbooks.html">Indice de Runbooks</a><p class="related-link-copy">Puerta de entrada a los procedimientos operativos relacionados.</p></div></li><li><div class="related-link-body"><p class="related-link-meta">Operacion</p><a class="related-link-title" href="../modulos/control-plane-ops.html">Control Plane y Operacion</a><p class="related-link-copy">Explica la capa operativa y los sidecars que acompañan a ingestion.</p></div></li></ul></section>
+
+    <section class="status-card status-card-footer"><h2>Estado de la pagina</h2><dl><dt>Estado</dt><dd>Nueva</dd><dt>Informacion pendiente</dt><dd><ul><li>Si esta pagina crece, separar la parte puramente operativa de la parte conceptual para evitar mezclar onboarding con runbooks.</li></ul></dd><dt>Ultima actualizacion</dt><dd>2026-04-10 19:37</dd></dl></section>
+  </main>
+  <div class="diagram-lightbox" hidden aria-hidden="true">
+    <div class="diagram-lightbox-backdrop" data-close-lightbox="true"></div>
+    <div class="diagram-lightbox-dialog" role="dialog" aria-modal="true" aria-label="Vista ampliada del diagrama">
+      <button class="diagram-lightbox-close" type="button" aria-label="Cerrar vista ampliada">Cerrar</button>
+      <figure class="diagram-lightbox-figure">
+        <img class="diagram-lightbox-image" src="" alt="" />
+        <figcaption class="diagram-lightbox-caption">Vista ampliada del diagrama generado.</figcaption>
+      </figure>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <p>Base documental HTML estatica preparada para actualizaciones incrementales.</p>
+    <p>Ultima generacion: 2026-04-10 19:37</p>
+  </footer>
+  <script src="../assets/app.js"></script>
+</body>
+</html>
