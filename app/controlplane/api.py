@@ -28,9 +28,12 @@ from app.controlplane.store_factory import create_control_plane_store
 from app.controlplane.telemetry import configure_control_plane_telemetry, emit_control_plane_event
 from app.marketdata.dataset_catalog import dataset_catalog_path, read_dataset_catalog
 from app.marketdata.dataset_contracts import dataset_contract_registry_path, read_dataset_contract_registry
-from app.marketdata.dataset_quality import dataset_quality_registry_path, read_dataset_quality_registry
+from app.marketdata.dataset_quality import dataset_incident_log_path, dataset_quality_registry_path, read_dataset_incidents, read_dataset_quality_registry
+from app.marketdata.future_scope import future_scope_registry_path
+from app.marketdata.gap_fill import gap_fill_plan_path, read_gap_fill_plan
 from app.marketdata.query import HistoricalQueryRequest, query_rows
 from app.marketdata.replay_service import ReplayServiceRequest, replay_service_report_payload
+from app.marketdata.service_levels import dataset_service_levels_path, read_dataset_service_levels
 from app.marketdata.snapshot_service import SnapshotRequest, load_snapshot
 from app.marketdata.subscriptions import read_subscription_config
 
@@ -412,6 +415,32 @@ def build_app(
             }
         )
 
+    @app.get("/api/datasets/incidents")
+    def api_dataset_incidents() -> JSONResponse:
+        current = sync()
+        incidents = read_dataset_incidents(dataset_incident_log_path(current.cfg.data_dir, current.cfg.env))
+        return JSONResponse({"count": len(incidents), "incidents": [asdict(item) for item in incidents]})
+
+    @app.get("/api/datasets/service-levels")
+    def api_dataset_service_levels() -> JSONResponse:
+        current = sync()
+        registry = read_dataset_service_levels(dataset_service_levels_path(current.cfg.data_dir, current.cfg.env), env=current.cfg.env)
+        return JSONResponse({"generated_at": registry.generated_at, "records": [asdict(item) for item in registry.records]})
+
+    @app.get("/api/datasets/gap-fill-plan")
+    def api_gap_fill_plan() -> JSONResponse:
+        current = sync()
+        plan = read_gap_fill_plan(gap_fill_plan_path(current.cfg.data_dir, current.cfg.env), env=current.cfg.env)
+        return JSONResponse({"generated_at": plan.generated_at, "env": plan.env, "candidates": [asdict(item) for item in plan.candidates]})
+
+    @app.get("/api/datasets/future-scope")
+    def api_future_scope() -> JSONResponse:
+        current = sync()
+        resolved = future_scope_registry_path(current.cfg.data_dir, current.cfg.env)
+        if not resolved.exists():
+            return JSONResponse({"generated_at": None, "entries": []})
+        return JSONResponse(json.loads(resolved.read_text(encoding="utf-8")))
+
     @app.get("/api/datasets/query")
     def api_dataset_query(
         stream_type: str,
@@ -506,6 +535,18 @@ def build_app(
         )
         return _command_response(request, record)
 
+    @app.post("/api/commands/service-levels-refresh")
+    async def api_service_levels_refresh(request: Request, requested_by: str = Form("ui-operator")) -> Response:
+        current = sync()
+        record = _enqueue_command(
+            current.store,
+            command_type="refresh_service_levels",
+            scope=f"env:{current.cfg.env}:service-levels",
+            payload={},
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
+
     @app.post("/api/commands/curated-refresh")
     async def api_curated_refresh(
         request: Request,
@@ -542,6 +583,32 @@ def build_app(
         )
         return _command_response(request, record)
 
+    @app.post("/api/commands/gap-fill")
+    async def api_gap_fill(
+        request: Request,
+        symbol: str = Form(""),
+        stream_type: str = Form(""),
+        reason: str = Form(""),
+        interval: str = Form("1m"),
+        batch_limit: int = Form(1000),
+        requested_by: str = Form("ui-operator"),
+    ) -> Response:
+        current = sync()
+        record = _enqueue_command(
+            current.store,
+            command_type="gap_fill",
+            scope=f"env:{current.cfg.env}:{stream_type or 'all'}:{symbol.upper() or 'ALL'}:gap-fill",
+            payload={
+                "symbol": symbol.upper() or None,
+                "stream_type": stream_type.lower() or None,
+                "reason": reason or None,
+                "interval": interval,
+                "batch_limit": batch_limit,
+            },
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
+
     @app.post("/api/commands/benchmark-serving")
     async def api_benchmark_serving(
         request: Request,
@@ -555,6 +622,22 @@ def build_app(
             command_type="benchmark_serving",
             scope=f"env:{current.cfg.env}:{stream_type}:{symbol.upper()}",
             payload={"symbol": symbol.upper(), "stream_type": stream_type},
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
+
+    @app.post("/api/commands/storage-lifecycle-apply")
+    async def api_storage_lifecycle_apply(
+        request: Request,
+        sample_every: int = Form(10),
+        requested_by: str = Form("ui-operator"),
+    ) -> Response:
+        current = sync()
+        record = _enqueue_command(
+            current.store,
+            command_type="apply_storage_lifecycle",
+            scope=f"env:{current.cfg.env}:storage-lifecycle",
+            payload={"sample_every": sample_every},
             requested_by=requested_by,
         )
         return _command_response(request, record)

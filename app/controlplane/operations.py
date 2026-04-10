@@ -7,23 +7,34 @@ from typing import Any
 
 from app.config import AppConfig
 from app.ingestion.storage import ParquetWriter, normalized_partition_path
+from app.ingestion.storage import list_normalized_partition_paths
 from app.ingestion.sources import BinanceSource
 from app.marketdata.benchmarks import benchmark_query_and_serving
 from app.marketdata.capabilities import build_venue_capability_registry, capability_registry_path, write_venue_capability_registry
-from app.marketdata.dataset_catalog import dataset_catalog_path, refresh_dataset_catalog
+from app.marketdata.dataset_catalog import dataset_catalog_path, read_dataset_catalog, refresh_dataset_catalog
+from app.marketdata.dataset_contracts import parse_normalized_partition_path
 from app.marketdata.dataset_quality import (
     append_dataset_incidents,
     build_dataset_quality_registry,
     dataset_incident_log_path,
     dataset_quality_registry_path,
+    read_dataset_incidents,
+    read_dataset_quality_registry,
     write_dataset_quality_registry,
 )
 from app.marketdata.delivery import (
     build_delivery_contract_registry,
     delivery_contract_registry_path,
+    read_delivery_contract_registry,
     write_delivery_contract_registry,
 )
 from app.marketdata.future_scope import build_future_scope_registry, future_scope_registry_path, write_future_scope_registry
+from app.marketdata.gap_fill import (
+    build_gap_fill_plan,
+    execute_gap_fill_candidate,
+    gap_fill_plan_path,
+    write_gap_fill_plan,
+)
 from app.marketdata.publication import PublicationRecord, publish_record
 from app.marketdata.recovery import RecoveryRequest, verify_recovery_window
 from app.marketdata.replay import ReplaySource
@@ -32,11 +43,19 @@ from app.marketdata.security import (
     security_baseline_report_path,
     write_security_baseline_report,
 )
+from app.marketdata.service_levels import (
+    build_dataset_service_levels,
+    dataset_service_levels_path,
+    write_dataset_service_levels,
+)
 from app.marketdata.serving import refresh_curated_store
 from app.marketdata.snapshot_service import SnapshotRequest, load_snapshot
 from app.marketdata.storage_lifecycle import (
+    apply_storage_lifecycle,
+    storage_lifecycle_execution_path,
     build_storage_lifecycle_report,
     storage_lifecycle_report_path,
+    write_storage_lifecycle_execution_report,
     write_storage_lifecycle_report,
 )
 from app.marketdata.subscriptions import update_subscription_config
@@ -174,19 +193,32 @@ def execute_refresh_dataset_catalog(*, cfg: AppConfig, payload: dict[str, Any]) 
     lifecycle = build_storage_lifecycle_report(cfg.data_dir, cfg.env)
     security = build_security_baseline_report(cfg.data_dir, cfg.env)
     future_scope = build_future_scope_registry()
+    quality_registry = read_dataset_quality_registry(dataset_quality_registry_path(cfg.data_dir, cfg.env))
+    service_levels = build_dataset_service_levels(
+        env=cfg.env,
+        catalog=catalog,
+        quality_registry=quality_registry,
+        delivery_registry=delivery_registry,
+    )
     write_venue_capability_registry(capability_registry_path(cfg.data_dir, cfg.env), capability_registry)
     write_delivery_contract_registry(delivery_contract_registry_path(cfg.data_dir, cfg.env), delivery_registry)
     write_storage_lifecycle_report(storage_lifecycle_report_path(cfg.data_dir, cfg.env), lifecycle)
     write_security_baseline_report(security_baseline_report_path(cfg.data_dir, cfg.env), security)
     write_future_scope_registry(future_scope_registry_path(cfg.data_dir, cfg.env), future_scope)
+    write_dataset_service_levels(dataset_service_levels_path(cfg.data_dir, cfg.env), service_levels)
+    refs = [parse_normalized_partition_path(path) for path in list_normalized_partition_paths(cfg.data_dir, cfg.env)]
+    gap_fill_plan = build_gap_fill_plan(env=cfg.env, refs=refs, quality_registry=quality_registry)
+    write_gap_fill_plan(gap_fill_plan_path(cfg.data_dir, cfg.env), gap_fill_plan)
     return {
         "catalog_path": str(dataset_catalog_path(cfg.data_dir, cfg.env)),
         "dataset_count": len(catalog.entries),
         "capability_entries": len(capability_registry.entries),
         "delivery_contracts": len(delivery_registry.contracts),
+        "service_level_records": len(service_levels.records),
         "storage_lifecycle_entries": len(lifecycle.entries),
         "security_baseline_path": str(security_baseline_report_path(cfg.data_dir, cfg.env)),
         "future_scope_entries": len(future_scope.entries),
+        "gap_fill_candidates": len(gap_fill_plan.candidates),
     }
 
 
@@ -216,6 +248,24 @@ def execute_refresh_curated(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[
     return asdict(report)
 
 
+def execute_refresh_service_levels(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    del payload
+    catalog = read_dataset_catalog(dataset_catalog_path(cfg.data_dir, cfg.env))
+    quality_registry = read_dataset_quality_registry(dataset_quality_registry_path(cfg.data_dir, cfg.env))
+    delivery_registry = read_delivery_contract_registry(delivery_contract_registry_path(cfg.data_dir, cfg.env))
+    registry = build_dataset_service_levels(
+        env=cfg.env,
+        catalog=catalog,
+        quality_registry=quality_registry,
+        delivery_registry=delivery_registry,
+    )
+    write_dataset_service_levels(dataset_service_levels_path(cfg.data_dir, cfg.env), registry)
+    return {
+        "service_level_path": str(dataset_service_levels_path(cfg.data_dir, cfg.env)),
+        "records": len(registry.records),
+    }
+
+
 def execute_update_subscriptions(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
     symbols = tuple(str(item).upper() for item in payload.get("symbols", cfg.symbols))
     stream_types = tuple(str(item).lower() for item in payload.get("stream_types", ("trade", "kline")))
@@ -231,11 +281,66 @@ def execute_update_subscriptions(*, cfg: AppConfig, payload: dict[str, Any]) -> 
     return asdict(config)
 
 
+def execute_gap_fill(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    refs = [parse_normalized_partition_path(path) for path in list_normalized_partition_paths(cfg.data_dir, cfg.env)]
+    quality_registry = read_dataset_quality_registry(dataset_quality_registry_path(cfg.data_dir, cfg.env))
+    plan = build_gap_fill_plan(env=cfg.env, refs=refs, quality_registry=quality_registry)
+    selected = []
+    symbol = str(payload.get("symbol", "")).upper()
+    stream_type = str(payload.get("stream_type", "")).lower()
+    reason = str(payload.get("reason", "")).strip().lower()
+    for candidate in plan.candidates:
+        if symbol and candidate.symbol != symbol:
+            continue
+        if stream_type and candidate.stream_type != stream_type:
+            continue
+        if reason and candidate.reason.lower() != reason:
+            continue
+        selected.append(candidate)
+    if not selected:
+        selected = list(plan.candidates)
+    recovered_events = 0
+    touched: set[str] = set()
+    for candidate in selected:
+        candidate_recovered, candidate_touched = execute_gap_fill_candidate(
+            base_dir=cfg.data_dir,
+            env=cfg.env,
+            rest_base=cfg.rest_base,
+            candidate=candidate,
+            interval=str(payload.get("interval", "1m")),
+            batch_limit=int(payload.get("batch_limit", 1000)),
+        )
+        recovered_events += candidate_recovered
+        touched.update(candidate_touched)
+    refresh_dataset_catalog(cfg.data_dir, cfg.env)
+    execution_report = {
+        "plan_path": str(write_gap_fill_plan(gap_fill_plan_path(cfg.data_dir, cfg.env), plan)),
+        "executed_candidates": len(selected),
+        "recovered_events": recovered_events,
+        "touched_partitions": sorted(touched),
+    }
+    return execution_report
+
+
 def execute_benchmark_serving(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
     stream_type = str(payload.get("stream_type", "kline"))
     symbol = str(payload["symbol"]).upper()
     report = benchmark_query_and_serving(base_dir=cfg.data_dir, env=cfg.env, stream_type=stream_type, symbol=symbol)
     return asdict(report)
+
+
+def execute_apply_storage_lifecycle(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    report = apply_storage_lifecycle(
+        cfg.data_dir,
+        cfg.env,
+        sample_every=int(payload.get("sample_every", 10)),
+    )
+    write_storage_lifecycle_execution_report(storage_lifecycle_execution_path(cfg.data_dir, cfg.env), report)
+    return {
+        "execution_path": str(storage_lifecycle_execution_path(cfg.data_dir, cfg.env)),
+        "actions": len(report.actions),
+        "downsampled_actions": sum(1 for item in report.actions if item.action == "downsampled_copy"),
+    }
 
 
 def execute_publish_snapshot(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
@@ -258,6 +363,16 @@ def execute_publish_snapshot(*, cfg: AppConfig, payload: dict[str, Any]) -> dict
         symbol=symbol,
         published_at=_now(),
         payload=snapshot,
+        dataset_id=snapshot.get("dataset_id"),
+        dataset_version=snapshot.get("dataset_version"),
+        lineage_id=snapshot.get("lineage_id"),
+        delivery_contract_version="v2",
     )
     path = publish_record(cfg.data_dir, record)
-    return {"publication_path": str(path), "symbol": symbol, "stream_type": stream_type}
+    return {
+        "publication_path": str(path),
+        "symbol": symbol,
+        "stream_type": stream_type,
+        "dataset_id": snapshot.get("dataset_id"),
+        "dataset_version": snapshot.get("dataset_version"),
+    }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -52,6 +53,8 @@ class DatasetContractRecord:
     contract_mode: ContractMode
     contract: NormalizedContractReport
     support: FeedSupport
+    dataset_version: str
+    lineage_id: str
     normalizer_version: str | None
     historical_feed_kind: str | None
     approved_targets: tuple[DatasetTarget, ...]
@@ -108,6 +111,51 @@ def approved_targets_for_support(support: FeedSupport) -> tuple[DatasetTarget, .
     return tuple(targets)
 
 
+def _build_dataset_version(
+    ref: DatasetPartitionRef,
+    *,
+    contract: NormalizedContractReport,
+    first: dict,
+    last: dict,
+) -> str:
+    payload = json.dumps(
+        {
+            "dataset_id": ref.dataset_id,
+            "partition_path": ref.partition_path,
+            "contract_mode": contract.mode,
+            "contract_pass_ok": contract.pass_ok,
+            "row_count": int(contract.row_count),
+            "normalizer_version": first.get("normalizer_version"),
+            "first_raw_run_id": first.get("raw_run_id"),
+            "first_raw_ingestion_seq": first.get("raw_ingestion_seq"),
+            "last_raw_run_id": last.get("raw_run_id"),
+            "last_raw_ingestion_seq": last.get("raw_ingestion_seq"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _build_lineage_id(ref: DatasetPartitionRef, *, first: dict, last: dict) -> str:
+    payload = json.dumps(
+        {
+            "dataset_id": ref.dataset_id,
+            "partition_path": ref.partition_path,
+            "first_raw_run_id": first.get("raw_run_id"),
+            "first_raw_ingestion_seq": first.get("raw_ingestion_seq"),
+            "last_raw_run_id": last.get("raw_run_id"),
+            "last_raw_ingestion_seq": last.get("raw_ingestion_seq"),
+            "historical_feed_kind": first.get("historical_feed_kind"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def build_dataset_contract_record(
     normalized_path: Path,
     *,
@@ -124,7 +172,10 @@ def build_dataset_contract_record(
     table = read_parquet(Path(normalized_path))
     rows = table.to_pylist()
     first = rows[0] if rows else {}
+    last = rows[-1] if rows else {}
     metadata = dict(first.get("metadata") or {})
+    dataset_version = _build_dataset_version(ref, contract=contract, first=first, last=last)
+    lineage_id = _build_lineage_id(ref, first=first, last=last)
     return DatasetContractRecord(
         dataset_id=ref.dataset_id,
         env=ref.env,
@@ -137,6 +188,8 @@ def build_dataset_contract_record(
         contract_mode=contract_mode,
         contract=contract,
         support=support,
+        dataset_version=dataset_version,
+        lineage_id=lineage_id,
         normalizer_version=first.get("normalizer_version") or metadata.get("normalizer_version"),
         historical_feed_kind=first.get("historical_feed_kind") or metadata.get("historical_feed_kind"),
         approved_targets=approved_targets_for_support(support),
@@ -188,6 +241,8 @@ def read_dataset_contract_registry(path: Path) -> DatasetContractRegistry:
                 contract_mode=raw["contract_mode"],
                 contract=NormalizedContractReport(**raw["contract"]),
                 support=FeedSupport(**raw["support"]),
+                dataset_version=str(raw.get("dataset_version") or "unknown"),
+                lineage_id=str(raw.get("lineage_id") or "unknown"),
                 normalizer_version=raw.get("normalizer_version"),
                 historical_feed_kind=raw.get("historical_feed_kind"),
                 approved_targets=tuple(raw.get("approved_targets", ())),

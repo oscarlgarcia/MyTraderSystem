@@ -17,10 +17,13 @@ class VenueCapability:
     venue: str
     connector_version: str
     stream_type: str
+    capability_source: str
+    transport_modes: tuple[str, ...]
     operational_tier: str
     supports_snapshot: bool
     supports_backfill: bool
     supports_replay: bool
+    supports_hot_subscriptions: bool
     supports_paper: bool
     supports_live: bool
     recovery_capability: str
@@ -42,10 +45,13 @@ def build_venue_capability_registry() -> VenueCapabilityRegistry:
             venue="BINANCE",
             connector_version="binance.v1",
             stream_type=stream_type,
+            capability_source="support-matrix",
+            transport_modes=("websocket", "rest", "file-replay"),
             operational_tier=support.operational_tier,
             supports_snapshot=support.supports_exact_recovery or support.supports_handoff,
             supports_backfill=stream_type in {"trade", "kline"},
             supports_replay=stream_type in {"trade", "kline"},
+            supports_hot_subscriptions=stream_type in {"trade", "kline", "book"},
             supports_paper=support.supports_paper,
             supports_live=support.supports_live,
             recovery_capability=support.recovery_capability,

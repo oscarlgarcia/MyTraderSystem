@@ -24,6 +24,8 @@ class CuratedRefreshReport:
     venue: str
     symbol: str | None
     refreshed_rows: int
+    dataset_versions: tuple[str, ...]
+    lineage_ids: tuple[str, ...]
     latest_exchange_ts: str | None
     db_path: str
     refreshed_at: str
@@ -47,6 +49,9 @@ class CuratedServingStore:
                     venue text not null,
                     stream_type text not null,
                     symbol text not null,
+                    dataset_id text,
+                    dataset_version text,
+                    lineage_id text,
                     exchange_ts text,
                     row_json text not null,
                     refreshed_at text not null,
@@ -63,19 +68,39 @@ class CuratedServingStore:
                     stream_type text not null,
                     symbol text,
                     refreshed_rows integer not null,
+                    dataset_versions text not null,
+                    lineage_ids text not null,
                     latest_exchange_ts text,
                     refreshed_at text not null
                 )
                 """
             )
+            existing_columns = {
+                row[1]
+                for row in conn.execute("pragma table_info(latest_events)").fetchall()
+            }
+            for column_name in ("dataset_id", "dataset_version", "lineage_id"):
+                if column_name not in existing_columns:
+                    conn.execute(f"alter table latest_events add column {column_name} text")
+            refresh_columns = {
+                row[1]
+                for row in conn.execute("pragma table_info(refresh_audit)").fetchall()
+            }
+            if "dataset_versions" not in refresh_columns:
+                conn.execute("alter table refresh_audit add column dataset_versions text not null default '[]'")
+            if "lineage_ids" not in refresh_columns:
+                conn.execute("alter table refresh_audit add column lineage_ids text not null default '[]'")
 
     def upsert_latest(self, *, env: str, venue: str, stream_type: str, symbol: str, row: dict) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into latest_events(env, venue, stream_type, symbol, exchange_ts, row_json, refreshed_at)
-                values(?, ?, ?, ?, ?, ?, ?)
+                insert into latest_events(env, venue, stream_type, symbol, dataset_id, dataset_version, lineage_id, exchange_ts, row_json, refreshed_at)
+                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(env, venue, stream_type, symbol) do update set
+                    dataset_id=excluded.dataset_id,
+                    dataset_version=excluded.dataset_version,
+                    lineage_id=excluded.lineage_id,
                     exchange_ts=excluded.exchange_ts,
                     row_json=excluded.row_json,
                     refreshed_at=excluded.refreshed_at
@@ -85,6 +110,9 @@ class CuratedServingStore:
                     venue,
                     stream_type,
                     symbol,
+                    row.get("dataset_id"),
+                    row.get("dataset_version"),
+                    row.get("lineage_id"),
                     row.get("exchange_ts").isoformat() if row.get("exchange_ts") is not None else None,
                     json.dumps(row, ensure_ascii=False, default=str),
                     _utc_now(),
@@ -95,8 +123,8 @@ class CuratedServingStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into refresh_audit(env, venue, stream_type, symbol, refreshed_rows, latest_exchange_ts, refreshed_at)
-                values(?, ?, ?, ?, ?, ?, ?)
+                insert into refresh_audit(env, venue, stream_type, symbol, refreshed_rows, dataset_versions, lineage_ids, latest_exchange_ts, refreshed_at)
+                values(?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report.env,
@@ -104,6 +132,8 @@ class CuratedServingStore:
                     report.stream_type,
                     report.symbol,
                     report.refreshed_rows,
+                    json.dumps(list(report.dataset_versions), ensure_ascii=False),
+                    json.dumps(list(report.lineage_ids), ensure_ascii=False),
                     report.latest_exchange_ts,
                     report.refreshed_at,
                 ),
@@ -137,8 +167,14 @@ def refresh_curated_store(
     store = CuratedServingStore(db_path or serving_db_path(base_dir, env))
     latest_ts = None
     latest_per_symbol: dict[str, dict] = {}
+    dataset_versions: set[str] = set()
+    lineage_ids: set[str] = set()
     for row in rows:
         row_symbol = str(row["symbol"])
+        if row.get("dataset_version"):
+            dataset_versions.add(str(row["dataset_version"]))
+        if row.get("lineage_id"):
+            lineage_ids.add(str(row["lineage_id"]))
         current_ts = row.get("exchange_ts")
         previous = latest_per_symbol.get(row_symbol)
         if previous is None:
@@ -157,6 +193,8 @@ def refresh_curated_store(
         venue=venue,
         symbol=symbol,
         refreshed_rows=len(rows),
+        dataset_versions=tuple(sorted(dataset_versions)),
+        lineage_ids=tuple(sorted(lineage_ids)),
         latest_exchange_ts=latest_ts.isoformat() if latest_ts is not None else None,
         db_path=str(store.path),
         refreshed_at=_utc_now(),

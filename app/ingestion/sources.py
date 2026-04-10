@@ -289,6 +289,9 @@ class BinanceSource:
     last_prices: dict[str, float] = field(default_factory=dict)
     last_volumes: dict[str, float] = field(default_factory=dict)
     catalog_state: PersistedInstrumentCatalogSnapshot | None = None
+    subscription_reload_interval_seconds: float = 1.0
+    _last_subscription_revision: str | None = None
+    _last_subscription_check_monotonic: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         logger = logging.getLogger("ingest.source")
@@ -366,6 +369,22 @@ class BinanceSource:
 
     def _runtime_stream_types(self) -> tuple[str, ...]:
         return self._runtime_subscription_config().stream_types
+
+    def _ensure_runtime_subscription_alignment(self) -> None:
+        now = self.monotonic_fn()
+        if now - self._last_subscription_check_monotonic < max(0.0, self.subscription_reload_interval_seconds):
+            return
+        self._last_subscription_check_monotonic = now
+        config = self._runtime_subscription_config()
+        if self._last_subscription_revision is None:
+            self._last_subscription_revision = config.revision
+            return
+        if config.revision != self._last_subscription_revision:
+            raise IngestionError(
+                "source",
+                "transient",
+                f"subscription config changed from {self._last_subscription_revision} to {config.revision}",
+            )
 
     def _stamp_catalog_metadata(self, event: IngestionEvent) -> None:
         if self.catalog_state is None:
@@ -762,8 +781,10 @@ class BinanceSource:
                 raise classify_connector_error(exc) from exc
 
     def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]:
-        runtime_symbols = self._runtime_symbols()
-        runtime_stream_types = self._runtime_stream_types()
+        runtime_config = self._runtime_subscription_config()
+        runtime_symbols = runtime_config.symbols
+        runtime_stream_types = runtime_config.stream_types
+        self._last_subscription_revision = runtime_config.revision
         url = build_ws_url(self.cfg.ws_base, runtime_symbols, runtime_stream_types)
         allowed_event_types = tuple(
             stream_type for stream_type in runtime_stream_types if stream_type in BINANCE_FEED_NORMALIZERS
@@ -780,6 +801,7 @@ class BinanceSource:
             else:
                 stream_iter = self.ws_stream(url, end_time=end_time)
             for item in stream_iter:
+                self._ensure_runtime_subscription_alignment()
                 self.stats.source_events_in += 1
                 if isinstance(item, (MarketEvent, BaseMarketEvent)):
                     validate_ingestion_event(item)

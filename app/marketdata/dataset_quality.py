@@ -197,6 +197,19 @@ def append_dataset_incidents(path: Path, reports: tuple[DatasetQualityReport, ..
     return path
 
 
+def read_dataset_incidents(path: Path) -> tuple[DatasetIncident, ...]:
+    resolved = Path(path)
+    if not resolved.exists():
+        return ()
+    incidents: list[DatasetIncident] = []
+    for line in resolved.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        incidents.append(DatasetIncident(**json.loads(raw)))
+    return tuple(incidents)
+
+
 def read_dataset_quality_registry(path: Path) -> DatasetQualityRegistry:
     resolved = Path(path)
     if not resolved.exists():

@@ -29,6 +29,8 @@ def _utc_now() -> str:
 @dataclass(frozen=True, slots=True)
 class DatasetCatalogEntry:
     dataset_id: str
+    dataset_version: str
+    lineage_id: str
     env: str
     venue: str
     symbol: str
@@ -78,6 +80,8 @@ def build_dataset_catalog(
         entries.append(
             DatasetCatalogEntry(
                 dataset_id=record.dataset_id,
+                dataset_version=record.dataset_version,
+                lineage_id=record.lineage_id,
                 env=record.env,
                 venue=record.venue,
                 symbol=record.symbol,

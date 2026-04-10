@@ -21,7 +21,10 @@ class SecurityBaselineReport:
     catalog_root: str
     control_plane_root: str
     serving_db: str
+    publication_root: str
+    subscriptions_path: str
     env_scoped_layout: bool
+    access_control_mode: str
     generated_at: str
 
 
@@ -38,7 +41,10 @@ def build_security_baseline_report(base_dir: Path, env: str) -> SecurityBaseline
         catalog_root=str(env_root / "catalog"),
         control_plane_root=str(env_root / "control-plane"),
         serving_db=str(serving_db_path(base_dir, env)),
+        publication_root=str(env_root / "publication"),
+        subscriptions_path=str(env_root / "control-plane" / "subscriptions.json"),
         env_scoped_layout=True,
+        access_control_mode="env-scoped-baseline",
         generated_at=_utc_now(),
     )
 

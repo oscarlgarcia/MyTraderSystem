@@ -107,6 +107,23 @@ def test_api_exposes_catalog_query_snapshot_and_subscriptions(tmp_path):
     assert response.json()["symbols"] == ["BTCUSDT"]
 
 
+def test_api_exposes_service_levels_gap_fill_and_incidents(tmp_path):
+    cfg = _cfg(tmp_path)
+    _write_trade_dataset(tmp_path)
+    refresh_dataset_catalog(tmp_path, "test")
+    store = SQLiteControlPlaneStore(cfg.control_plane_db_path)
+    client = TestClient(build_app(cfg, store=store))
+
+    response = client.get("/api/datasets/service-levels")
+    assert response.status_code == 200
+
+    response = client.get("/api/datasets/gap-fill-plan")
+    assert response.status_code == 200
+
+    response = client.get("/api/datasets/incidents")
+    assert response.status_code == 200
+
+
 def test_api_enqueues_catalog_and_subscription_commands(tmp_path):
     cfg = _cfg(tmp_path)
     store = SQLiteControlPlaneStore(cfg.control_plane_db_path)
@@ -125,3 +142,12 @@ def test_api_enqueues_catalog_and_subscription_commands(tmp_path):
     command = store.get_command(payload["command_id"])
     assert command is not None
     assert command.payload["symbols"] == ["BTCUSDT", "ETHUSDT"]
+
+    response = client.post("/api/commands/service-levels-refresh", data={"requested_by": "tester"})
+    assert response.status_code == 202
+
+    response = client.post("/api/commands/storage-lifecycle-apply", data={"requested_by": "tester", "sample_every": 5})
+    assert response.status_code == 202
+
+    response = client.post("/api/commands/gap-fill", data={"requested_by": "tester", "stream_type": "trade", "symbol": "BTCUSDT"})
+    assert response.status_code == 202

@@ -1,7 +1,7 @@
 # Ingestion Operational Closure Playbook - Paper
 
 ## Objetivo
-Ejecutar el cierre operativo estandar de ingestion para `paper` sobre el scope soportado hoy y refrescar la capa de catalogo, quality y curated serving que alimenta paper trading y research.
+Ejecutar el cierre operativo estandar de ingestion para `paper` sobre el scope soportado hoy y refrescar la capa de catalogo, quality, service levels, gap fill, curated serving y publication que alimenta paper trading y research.
 
 ## Scope soportado
 - feeds soportados: `trade`, `kline`
@@ -27,6 +27,7 @@ Ejecutar el cierre operativo estandar de ingestion para `paper` sobre el scope s
 - si se va a refrescar catalogo/quality/serving, tener activos:
   - `python -m app.controlplane.api --env dev --host 127.0.0.1 --port 8000`
   - `python -m app.controlplane.worker --env dev`
+- si cambia la configuracion de symbols o stream types antes del cierre, persistirla por control plane y verificar que el runtime recarga la nueva `revision` con reconnect controlado
 
 ## Variables del caso estandar
 - `output_dir`: `docs/validation/operational/paper`
@@ -64,12 +65,15 @@ poetry run python scripts/ingestion_operational_cycle.py `
 ```powershell
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/catalog-refresh' -Form @{ requested_by = 'ingestion-paper-closure' }
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/quality-refresh' -Form @{ requested_by = 'ingestion-paper-closure' }
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/service-levels-refresh' -Form @{ requested_by = 'ingestion-paper-closure' }
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/gap-fill' -Form @{ requested_by = 'ingestion-paper-closure' }
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/curated-refresh' -Form @{ stream_type = 'trade'; symbol = 'BTCUSDT'; requested_by = 'ingestion-paper-closure' }
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/curated-refresh' -Form @{ stream_type = 'kline'; symbol = 'BTCUSDT'; requested_by = 'ingestion-paper-closure' }
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/benchmark-serving' -Form @{ stream_type = 'trade'; symbol = 'BTCUSDT'; requested_by = 'ingestion-paper-closure' }
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/benchmark-serving' -Form @{ stream_type = 'kline'; symbol = 'BTCUSDT'; requested_by = 'ingestion-paper-closure' }
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/publish-snapshot' -Form @{ stream_type = 'trade'; symbol = 'BTCUSDT'; requested_by = 'ingestion-paper-closure' }
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/publish-snapshot' -Form @{ stream_type = 'kline'; symbol = 'BTCUSDT'; requested_by = 'ingestion-paper-closure' }
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/storage-lifecycle-apply' -Form @{ requested_by = 'ingestion-paper-closure' }
 ```
 
 ## Artefactos esperados
@@ -90,8 +94,11 @@ Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/publish-
   - `data/dev/catalog/dataset-contracts.json`
   - `data/dev/catalog/dataset-quality.json`
   - `data/dev/catalog/dataset-incidents.jsonl`
+  - `data/dev/catalog/dataset-service-levels.json`
+  - `data/dev/catalog/gap-fill-plan.json`
   - `data/dev/catalog/venue-capabilities.json`
   - `data/dev/catalog/delivery-contracts.json`
+  - `data/dev/catalog/storage-lifecycle-actions.json`
   - `data/dev/serving/marketdata.sqlite`
   - `data/dev/publication/venue=BINANCE/stream_type=trade/events.jsonl`
   - `data/dev/publication/venue=BINANCE/stream_type=kline/events.jsonl`
@@ -101,20 +108,25 @@ Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/commands/publish-
 2. `trade` y `kline` tienen release gates finales en verde.
 3. `data/dev/catalog/datasets.json` y `data/dev/catalog/dataset-contracts.json` existen y documentan ambos feeds.
 4. `data/dev/catalog/dataset-quality.json` existe y el refresh de quality no deja incidentes criticos nuevos.
-5. `data/dev/serving/marketdata.sqlite` existe y contiene serving curado para `trade` y `kline`.
-6. Los benchmarks de serving para ambos feeds devuelven `pass_ok = true`.
-7. Los snapshots publicados existen en `data/dev/publication/...`.
+5. `data/dev/catalog/dataset-service-levels.json` deja `trade` y `kline` dentro del presupuesto paper o documenta el desvio.
+6. `data/dev/catalog/gap-fill-plan.json` no deja ventanas abiertas sin accion prevista.
+7. `data/dev/serving/marketdata.sqlite` existe y contiene serving curado para `trade` y `kline`, con `dataset_version` y `lineage_id`.
+8. Los benchmarks de serving para ambos feeds devuelven `pass_ok = true`, con `snapshot_hit_ok = true`.
+9. Los snapshots publicados existen en `data/dev/publication/...` y publican `delivery_contract_version`.
+10. `data/dev/catalog/storage-lifecycle-actions.json` existe y deja constancia del lifecycle aplicado o evaluado.
 
 ## Criterio de decision
 - `GO`
   - ambos perfiles paper en `PASS`
-  - catalogo, quality y curated serving refrescados
+  - catalogo, quality, service levels, gap fill y curated serving refrescados
   - publication actualizada
   - observabilidad externa verificada
 - `NO-GO`
   - cualquier artefacto operativo faltante
-  - falta de refresh de catalogo/quality/curated tras el cierre
+  - falta de refresh de catalogo/quality/service levels/gap fill/curated tras el cierre
   - `book` aparece en scope
+  - `service level` en `breached` sin aceptacion operativa
+  - huecos abiertos sin remediacion planificada
   - benchmarks de serving fallidos
 
 ## Referencias

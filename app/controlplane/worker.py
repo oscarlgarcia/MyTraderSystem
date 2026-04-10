@@ -11,10 +11,13 @@ from app.controlplane.builder import ReadModelBuilder
 from app.controlplane.models import CommandAuditRecord, CommandRequestRecord
 from app.controlplane.operations import (
     execute_ack_alert,
+    execute_apply_storage_lifecycle,
     execute_benchmark_serving,
+    execute_gap_fill,
     execute_publish_snapshot,
     execute_refresh_curated,
     execute_refresh_dataset_catalog,
+    execute_refresh_service_levels,
     execute_replay_range,
     execute_resync_stream,
     execute_score_dataset_quality,
@@ -40,8 +43,11 @@ def default_executor_registry() -> dict[str, CommandExecutor]:
         "refresh_dataset_catalog": execute_refresh_dataset_catalog,
         "score_dataset_quality": execute_score_dataset_quality,
         "refresh_curated": execute_refresh_curated,
+        "refresh_service_levels": execute_refresh_service_levels,
         "update_subscriptions": execute_update_subscriptions,
+        "gap_fill": execute_gap_fill,
         "benchmark_serving": execute_benchmark_serving,
+        "apply_storage_lifecycle": execute_apply_storage_lifecycle,
         "publish_snapshot": execute_publish_snapshot,
     }
 

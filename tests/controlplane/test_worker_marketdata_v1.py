@@ -8,6 +8,8 @@ from app.controlplane.sqlite_store import SQLiteControlPlaneStore
 from app.controlplane.worker import process_next_command
 from app.ingestion.storage import ParquetWriter
 from app.marketdata.dataset_catalog import dataset_catalog_path
+from app.marketdata.service_levels import dataset_service_levels_path
+from app.marketdata.storage_lifecycle import storage_lifecycle_execution_path
 from app.marketdata.models import TradeEvent
 from app.marketdata.publication import publication_path
 from app.marketdata.serving import refresh_curated_store
@@ -121,3 +123,35 @@ def test_worker_can_publish_snapshot_and_benchmark_serving(tmp_path):
     assert publication_path(tmp_path, "test", stream_type="trade").exists()
     assert process_next_command(store=store, cfg=cfg, worker_id="worker-1") is True
     assert store.get_command("cmd-benchmark").status == "succeeded"
+
+
+def test_worker_executes_service_level_refresh_and_storage_lifecycle(tmp_path):
+    cfg = _cfg(tmp_path)
+    _write_trade_dataset(tmp_path)
+    refresh_curated_store(base_dir=tmp_path, env="test", stream_type="trade", symbol="BTCUSDT")
+    store = SQLiteControlPlaneStore(cfg.control_plane_db_path)
+    store.enqueue_command(
+        CommandRequestRecord(
+            command_id="cmd-service-levels",
+            command_type="refresh_service_levels",
+            scope="env:test:service-levels",
+            payload={},
+            requested_by="tester",
+            requested_at="2026-04-10T10:00:00+00:00",
+        )
+    )
+    store.enqueue_command(
+        CommandRequestRecord(
+            command_id="cmd-storage",
+            command_type="apply_storage_lifecycle",
+            scope="env:test:storage-lifecycle",
+            payload={"sample_every": 2},
+            requested_by="tester",
+            requested_at="2026-04-10T10:01:00+00:00",
+        )
+    )
+
+    assert process_next_command(store=store, cfg=cfg, worker_id="worker-1") is True
+    assert dataset_service_levels_path(tmp_path, "test").exists()
+    assert process_next_command(store=store, cfg=cfg, worker_id="worker-1") is True
+    assert storage_lifecycle_execution_path(tmp_path, "test").exists()

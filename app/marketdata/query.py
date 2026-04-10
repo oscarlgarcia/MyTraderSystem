@@ -7,7 +7,7 @@ from pathlib import Path
 import pyarrow as pa
 
 from app.ingestion.storage import list_normalized_partition_paths, read_parquet
-from app.marketdata.dataset_contracts import parse_normalized_partition_path
+from app.marketdata.dataset_contracts import build_dataset_contract_record, parse_normalized_partition_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,12 +39,19 @@ def _matching_partitions(request: HistoricalQueryRequest) -> list[Path]:
 def query_rows(request: HistoricalQueryRequest) -> list[dict]:
     rows: list[dict] = []
     for partition in _matching_partitions(request):
+        contract_record = build_dataset_contract_record(partition)
+        partition_ref = parse_normalized_partition_path(partition)
         for row in read_parquet(partition).to_pylist():
             exchange_ts = row.get("exchange_ts")
             if request.start_ts is not None and exchange_ts is not None and exchange_ts < request.start_ts:
                 continue
             if request.end_ts is not None and exchange_ts is not None and exchange_ts > request.end_ts:
                 continue
+            row = dict(row)
+            row.setdefault("dataset_id", partition_ref.dataset_id)
+            row.setdefault("dataset_version", contract_record.dataset_version)
+            row.setdefault("lineage_id", contract_record.lineage_id)
+            row.setdefault("partition_path", str(partition))
             rows.append(row)
             if request.limit is not None and len(rows) >= request.limit:
                 return rows

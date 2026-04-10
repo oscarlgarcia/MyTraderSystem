@@ -18,6 +18,10 @@ class PublicationRecord:
     symbol: str
     published_at: str
     payload: dict
+    dataset_id: str | None = None
+    dataset_version: str | None = None
+    lineage_id: str | None = None
+    delivery_contract_version: str | None = None
 
 
 def publication_path(base_dir: Path, env: str, *, stream_type: str, venue: str = "BINANCE") -> Path:
@@ -36,6 +40,10 @@ def publish_record(base_dir: Path, record: PublicationRecord) -> Path:
                     "venue": record.venue,
                     "stream_type": record.stream_type,
                     "symbol": record.symbol,
+                    "dataset_id": record.dataset_id,
+                    "dataset_version": record.dataset_version,
+                    "lineage_id": record.lineage_id,
+                    "delivery_contract_version": record.delivery_contract_version,
                     "payload": record.payload,
                 },
                 ensure_ascii=False,

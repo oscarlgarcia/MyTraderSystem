@@ -26,7 +26,9 @@ class DeliveryContract:
     freshness_expectation_seconds: float
     completeness_mode: str
     delivery_mode: str
-    contract_version: str = "v1"
+    bootstrap_mode: str
+    publication_mode: str
+    contract_version: str = "v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,8 @@ def build_delivery_contract_registry(*, env: str, venue: str = "BINANCE") -> Del
                 freshness_expectation_seconds=freshness_map.get(stream_type, 30.0),
                 completeness_mode=support.recovery_capability,
                 delivery_mode="curated_snapshot_then_incremental",
+                bootstrap_mode="snapshot_service",
+                publication_mode="jsonl_bus_like",
             )
         )
     return DeliveryContractRegistry(generated_at=_utc_now(), contracts=tuple(contracts))
