@@ -516,7 +516,7 @@
   - `tests/marketdata/dedup/test_dedup_guarantees.py`
   - `tests/marketdata/handoff/test_handoff_guarantees.py`
   - `tests/marketdata/recovery/test_recovery_guarantees.py`
-  - `docs/operations/ingestion_runbook.md`
+  - `docs/operations/ingestion/ingestion_runbook.md`
   - `docs/validation/ingestion_readiness.md`
   - `scripts/ingestion_soak.py`
   - `scripts/ingestion_canary.py`

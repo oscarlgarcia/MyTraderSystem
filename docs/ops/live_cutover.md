@@ -9,7 +9,7 @@ Procedimiento formal de promocion de ingestion desde paper a live con rollback c
 - `docs/validation/ingestion_ws_canary_report.json`
 - `docs/validation/ingestion_storage_benchmark.json`
 - `docs/validation/ingestion_live_drill_report.json`
-- `docs/operations/ingestion_rollback_checklist.md`
+- `docs/operations/ingestion/ingestion_rollback_checklist.md`
 
 ## Tiempos maximos de decision
 - decision de promocion: `15` minutos desde el cierre del release gate

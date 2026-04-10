@@ -567,5 +567,5 @@ flowchart LR
 - La verificacion de observabilidad externa se persiste con `scripts/ingestion_observability_verify.py` y deja artifacts `ingestion_observability_verification_<profile>.json`.
 - Ese artifact ya no deberia construirse ad hoc en promotion final; debe venir de un path persistido y auditable.
 - Los playbooks ejecutables de referencia quedan en:
-  - `docs/operations/ingestion_operational_closure_paper.md`
-  - `docs/operations/ingestion_operational_closure_live.md`
+  - `docs/operations/ingestion/ingestion_operational_closure_paper.md`
+  - `docs/operations/ingestion/ingestion_operational_closure_live.md`
