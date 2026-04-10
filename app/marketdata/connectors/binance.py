@@ -13,7 +13,7 @@ from typing import Any, Protocol
 from app.common.dto import MarketEvent, normalize_symbol
 from app.marketdata.errors import SchemaDriftError
 from app.marketdata.instruments import instrument_metadata
-from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
+from app.marketdata.models import BarEvent, BookEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
 from app.marketdata.normalization import stamp_normalizer_version
 from app.marketdata.validators import validate_ingestion_event, validate_kline_payload, validate_trade_payload
 
@@ -145,7 +145,24 @@ BINANCE_SCHEMA_SPECS: dict[str, _SchemaSpec] = {
             "k.x": "bool",
         },
     ),
+    "book": _SchemaSpec(
+        event_type="book",
+        required_paths={
+            "a": "str",
+            "A": "str",
+            "b": "str",
+            "B": "str",
+            "s": "str",
+            "u": "int",
+        },
+        optional_paths={
+            "E": "int",
+            "e": "str",
+        },
+    ),
 }
+
+BINANCE_CONNECTOR_VERSION = "binance.v1"
 
 
 def assert_binance_payload_schema(event_type: str, payload: dict[str, Any]) -> None:
@@ -207,6 +224,7 @@ class BinanceTradeNormalizer:
     event_type = "trade"
     stream_type = "trade"
     supports_snapshot = True
+    connector_version = BINANCE_CONNECTOR_VERSION
 
     @staticmethod
     def build_stream(symbol: str) -> str:
@@ -222,6 +240,7 @@ class BinanceTradeNormalizer:
     ) -> TradeEvent:
         validate_trade_payload(payload)
         metadata = _instrument_metadata(str(payload["s"]), venue)
+        metadata["connector_version"] = BINANCE_CONNECTOR_VERSION
         canonical_trade_id = payload.get("a")
         if canonical_trade_id is None:
             canonical_trade_id = payload.get("t")
@@ -281,6 +300,7 @@ class BinanceBarNormalizer:
     event_type = "kline"
     stream_type = "kline"
     supports_snapshot = True
+    connector_version = BINANCE_CONNECTOR_VERSION
 
     @staticmethod
     def build_stream(symbol: str) -> str:
@@ -318,6 +338,7 @@ class BinanceBarNormalizer:
             metadata=stamp_normalizer_version(
                 {
                     **_instrument_metadata(str(payload["s"]), venue),
+                    "connector_version": BINANCE_CONNECTOR_VERSION,
                     "volume_kind": "quote",
                     "volume_semantics": "quote_asset_volume",
                 }
@@ -358,9 +379,73 @@ class BinanceBarNormalizer:
         }
 
 
+class BinanceBookTickerNormalizer:
+    event_type = "book"
+    stream_type = "book"
+    supports_snapshot = True
+    connector_version = BINANCE_CONNECTOR_VERSION
+
+    @staticmethod
+    def build_stream(symbol: str) -> str:
+        return f"{normalize_symbol(symbol).lower()}@bookTicker"
+
+    @staticmethod
+    def normalize_typed(
+        payload: dict[str, Any],
+        *,
+        venue: str = "BINANCE",
+        receive_ts: datetime | None = None,
+        process_ts: datetime | None = None,
+    ) -> BookEvent:
+        metadata = stamp_normalizer_version(
+            {
+                **_instrument_metadata(str(payload["s"]), venue),
+                "connector_version": BINANCE_CONNECTOR_VERSION,
+            }
+        )
+        if payload.get("E") is not None:
+            exchange_ts = _ts_from_ms(int(payload["E"]))
+        else:
+            exchange_ts = receive_ts or _process_ts(process_ts)
+            metadata["exchange_ts_source"] = "receive_ts"
+        event = BookEvent(
+            symbol=normalize_symbol(str(payload["s"])),
+            exchange_ts=exchange_ts,
+            receive_ts=receive_ts,
+            process_ts=_process_ts(process_ts),
+            venue=venue,
+            source_id=str(payload.get("u")) if payload.get("u") is not None else None,
+            metadata=metadata,
+            bid_price=float(payload["b"]),
+            bid_size=float(payload["B"]),
+            ask_price=float(payload["a"]),
+            ask_size=float(payload["A"]),
+            sequence_id=str(payload.get("u")) if payload.get("u") is not None else None,
+        )
+        validate_ingestion_event(event)
+        return event
+
+    @classmethod
+    def normalize_legacy(cls, payload: dict[str, Any], **kwargs: Any) -> MarketEvent:
+        return ensure_legacy_market_event(cls.normalize_typed(payload, **kwargs))
+
+    @staticmethod
+    def snapshot_payload_from_row(symbol: str, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "s": normalize_symbol(symbol),
+            "u": int(row["u"]) if row.get("u") is not None else None,
+            "b": str(row["b"]),
+            "B": str(row["B"]),
+            "a": str(row["a"]),
+            "A": str(row["A"]),
+            "E": int(row["E"]) if row.get("E") not in (None, "") else None,
+        }
+
+
 BINANCE_FEED_NORMALIZERS: dict[str, BinanceFeedNormalizer] = {
     "trade": BinanceTradeNormalizer,
     "kline": BinanceBarNormalizer,
+    "book": BinanceBookTickerNormalizer,
 }
 
 
@@ -405,4 +490,6 @@ def snapshot_payload_from_row(
         return BinanceTradeNormalizer.snapshot_payload_from_row(symbol, row)
     if stream_type == "kline":
         return BinanceBarNormalizer.snapshot_payload_from_row(symbol, row, interval=interval)
+    if stream_type == "book":
+        return BinanceBookTickerNormalizer.snapshot_payload_from_row(symbol, row)
     raise KeyError(f"stream type does not support snapshot payloads: {stream_type}")

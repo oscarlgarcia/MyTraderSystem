@@ -9,7 +9,17 @@ from typing import Callable
 from app.config import load_config
 from app.controlplane.builder import ReadModelBuilder
 from app.controlplane.models import CommandAuditRecord, CommandRequestRecord
-from app.controlplane.operations import execute_ack_alert, execute_replay_range, execute_resync_stream
+from app.controlplane.operations import (
+    execute_ack_alert,
+    execute_benchmark_serving,
+    execute_publish_snapshot,
+    execute_refresh_curated,
+    execute_refresh_dataset_catalog,
+    execute_replay_range,
+    execute_resync_stream,
+    execute_score_dataset_quality,
+    execute_update_subscriptions,
+)
 from app.controlplane.store import ControlPlaneStore
 from app.controlplane.store_factory import create_control_plane_store
 from app.controlplane.telemetry import configure_control_plane_telemetry, emit_control_plane_event
@@ -27,6 +37,12 @@ def default_executor_registry() -> dict[str, CommandExecutor]:
         "ack_alert": execute_ack_alert,
         "replay_range": execute_replay_range,
         "resync_stream": execute_resync_stream,
+        "refresh_dataset_catalog": execute_refresh_dataset_catalog,
+        "score_dataset_quality": execute_score_dataset_quality,
+        "refresh_curated": execute_refresh_curated,
+        "update_subscriptions": execute_update_subscriptions,
+        "benchmark_serving": execute_benchmark_serving,
+        "publish_snapshot": execute_publish_snapshot,
     }
 
 

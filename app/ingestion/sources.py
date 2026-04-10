@@ -38,6 +38,7 @@ from app.marketdata.instruments import (
     persist_runtime_instrument_catalog_snapshot,
     use_instrument_catalog,
 )
+from app.marketdata.subscriptions import read_subscription_config
 from app.marketdata.raw_sink import NullRawSink, RawRecord, RawSink
 from app.marketdata.recovery import RecoveryRequest
 from app.marketdata.validators import validate_ingestion_event
@@ -348,9 +349,23 @@ class BinanceSource:
                 reset_timeout_seconds=30.0,
                 monotonic_fn=self.monotonic_fn,
             )
-        for symbol in self.cfg.symbols:
-            for stream_type in self.stream_types:
+        for symbol in self._runtime_symbols():
+            for stream_type in self._runtime_stream_types():
                 _ensure_stream_metric(self.stats, venue="BINANCE", symbol=symbol, stream_type=stream_type)
+
+    def _runtime_subscription_config(self):
+        return read_subscription_config(
+            self.cfg.data_dir,
+            self.cfg.env,
+            default_symbols=self.cfg.symbols,
+            default_stream_types=self.stream_types,
+        )
+
+    def _runtime_symbols(self) -> tuple[str, ...]:
+        return self._runtime_subscription_config().symbols
+
+    def _runtime_stream_types(self) -> tuple[str, ...]:
+        return self._runtime_subscription_config().stream_types
 
     def _stamp_catalog_metadata(self, event: IngestionEvent) -> None:
         if self.catalog_state is None:
@@ -667,6 +682,8 @@ class BinanceSource:
             return "/api/v3/klines"
         if stream_type == "trade":
             return "/api/v3/aggTrades"
+        if stream_type == "book":
+            return "/api/v3/ticker/bookTicker"
         raise KeyError(f"stream type does not support snapshots: {stream_type}")
 
     def _snapshot_params(
@@ -688,6 +705,8 @@ class BinanceSource:
             params["startTime"] = int(request.start_ts.timestamp() * 1000)
         if request is not None and request.end_ts is not None:
             params["endTime"] = int(request.end_ts.timestamp() * 1000)
+        if stream_type == "book":
+            params = {"symbol": symbol}
         if stream_type == "trade" and request is not None and request.cursor_kind in {"aggregate_trade_id", "trade_id", "sequence_id"}:
             if request.cursor_value not in (None, ""):
                 params["fromId"] = int(str(request.cursor_value))
@@ -743,9 +762,11 @@ class BinanceSource:
                 raise classify_connector_error(exc) from exc
 
     def stream(self, end_time: float | None = None) -> Iterable[IngestionEvent]:
-        url = build_ws_url(self.cfg.ws_base, self.cfg.symbols, self.stream_types)
+        runtime_symbols = self._runtime_symbols()
+        runtime_stream_types = self._runtime_stream_types()
+        url = build_ws_url(self.cfg.ws_base, runtime_symbols, runtime_stream_types)
         allowed_event_types = tuple(
-            stream_type for stream_type in self.stream_types if stream_type in BINANCE_FEED_NORMALIZERS
+            stream_type for stream_type in runtime_stream_types if stream_type in BINANCE_FEED_NORMALIZERS
         )
         try:
             if self.ws_stream is _ws_stream:
@@ -834,8 +855,8 @@ class BinanceSource:
             raise
         except Exception as exc:
             if isinstance(exc, TimeoutError):
-                for symbol in self.cfg.symbols:
-                    for stream_type in self.stream_types:
+                for symbol in runtime_symbols:
+                    for stream_type in runtime_stream_types:
                         metric = _ensure_stream_metric(self.stats, venue="BINANCE", symbol=symbol, stream_type=stream_type)
                         metric["heartbeat_missed_total"] = int(metric["heartbeat_missed_total"]) + 1
                         metric["reconnects_total"] = int(metric["reconnects_total"]) + 1
@@ -861,8 +882,8 @@ class BinanceSource:
                                 },
                             )
             else:
-                for symbol in self.cfg.symbols:
-                    for stream_type in self.stream_types:
+                for symbol in runtime_symbols:
+                    for stream_type in runtime_stream_types:
                         metric = _ensure_stream_metric(self.stats, venue="BINANCE", symbol=symbol, stream_type=stream_type)
                         metric["reconnects_total"] = int(metric["reconnects_total"]) + 1
                         if should_emit_threshold_alert("reconnect_storm", int(metric["reconnects_total"])):
@@ -882,8 +903,8 @@ class BinanceSource:
         events: list[IngestionEvent] = []
         try:
             self.stats.snapshot_runs += 1
-            for symbol in self.cfg.symbols:
-                for stream_type in self.stream_types:
+            for symbol in self._runtime_symbols():
+                for stream_type in self._runtime_stream_types():
                     if request is not None:
                         if symbol != request.partition.symbol or stream_type != request.partition.stream_type:
                             continue
@@ -903,6 +924,8 @@ class BinanceSource:
                         metric["recovery_window_rows_requested"] = int(metric["recovery_window_rows_requested"]) + int(request.limit)
                     receive_ts = datetime.now(timezone.utc)
                     rows = resp.json()
+                    if isinstance(rows, dict):
+                        rows = [rows]
                     if request is not None and request.limit is not None:
                         metric["recovery_window_rows_received"] = int(metric["recovery_window_rows_received"]) + len(rows)
                         if len(rows) < int(request.limit):

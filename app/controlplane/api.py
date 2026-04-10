@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -26,6 +26,13 @@ from app.controlplane.presenters import (
 from app.controlplane.store import ControlPlaneStore
 from app.controlplane.store_factory import create_control_plane_store
 from app.controlplane.telemetry import configure_control_plane_telemetry, emit_control_plane_event
+from app.marketdata.dataset_catalog import dataset_catalog_path, read_dataset_catalog
+from app.marketdata.dataset_contracts import dataset_contract_registry_path, read_dataset_contract_registry
+from app.marketdata.dataset_quality import dataset_quality_registry_path, read_dataset_quality_registry
+from app.marketdata.query import HistoricalQueryRequest, query_rows
+from app.marketdata.replay_service import ReplayServiceRequest, replay_service_report_payload
+from app.marketdata.snapshot_service import SnapshotRequest, load_snapshot
+from app.marketdata.subscriptions import read_subscription_config
 
 
 def _utc_now() -> str:
@@ -358,6 +365,216 @@ def build_app(
                 "payload": command.payload,
             }
         )
+
+    @app.get("/api/datasets/catalog")
+    def api_dataset_catalog() -> JSONResponse:
+        current = sync()
+        catalog = read_dataset_catalog(dataset_catalog_path(current.cfg.data_dir, current.cfg.env))
+        return JSONResponse(
+            {
+                "generated_at": catalog.generated_at,
+                "entries": [asdict(item) for item in catalog.entries],
+            }
+        )
+
+    @app.get("/api/datasets/contracts")
+    def api_dataset_contracts() -> JSONResponse:
+        current = sync()
+        registry = read_dataset_contract_registry(dataset_contract_registry_path(current.cfg.data_dir, current.cfg.env))
+        return JSONResponse(
+            {
+                "generated_at": registry.generated_at,
+                "records": [
+                    {
+                        **asdict(item),
+                        "contract": asdict(item.contract),
+                        "support": asdict(item.support),
+                    }
+                    for item in registry.records
+                ],
+            }
+        )
+
+    @app.get("/api/datasets/quality")
+    def api_dataset_quality() -> JSONResponse:
+        current = sync()
+        registry = read_dataset_quality_registry(dataset_quality_registry_path(current.cfg.data_dir, current.cfg.env))
+        return JSONResponse(
+            {
+                "generated_at": registry.generated_at,
+                "reports": [
+                    {
+                        **asdict(item),
+                        "incidents": [asdict(incident) for incident in item.incidents],
+                    }
+                    for item in registry.reports
+                ],
+            }
+        )
+
+    @app.get("/api/datasets/query")
+    def api_dataset_query(
+        stream_type: str,
+        symbol: str = "",
+        start_ts: str = "",
+        end_ts: str = "",
+        limit: int | None = None,
+    ) -> JSONResponse:
+        current = sync()
+        rows = query_rows(
+            HistoricalQueryRequest(
+                base_dir=current.cfg.data_dir,
+                env=current.cfg.env,
+                stream_type=stream_type,
+                symbol=symbol.upper() if symbol else None,
+                start_ts=datetime.fromisoformat(start_ts) if start_ts else None,
+                end_ts=datetime.fromisoformat(end_ts) if end_ts else None,
+                limit=limit,
+            )
+        )
+        return JSONResponse(json.loads(json.dumps({"count": len(rows), "rows": rows}, default=str)))
+
+    @app.get("/api/datasets/snapshot")
+    def api_dataset_snapshot(stream_type: str, symbol: str) -> JSONResponse:
+        current = sync()
+        snapshot = load_snapshot(
+            SnapshotRequest(
+                base_dir=current.cfg.data_dir,
+                env=current.cfg.env,
+                stream_type=stream_type,
+                symbol=symbol.upper(),
+            )
+        )
+        if snapshot is None:
+            return JSONResponse({"error": "snapshot_not_found"}, status_code=404)
+        return JSONResponse(json.loads(json.dumps(snapshot, default=str)))
+
+    @app.get("/api/datasets/replay-report")
+    def api_dataset_replay_report(
+        stream_type: str,
+        symbol: str = "",
+        start_ts: str = "",
+        end_ts: str = "",
+        limit: int | None = None,
+    ) -> JSONResponse:
+        current = sync()
+        payload = replay_service_report_payload(
+            ReplayServiceRequest(
+                base_dir=Path(current.cfg.data_dir) / "raw",
+                env=current.cfg.env,
+                stream_type=stream_type,
+                symbol=symbol.upper() if symbol else None,
+                start_ts=datetime.fromisoformat(start_ts) if start_ts else None,
+                end_ts=datetime.fromisoformat(end_ts) if end_ts else None,
+                limit=limit,
+            )
+        )
+        return JSONResponse(payload)
+
+    @app.get("/api/subscriptions")
+    def api_subscriptions() -> JSONResponse:
+        current = sync()
+        config = read_subscription_config(
+            current.cfg.data_dir,
+            current.cfg.env,
+            default_symbols=current.cfg.symbols,
+            default_stream_types=("trade", "kline"),
+        )
+        return JSONResponse(asdict(config))
+
+    @app.post("/api/commands/catalog-refresh")
+    async def api_catalog_refresh(request: Request, requested_by: str = Form("ui-operator")) -> Response:
+        current = sync()
+        record = _enqueue_command(
+            current.store,
+            command_type="refresh_dataset_catalog",
+            scope=f"env:{current.cfg.env}:catalog",
+            payload={},
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
+
+    @app.post("/api/commands/quality-refresh")
+    async def api_quality_refresh(request: Request, requested_by: str = Form("ui-operator")) -> Response:
+        current = sync()
+        record = _enqueue_command(
+            current.store,
+            command_type="score_dataset_quality",
+            scope=f"env:{current.cfg.env}:quality",
+            payload={},
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
+
+    @app.post("/api/commands/curated-refresh")
+    async def api_curated_refresh(
+        request: Request,
+        stream_type: str = Form("kline"),
+        symbol: str = Form(""),
+        requested_by: str = Form("ui-operator"),
+    ) -> Response:
+        current = sync()
+        record = _enqueue_command(
+            current.store,
+            command_type="refresh_curated",
+            scope=f"env:{current.cfg.env}:{stream_type}:{symbol.upper() or 'ALL'}",
+            payload={"stream_type": stream_type, "symbol": symbol.upper() or None},
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
+
+    @app.post("/api/commands/subscriptions")
+    async def api_update_subscriptions(
+        request: Request,
+        symbols: str = Form(...),
+        stream_types: str = Form("trade,kline"),
+        requested_by: str = Form("ui-operator"),
+    ) -> Response:
+        current = sync()
+        symbol_list = [item.strip().upper() for item in symbols.split(",") if item.strip()]
+        stream_type_list = [item.strip().lower() for item in stream_types.split(",") if item.strip()]
+        record = _enqueue_command(
+            current.store,
+            command_type="update_subscriptions",
+            scope=f"env:{current.cfg.env}:subscriptions",
+            payload={"symbols": symbol_list, "stream_types": stream_type_list, "updated_by": requested_by},
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
+
+    @app.post("/api/commands/benchmark-serving")
+    async def api_benchmark_serving(
+        request: Request,
+        symbol: str = Form(...),
+        stream_type: str = Form("kline"),
+        requested_by: str = Form("ui-operator"),
+    ) -> Response:
+        current = sync()
+        record = _enqueue_command(
+            current.store,
+            command_type="benchmark_serving",
+            scope=f"env:{current.cfg.env}:{stream_type}:{symbol.upper()}",
+            payload={"symbol": symbol.upper(), "stream_type": stream_type},
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
+
+    @app.post("/api/commands/publish-snapshot")
+    async def api_publish_snapshot(
+        request: Request,
+        symbol: str = Form(...),
+        stream_type: str = Form("kline"),
+        requested_by: str = Form("ui-operator"),
+    ) -> Response:
+        current = sync()
+        record = _enqueue_command(
+            current.store,
+            command_type="publish_snapshot",
+            scope=f"env:{current.cfg.env}:{stream_type}:{symbol.upper()}:publication",
+            payload={"symbol": symbol.upper(), "stream_type": stream_type},
+            requested_by=requested_by,
+        )
+        return _command_response(request, record)
 
     return app
 

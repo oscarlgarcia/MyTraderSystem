@@ -627,22 +627,29 @@ def test_bar_dataset_merges_old_v2_rows_with_first_class_columns(tmp_path):
     assert loaded.column("source_id").to_pylist() == ["bar-legacy", "bar-new"]
 
 
-def test_normalized_storage_rejects_book_feed_as_out_of_scope(tmp_path):
+def test_normalized_storage_persists_book_feed_as_experimental_quotes_partition(tmp_path):
     writer = ParquetWriter(base_dir=tmp_path, env="dev", flush_size=1)
 
-    with pytest.raises(ValueError, match="book feed is out of scope for normalized storage"):
-        writer.add(
-            BookEvent(
-                symbol="BTCUSDT",
-                exchange_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                venue="BINANCE",
-                bid_price=100.0,
-                bid_size=1.0,
-                ask_price=101.0,
-                ask_size=1.0,
-                sequence_id="42",
-            )
+    writer.add(
+        BookEvent(
+            symbol="BTCUSDT",
+            exchange_ts=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            venue="BINANCE",
+            bid_price=100.0,
+            bid_size=1.0,
+            ask_price=101.0,
+            ask_size=1.0,
+            sequence_id="42",
         )
+    )
+    writer.flush()
+
+    path = normalized_partition_path(tmp_path, "dev", source="book", symbol="BTCUSDT", day="2024-01-01")
+    loaded = read_parquet(path)
+
+    assert loaded.num_rows == 1
+    assert loaded.column("feed_type").to_pylist() == ["quotes"]
+    assert loaded.column("sequence_id").to_pylist() == ["42"]
 
 
 def test_read_parquet_backfills_missing_normalizer_version_for_old_v2_files(tmp_path):

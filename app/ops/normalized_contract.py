@@ -77,6 +77,8 @@ def _infer_feed_type(columns: set[str]) -> str:
         return "trade"
     if {"open", "high", "low", "close", "volume"}.issubset(columns):
         return "kline"
+    if {"bid_price", "bid_size", "ask_price", "ask_size"}.issubset(columns):
+        return "book"
     return "unknown"
 
 
@@ -90,6 +92,8 @@ def _required_columns_for(feed_type: str, mode: ContractMode) -> set[str]:
             required.add("historical_feed_kind")
     elif feed_type == "kline":
         required |= {"open", "high", "low", "close", "volume", "interval", "open_ts", "close_ts"}
+    elif feed_type == "book":
+        required |= {"bid_price", "bid_size", "ask_price", "ask_size", "sequence_id"}
     return required
 
 

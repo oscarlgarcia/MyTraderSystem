@@ -1,10 +1,9 @@
 """
 Canonical typed market data models plus temporary legacy adapters.
 
-`TradeEvent` and `BarEvent` are the only canonical event types currently
-supported by ingestion/storage/runtime. `BookEvent` remains as an experimental
-placeholder for future depth/quote work and is intentionally out of scope for
-the supported ingestion surface.
+`TradeEvent` and `BarEvent` remain the primary canonical event types for the
+supported ingestion surface. `BookEvent` is also available for experimental
+top-of-book / quote-style feeds and future depth work.
 """
 
 from __future__ import annotations

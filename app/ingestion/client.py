@@ -14,12 +14,14 @@ from app.common.dto import MarketEvent, normalize_symbol
 from app.ingestion.dedup import EventIdentity, identity_from_event
 from app.marketdata.connectors.binance import (
     BinanceBarNormalizer,
+    BinanceBookTickerNormalizer,
     BinanceTradeNormalizer,
     build_binance_stream,
     normalize_binance_event,
 )
-from app.marketdata.models import BarEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
+from app.marketdata.models import BarEvent, BookEvent, IngestionEvent, TradeEvent, ensure_legacy_market_event
 from app.marketdata.validators import (
+    validate_book_payload,
     validate_ingestion_event,
     validate_kline_payload,
     validate_trade_payload,
@@ -71,6 +73,25 @@ def normalize_kline_typed(
     return event
 
 
+def normalize_book_typed(
+    payload: dict,
+    *,
+    venue: str = "BINANCE",
+    receive_ts: datetime | None = None,
+    process_ts: datetime | None = None,
+) -> BookEvent:
+    return BinanceBookTickerNormalizer.normalize_typed(
+        payload,
+        venue=venue,
+        receive_ts=receive_ts,
+        process_ts=process_ts,
+    )
+
+
+def normalize_book(payload: dict) -> MarketEvent:
+    return ensure_legacy_market_event(normalize_book_typed(payload))
+
+
 def normalize_kline(payload: dict) -> MarketEvent:
     """
     Normalize Binance kline payload to MarketEvent (use close price).
@@ -82,14 +103,17 @@ def normalize_kline(payload: dict) -> MarketEvent:
 NORMALIZERS: Dict[str, Callable[[dict], IngestionEvent]] = {
     "trade": normalize_trade,
     "kline": normalize_kline,
+    "book": normalize_book,
 }
 PAYLOAD_VALIDATORS: Dict[str, Callable[[dict], None]] = {
     "trade": validate_trade_payload,
     "kline": validate_kline_payload,
+    "book": validate_book_payload,
 }
 STREAM_BUILDERS: Dict[str, Callable[[str], str]] = {
     "trade": lambda symbol: build_binance_stream("trade", symbol),
     "kline": lambda symbol: build_binance_stream("kline", symbol),
+    "book": lambda symbol: build_binance_stream("book", symbol),
 }
 DEFAULT_STREAM_TYPES: Tuple[str, ...] = ("trade", "kline")
 
@@ -100,6 +124,8 @@ def canonical_event_type(event_type: str | None, *, stream: str = "") -> str:
     stream_lower = str(stream).lower()
     if lowered == "aggtrade" or "@aggtrade" in stream_lower:
         return "trade"
+    if lowered == "bookticker" or "@bookticker" in stream_lower:
+        return "book"
     if event_type_text:
         return event_type_text
     return "kline" if "kline" in stream_lower else "trade"
@@ -175,6 +201,14 @@ def parse_typed_message(
             process_ts=process_ts,
         )
     if event_type == "kline":
+        return normalize_binance_event(
+            event_type,
+            data,
+            venue=venue,
+            receive_ts=receive_ts,
+            process_ts=process_ts,
+        )
+    if event_type == "book":
         return normalize_binance_event(
             event_type,
             data,

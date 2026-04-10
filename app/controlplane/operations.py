@@ -8,8 +8,38 @@ from typing import Any
 from app.config import AppConfig
 from app.ingestion.storage import ParquetWriter, normalized_partition_path
 from app.ingestion.sources import BinanceSource
+from app.marketdata.benchmarks import benchmark_query_and_serving
+from app.marketdata.capabilities import build_venue_capability_registry, capability_registry_path, write_venue_capability_registry
+from app.marketdata.dataset_catalog import dataset_catalog_path, refresh_dataset_catalog
+from app.marketdata.dataset_quality import (
+    append_dataset_incidents,
+    build_dataset_quality_registry,
+    dataset_incident_log_path,
+    dataset_quality_registry_path,
+    write_dataset_quality_registry,
+)
+from app.marketdata.delivery import (
+    build_delivery_contract_registry,
+    delivery_contract_registry_path,
+    write_delivery_contract_registry,
+)
+from app.marketdata.future_scope import build_future_scope_registry, future_scope_registry_path, write_future_scope_registry
+from app.marketdata.publication import PublicationRecord, publish_record
 from app.marketdata.recovery import RecoveryRequest, verify_recovery_window
 from app.marketdata.replay import ReplaySource
+from app.marketdata.security import (
+    build_security_baseline_report,
+    security_baseline_report_path,
+    write_security_baseline_report,
+)
+from app.marketdata.serving import refresh_curated_store
+from app.marketdata.snapshot_service import SnapshotRequest, load_snapshot
+from app.marketdata.storage_lifecycle import (
+    build_storage_lifecycle_report,
+    storage_lifecycle_report_path,
+    write_storage_lifecycle_report,
+)
+from app.marketdata.subscriptions import update_subscription_config
 from app.marketdata.temporal_state import TemporalPartitionKey
 from app.ops.quarantine_cli import replay_quarantine_records
 
@@ -134,3 +164,100 @@ def execute_resync_stream(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[st
         "touched_partitions": sorted(touched),
         "verification": asdict(verification),
     }
+
+
+def execute_refresh_dataset_catalog(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    del payload
+    catalog = refresh_dataset_catalog(cfg.data_dir, cfg.env)
+    capability_registry = build_venue_capability_registry()
+    delivery_registry = build_delivery_contract_registry(env=cfg.env)
+    lifecycle = build_storage_lifecycle_report(cfg.data_dir, cfg.env)
+    security = build_security_baseline_report(cfg.data_dir, cfg.env)
+    future_scope = build_future_scope_registry()
+    write_venue_capability_registry(capability_registry_path(cfg.data_dir, cfg.env), capability_registry)
+    write_delivery_contract_registry(delivery_contract_registry_path(cfg.data_dir, cfg.env), delivery_registry)
+    write_storage_lifecycle_report(storage_lifecycle_report_path(cfg.data_dir, cfg.env), lifecycle)
+    write_security_baseline_report(security_baseline_report_path(cfg.data_dir, cfg.env), security)
+    write_future_scope_registry(future_scope_registry_path(cfg.data_dir, cfg.env), future_scope)
+    return {
+        "catalog_path": str(dataset_catalog_path(cfg.data_dir, cfg.env)),
+        "dataset_count": len(catalog.entries),
+        "capability_entries": len(capability_registry.entries),
+        "delivery_contracts": len(delivery_registry.contracts),
+        "storage_lifecycle_entries": len(lifecycle.entries),
+        "security_baseline_path": str(security_baseline_report_path(cfg.data_dir, cfg.env)),
+        "future_scope_entries": len(future_scope.entries),
+    }
+
+
+def execute_score_dataset_quality(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    del payload
+    from app.ingestion.storage import list_normalized_partition_paths
+
+    paths = list_normalized_partition_paths(cfg.data_dir, cfg.env)
+    quality = build_dataset_quality_registry(paths)
+    write_dataset_quality_registry(dataset_quality_registry_path(cfg.data_dir, cfg.env), quality)
+    append_dataset_incidents(dataset_incident_log_path(cfg.data_dir, cfg.env), quality.reports)
+    failed = sum(1 for item in quality.reports if item.status == "failed")
+    degraded = sum(1 for item in quality.reports if item.status == "degraded")
+    return {
+        "quality_registry_path": str(dataset_quality_registry_path(cfg.data_dir, cfg.env)),
+        "reports": len(quality.reports),
+        "failed": failed,
+        "degraded": degraded,
+    }
+
+
+def execute_refresh_curated(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    stream_type = str(payload.get("stream_type", "kline"))
+    symbol = str(payload["symbol"]).upper() if payload.get("symbol") else None
+    venue = str(payload.get("venue", "BINANCE")).upper()
+    report = refresh_curated_store(base_dir=cfg.data_dir, env=cfg.env, stream_type=stream_type, venue=venue, symbol=symbol)
+    return asdict(report)
+
+
+def execute_update_subscriptions(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    symbols = tuple(str(item).upper() for item in payload.get("symbols", cfg.symbols))
+    stream_types = tuple(str(item).lower() for item in payload.get("stream_types", ("trade", "kline")))
+    updated_by = str(payload.get("updated_by", "control-plane"))
+    config = update_subscription_config(
+        base_dir=cfg.data_dir,
+        env=cfg.env,
+        symbols=symbols,
+        stream_types=stream_types,
+        updated_by=updated_by,
+        venue=str(payload.get("venue", "BINANCE")).upper(),
+    )
+    return asdict(config)
+
+
+def execute_benchmark_serving(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    stream_type = str(payload.get("stream_type", "kline"))
+    symbol = str(payload["symbol"]).upper()
+    report = benchmark_query_and_serving(base_dir=cfg.data_dir, env=cfg.env, stream_type=stream_type, symbol=symbol)
+    return asdict(report)
+
+
+def execute_publish_snapshot(*, cfg: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    stream_type = str(payload.get("stream_type", "kline"))
+    symbol = str(payload["symbol"]).upper()
+    snapshot = load_snapshot(
+        SnapshotRequest(
+            base_dir=cfg.data_dir,
+            env=cfg.env,
+            stream_type=stream_type,
+            symbol=symbol,
+        )
+    )
+    if snapshot is None:
+        raise ValueError(f"snapshot not found for {stream_type}:{symbol}")
+    record = PublicationRecord(
+        env=cfg.env,
+        venue=str(snapshot.get("venue", "BINANCE")).upper(),
+        stream_type=stream_type,
+        symbol=symbol,
+        published_at=_now(),
+        payload=snapshot,
+    )
+    path = publish_record(cfg.data_dir, record)
+    return {"publication_path": str(path), "symbol": symbol, "stream_type": stream_type}

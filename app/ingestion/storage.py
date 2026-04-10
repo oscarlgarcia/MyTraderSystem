@@ -30,6 +30,8 @@ from app.ingestion.dedup import identity_from_fields
 from app.marketdata.models import (
     BarEvent,
     BaseMarketEvent,
+    BookEvent,
+    EXPERIMENTAL_MARKETDATA_SOURCES,
     IngestionEvent,
     TradeEvent,
     ensure_legacy_market_event,
@@ -41,6 +43,7 @@ from app.marketdata.normalization import NORMALIZER_VERSION, resolve_normalizer_
 FEED_TYPE_BY_SOURCE = {
     "trade": "trades",
     "kline": "bars",
+    "book": "quotes",
 }
 STREAM_TYPE_BY_FEED_TYPE = {value: key for key, value in FEED_TYPE_BY_SOURCE.items()}
 PARTITION_DATA_FILENAME = "data.parquet"
@@ -71,11 +74,16 @@ def feed_type_for_source(source: str) -> str:
     return FEED_TYPE_BY_SOURCE.get(source, source.lower())
 
 
+def _storage_supported_marketdata_source(source: str) -> bool:
+    normalized = str(source).lower()
+    return is_supported_marketdata_source(normalized) or normalized in EXPERIMENTAL_MARKETDATA_SOURCES
+
+
 def _assert_supported_storage_source(source: str) -> None:
     normalized = str(source).lower()
-    if not is_supported_marketdata_source(normalized):
+    if not _storage_supported_marketdata_source(normalized):
         raise ValueError(
-            f"{normalized} feed is out of scope for normalized storage; only trade and kline are supported"
+            f"{normalized} feed is out of scope for normalized storage"
         )
 
 
@@ -103,7 +111,7 @@ def _optional_ts(value: object | None) -> datetime | None:
 
 def event_metadata(event: IngestionEvent) -> dict[str, str]:
     metadata = _metadata_mapping(getattr(event, "metadata", None))
-    if "instrument_catalog_version" not in metadata and is_supported_marketdata_source(getattr(event, "source", "")):
+    if "instrument_catalog_version" not in metadata and _storage_supported_marketdata_source(getattr(event, "source", "")):
         try:
             venue = getattr(event, "venue", metadata.get("venue", "BINANCE"))
             metadata.update(
@@ -124,7 +132,7 @@ def _event_metadata_for_row(
     metadata_cache: dict[tuple[str, str], dict[str, str]] | None = None,
 ) -> dict[str, str]:
     metadata = _metadata_mapping(getattr(event, "metadata", None))
-    if "instrument_catalog_version" in metadata or not is_supported_marketdata_source(getattr(event, "source", "")):
+    if "instrument_catalog_version" in metadata or not _storage_supported_marketdata_source(getattr(event, "source", "")):
         return metadata
     venue = str(getattr(event, "venue", metadata.get("venue", "BINANCE"))).upper()
     cache_key = (event.symbol, venue)
@@ -508,6 +516,106 @@ class BarParquetWriter:
                     "interval": interval,
                     "open_ts": open_ts,
                     "close_ts": close_ts,
+                    "source": event.source,
+                    "source_id": source_id,
+                    "raw_run_id": raw_run_id,
+                    "raw_ingestion_seq": raw_ingestion_seq,
+                    "metadata": metadata,
+                }
+            )
+        return pa.Table.from_pylist(rows, schema=cls.schema())
+
+
+@dataclass(frozen=True, slots=True)
+class BookParquetWriter:
+    @staticmethod
+    def schema() -> pa.Schema:
+        return pa.schema(
+            [
+                ("venue", pa.string()),
+                ("feed_type", pa.string()),
+                ("normalizer_version", pa.string()),
+                ("symbol", pa.string()),
+                ("exchange_ts", pa.timestamp("ms", tz="UTC")),
+                ("provider_ts", pa.timestamp("ms", tz="UTC")),
+                ("receive_ts", pa.timestamp("ms", tz="UTC")),
+                ("process_ts", pa.timestamp("ms", tz="UTC")),
+                ("event_ts", pa.timestamp("ms", tz="UTC")),
+                ("bid_price", pa.float64()),
+                ("bid_size", pa.float64()),
+                ("ask_price", pa.float64()),
+                ("ask_size", pa.float64()),
+                ("sequence_id", pa.string()),
+                ("source", pa.string()),
+                ("source_id", pa.string()),
+                ("raw_run_id", pa.string()),
+                ("raw_ingestion_seq", pa.int64()),
+                ("metadata", pa.map_(pa.string(), pa.string())),
+            ]
+        )
+
+    @classmethod
+    def to_table(cls, events: list[IngestionEvent]) -> pa.Table:
+        events_sorted = sorted(events, key=_event_storage_sort_key)
+        metadata_cache: dict[tuple[str, str], dict[str, str]] = {}
+        rows = []
+        for event in events_sorted:
+            metadata = _event_metadata_for_row(event, metadata_cache=metadata_cache)
+            venue = event.venue if isinstance(event, BaseMarketEvent) else str(metadata.get("venue", "BINANCE")).upper()
+            normalizer_version = (
+                event_normalizer_version(event)
+                if isinstance(event, BaseMarketEvent)
+                else resolve_normalizer_version(metadata.get("normalizer_version"))
+            )
+            exchange_ts = event.exchange_ts if isinstance(event, BaseMarketEvent) else event.event_ts
+            provider_ts = event.provider_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("provider_ts"))
+            receive_ts = event.receive_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("receive_ts"))
+            process_ts = event.process_ts if isinstance(event, BaseMarketEvent) else _optional_ts(metadata.get("process_ts"))
+            source_id = event.source_id if isinstance(event, BaseMarketEvent) else metadata.get("source_id")
+            sequence_id = event.sequence_id if isinstance(event, BookEvent) else metadata.get("sequence_id")
+            raw_run_id = metadata.get("raw_run_id")
+            raw_ingestion_seq = _coerce_optional_int(metadata.get("raw_ingestion_seq"))
+            bid_price = event.bid_price if isinstance(event, BookEvent) else float(metadata.get("bid_price", event.price))
+            bid_size = event.bid_size if isinstance(event, BookEvent) else float(metadata.get("bid_size", event.size))
+            ask_price = event.ask_price if isinstance(event, BookEvent) else float(metadata.get("ask_price", event.price))
+            ask_size = event.ask_size if isinstance(event, BookEvent) else float(metadata.get("ask_size", event.size))
+
+            metadata.setdefault("venue", venue)
+            metadata.setdefault("normalizer_version", normalizer_version)
+            metadata.setdefault("bid_price", str(bid_price))
+            metadata.setdefault("bid_size", str(bid_size))
+            metadata.setdefault("ask_price", str(ask_price))
+            metadata.setdefault("ask_size", str(ask_size))
+            if provider_ts is not None:
+                metadata.setdefault("provider_ts", provider_ts.isoformat())
+            if receive_ts is not None:
+                metadata.setdefault("receive_ts", receive_ts.isoformat())
+            if process_ts is not None:
+                metadata.setdefault("process_ts", process_ts.isoformat())
+            if source_id is not None:
+                metadata.setdefault("source_id", str(source_id))
+            if sequence_id is not None:
+                metadata.setdefault("sequence_id", str(sequence_id))
+            if raw_run_id is not None:
+                metadata.setdefault("raw_run_id", str(raw_run_id))
+            if raw_ingestion_seq is not None:
+                metadata.setdefault("raw_ingestion_seq", str(raw_ingestion_seq))
+            rows.append(
+                {
+                    "venue": venue,
+                    "feed_type": feed_type_for_source(event.source),
+                    "normalizer_version": normalizer_version,
+                    "symbol": event.symbol,
+                    "exchange_ts": exchange_ts,
+                    "provider_ts": provider_ts,
+                    "receive_ts": receive_ts,
+                    "process_ts": process_ts,
+                    "event_ts": event.event_ts,
+                    "bid_price": bid_price,
+                    "bid_size": bid_size,
+                    "ask_price": ask_price,
+                    "ask_size": ask_size,
+                    "sequence_id": sequence_id,
                     "source": event.source,
                     "source_id": source_id,
                     "raw_run_id": raw_run_id,
@@ -951,9 +1059,11 @@ def _write_partition(
         table = TradeParquetWriter.to_table(events)
     elif feed_type == "bars":
         table = BarParquetWriter.to_table(events)
+    elif feed_type == "quotes":
+        table = BookParquetWriter.to_table(events)
     else:
         raise ValueError(
-            f"{source} feed is out of scope for normalized storage; only trade and kline are supported"
+            f"{source} feed is out of scope for normalized storage"
         )
     table = table.replace_schema_metadata(_table_schema_metadata(schema_version=schema_version, events=events, dedup=dedup))
     _write_segment_atomic(table, partition_dir)

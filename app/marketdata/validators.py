@@ -108,6 +108,17 @@ def validate_kline_payload(payload: dict[str, Any], *, now: datetime | None = No
             raise ValueError("k.T cannot be earlier than k.t")
 
 
+def validate_book_payload(payload: dict[str, Any], *, now: datetime | None = None) -> None:
+    _require_keys(payload, ("s", "u", "b", "B", "a", "A"))
+    _validate_symbol(str(payload["s"]))
+    if payload.get("E") not in (None, ""):
+        _validate_payload_timestamp_ms(payload["E"], "E", now=now)
+    for name, raw in {"bid_price": payload["b"], "bid_size": payload["B"], "ask_price": payload["a"], "ask_size": payload["A"]}.items():
+        _validate_non_negative_finite(float(raw), name)
+    if float(payload["a"]) < float(payload["b"]):
+        raise ValueError("ask price cannot be below bid price")
+
+
 def validate_trade_event(event: TradeEvent, *, now: datetime | None = None) -> None:
     _validate_symbol(event.symbol)
     _validate_timestamp_sane(event.exchange_ts, "exchange_ts", now=now)
